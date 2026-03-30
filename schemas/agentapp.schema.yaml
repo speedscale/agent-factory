@@ -1,0 +1,48 @@
+apiVersion: v1
+kind: Schema
+metadata:
+  name: agentapp
+spec:
+  description: Declarative onboarding contract for apps managed by Agent Factory.
+  required:
+    - apiVersion
+    - kind
+    - metadata
+    - spec
+  properties:
+    apiVersion:
+      type: string
+      enum:
+        - agents.speedscale.io/v1alpha1
+    kind:
+      type: string
+      enum:
+        - AgentApp
+    metadata:
+      type: object
+      required:
+        - name
+    spec:
+      type: object
+      required:
+        - repo
+        - build
+        - validate
+      properties:
+        repo:
+          type: object
+          required:
+            - provider
+            - url
+            - defaultBranch
+            - workdir
+        build:
+          type: object
+          required:
+            - install
+            - test
+            - start
+        validate:
+          type: object
+          required:
+            - proxymock

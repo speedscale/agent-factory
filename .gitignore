@@ -1,0 +1,35 @@
+# macOS
+.DS_Store
+
+# editors
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# env and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+secrets/
+
+# logs and temp files
+*.log
+tmp/
+dist/
+build/
+coverage/
+
+# language-specific
+node_modules/
+vendor/
+bin/
+
+# local runtime state
+.cache/
+.work/
+artifacts/
+reports/
