@@ -1,0 +1,23 @@
+{
+  "name": "@speedscale/agent-factory",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Reference architecture for an autonomous issue -> plan -> build -> validate loop.",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc --noEmit -p tsconfig.json",
+    "intake-api": "tsx src/bin/intake-api.ts",
+    "planner": "tsx src/bin/planner.ts",
+    "runner": "tsx src/bin/runner.ts",
+    "validator": "tsx src/bin/validator.ts"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.8.0"
+  }
+}

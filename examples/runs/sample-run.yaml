@@ -1,0 +1,25 @@
+apiVersion: agents.speedscale.io/v1alpha1
+kind: AgentRun
+metadata:
+  name: run-demo-node-404-status
+spec:
+  appRef:
+    name: demo-node
+  issue:
+    id: "bug-404-status"
+    title: Node demo returns 500 instead of upstream 404
+    body: |
+      When the upstream dependency returns 404, the app responds with 500.
+      Preserve the expected client-visible behavior for this path.
+    url: https://github.com/speedscale/demo/issues/123
+  workspace:
+    root: .work/run-demo-node-404-status
+    branch: agent/run-demo-node-404-status
+status:
+  phase: planned
+  summary: Candidate fix identified; ready for build and validation.
+  artifacts:
+    plan: artifacts/run-demo-node-404-status/plan.yaml
+    patch: artifacts/run-demo-node-404-status/patch.diff
+    buildLog: artifacts/run-demo-node-404-status/build.log
+    validationReport: artifacts/run-demo-node-404-status/validation.log

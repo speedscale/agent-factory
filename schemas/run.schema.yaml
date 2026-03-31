@@ -1,0 +1,98 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+title: AgentRun
+description: A single execution of the issue-to-validate loop for a target app.
+type: object
+required:
+  - apiVersion
+  - kind
+  - metadata
+  - spec
+  - status
+properties:
+  apiVersion:
+    type: string
+    const: agents.speedscale.io/v1alpha1
+  kind:
+    type: string
+    const: AgentRun
+  metadata:
+    type: object
+    required:
+      - name
+    properties:
+      name:
+        type: string
+    additionalProperties: true
+  spec:
+    type: object
+    required:
+      - appRef
+      - issue
+      - workspace
+    properties:
+      appRef:
+        type: object
+        required:
+          - name
+        properties:
+          name:
+            type: string
+        additionalProperties: false
+      issue:
+        type: object
+        required:
+          - id
+          - title
+          - body
+        properties:
+          id:
+            type: string
+          title:
+            type: string
+          body:
+            type: string
+          url:
+            type: string
+        additionalProperties: false
+      workspace:
+        type: object
+        required:
+          - root
+        properties:
+          root:
+            type: string
+          branch:
+            type: string
+        additionalProperties: false
+    additionalProperties: false
+  status:
+    type: object
+    required:
+      - phase
+      - artifacts
+    properties:
+      phase:
+        type: string
+        enum:
+          - queued
+          - planned
+          - building
+          - validating
+          - succeeded
+          - failed
+      summary:
+        type: string
+      artifacts:
+        type: object
+        properties:
+          plan:
+            type: string
+          patch:
+            type: string
+          buildLog:
+            type: string
+          validationReport:
+            type: string
+        additionalProperties: false
+    additionalProperties: false
+additionalProperties: false

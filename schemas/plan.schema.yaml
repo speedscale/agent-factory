@@ -1,0 +1,86 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+title: AgentPlan
+description: Structured planner output consumed by the runner.
+type: object
+required:
+  - apiVersion
+  - kind
+  - metadata
+  - spec
+properties:
+  apiVersion:
+    type: string
+    const: agents.speedscale.io/v1alpha1
+  kind:
+    type: string
+    const: AgentPlan
+  metadata:
+    type: object
+    required:
+      - name
+    properties:
+      name:
+        type: string
+    additionalProperties: true
+  spec:
+    type: object
+    required:
+      - runRef
+      - summary
+      - hypothesis
+      - steps
+      - validation
+    properties:
+      runRef:
+        type: object
+        required:
+          - name
+        properties:
+          name:
+            type: string
+        additionalProperties: false
+      summary:
+        type: string
+      hypothesis:
+        type: string
+      steps:
+        type: array
+        minItems: 1
+        items:
+          type: object
+          required:
+            - id
+            - action
+            - description
+          properties:
+            id:
+              type: string
+            action:
+              type: string
+              enum:
+                - inspect
+                - edit
+                - build
+                - validate
+            description:
+              type: string
+            targetPaths:
+              type: array
+              items:
+                type: string
+            command:
+              type: string
+          additionalProperties: false
+      validation:
+        type: object
+        required:
+          - command
+          - successCriteria
+        properties:
+          command:
+            type: string
+          successCriteria:
+            type: string
+        additionalProperties: false
+    additionalProperties: false
+additionalProperties: false

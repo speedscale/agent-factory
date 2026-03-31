@@ -1,86 +1,169 @@
-# Initial Plan
+# Implementation Plan
 
-## Goal
+## Objective
 
-Build a public reference architecture that demonstrates a narrow autonomous developer loop:
+Build a minimal public demo of the autonomous inner loop:
 
 `issue -> plan -> build -> validate`
 
-The first version must prove that the system can accept a bug report, produce a plan, make a code change in a sandbox, and validate the fix against replayed traffic with `proxymock`.
+The first working version does not need full CI/CD. It needs one believable golden path against one simple app.
 
-## Non-Goals
+## Demo Outcome
 
-- full CI/CD design
-- production-grade deployment automation
-- multi-tenant control plane
-- complete support for every app framework
+The first demo is successful when the system can:
 
-## Guiding Principles
+1. accept a bug report for a configured app
+2. create a machine-readable run record
+3. produce a structured plan
+4. execute a patch attempt in an isolated workspace
+5. run build and validation commands
+6. emit artifacts that show what happened
 
-- The app is pluggable.
-- The agent is replaceable.
-- Validation is evidence-based.
-- Every step produces reviewable artifacts.
+## Work Plan
 
-## Phase 1: Golden Path
+### Task 1: Define the contracts
 
-Deliver one end-to-end path against one simple public demo app.
+Status: complete
 
-### Outputs
+Purpose:
 
-- issue intake contract
-- `AgentApp` onboarding manifest
-- planner output format
-- runner lifecycle
-- proxymock validation recipe
-- artifact model for plan, patch, logs, and replay result
+- make app onboarding explicit
+- define what a run looks like
+- define what the planner must output
 
-## Phase 2: First Runnable Prototype
+Deliverables:
 
-Build the smallest working control plane:
+- `AgentApp` schema
+- `AgentRun` schema
+- `AgentPlan` schema
+- sample manifests and sample artifacts
 
-- intake API
-- planner service
-- sandbox runner
-- validator
-- local state store
+Acceptance criteria:
 
-The prototype can use a simple queue and worker model. It does not need a full Kubernetes-native orchestration stack on day one.
+- a new app can be described without changing control-plane code
+- a run has explicit states and artifact locations
+- the planner output is structured enough for a runner to consume
 
-## Phase 3: App Onboarding
+### Task 2: Scaffold the local control plane
 
-Prove that the system can load multiple apps through configuration rather than custom code.
+Status: complete
 
-### Success Criteria
+Purpose:
 
-- adding a new app only requires a new manifest
-- the runner can clone and operate on the app without bespoke logic
-- validation can be configured per app through declared commands
+- create the smallest code layout for the first runnable prototype
 
-## Phase 4: Public Reference Experience
+Deliverables:
 
-Package the repository so an external developer can understand:
+- `package.json`
+- `tsconfig.json`
+- `src/bin/intake-api.ts`
+- `src/bin/planner.ts`
+- `src/bin/runner.ts`
+- `src/bin/validator.ts`
+- shared contract types under `src/contracts`
 
-- what the platform does
-- how an app is onboarded
-- how the inner loop runs
-- where `proxymock` fits
+Acceptance criteria:
 
-## First Demo Candidate
+- repository has runnable Node.js entrypoints
+- contract types are shared instead of duplicated
+- local development flow is obvious from the repo layout
 
-Start with one simple app from the public demo estate instead of `decoy`.
+### Task 3: Implement issue intake
 
-Selection criteria:
+Status: next
 
-- small codebase
-- straightforward startup command
-- deterministic bug reproduction
-- easy traffic capture and replay
+Purpose:
 
-## Initial Deliverables For This Repo
+- turn an issue payload into a persisted `AgentRun`
 
-- architecture docs
-- onboarding schema
-- sample app manifest
-- sample issue
-- baseline repository conventions
+Deliverables:
+
+- local HTTP endpoint or CLI shim for issue submission
+- run creation logic
+- artifact directory initialization
+
+Acceptance criteria:
+
+- submitting a sample issue creates a valid run record
+- the run is linked to an `AgentApp`
+
+### Task 4: Implement planner stub
+
+Status: pending
+
+Purpose:
+
+- produce a deterministic first-pass plan before any real coding agent is added
+
+Deliverables:
+
+- planner input contract
+- planner output file
+- basic heuristics for target files and validation steps
+
+Acceptance criteria:
+
+- planner emits a valid `AgentPlan`
+- planner output includes candidate paths, commands, and validation intent
+
+### Task 5: Implement sandbox runner
+
+Status: pending
+
+Purpose:
+
+- execute the plan inside an isolated workspace
+
+Deliverables:
+
+- workspace creation
+- repo clone or worktree setup
+- command execution wrapper
+- artifact capture for logs and diff
+
+Acceptance criteria:
+
+- runner can execute build commands from `AgentApp`
+- runner stores logs and patch output in the run artifacts
+
+### Task 6: Implement proxymock validator
+
+Status: pending
+
+Purpose:
+
+- turn traffic-based validation into a first-class step
+
+Deliverables:
+
+- validator interface
+- proxymock command wrapper
+- validation result artifact
+
+Acceptance criteria:
+
+- validator runs commands declared by the app contract
+- validation result is attached to the run record
+
+### Task 7: Wire the golden path
+
+Status: pending
+
+Purpose:
+
+- connect intake, planner, runner, and validator into one local flow
+
+Deliverables:
+
+- one documented demo path
+- one sample app
+- one sample issue
+
+Acceptance criteria:
+
+- one command or short sequence can execute the full loop locally
+- generated artifacts are understandable without private dependencies
+
+## Current Priority
+
+Task 3 is the next implementation step.

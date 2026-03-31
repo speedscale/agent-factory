@@ -1,48 +1,109 @@
-apiVersion: v1
-kind: Schema
-metadata:
-  name: agentapp
-spec:
-  description: Declarative onboarding contract for apps managed by Agent Factory.
-  required:
-    - apiVersion
-    - kind
-    - metadata
-    - spec
-  properties:
-    apiVersion:
-      type: string
-      enum:
-        - agents.speedscale.io/v1alpha1
-    kind:
-      type: string
-      enum:
-        - AgentApp
-    metadata:
-      type: object
-      required:
-        - name
-    spec:
-      type: object
-      required:
-        - repo
-        - build
-        - validate
-      properties:
-        repo:
-          type: object
-          required:
-            - provider
-            - url
-            - defaultBranch
-            - workdir
-        build:
-          type: object
-          required:
-            - install
-            - test
-            - start
-        validate:
-          type: object
-          required:
-            - proxymock
+$schema: https://json-schema.org/draft/2020-12/schema
+title: AgentApp
+description: Declarative onboarding contract for apps managed by Agent Factory.
+type: object
+required:
+  - apiVersion
+  - kind
+  - metadata
+  - spec
+properties:
+  apiVersion:
+    type: string
+    const: agents.speedscale.io/v1alpha1
+  kind:
+    type: string
+    const: AgentApp
+  metadata:
+    type: object
+    required:
+      - name
+    properties:
+      name:
+        type: string
+    additionalProperties: true
+  spec:
+    type: object
+    required:
+      - repo
+      - build
+      - validate
+    properties:
+      repo:
+        type: object
+        required:
+          - provider
+          - url
+          - defaultBranch
+          - workdir
+        properties:
+          provider:
+            type: string
+            enum:
+              - github
+              - gitlab
+          url:
+            type: string
+          defaultBranch:
+            type: string
+          workdir:
+            type: string
+        additionalProperties: false
+      issue:
+        type: object
+        properties:
+          labels:
+            type: object
+            properties:
+              include:
+                type: array
+                items:
+                  type: string
+            additionalProperties: false
+        additionalProperties: false
+      build:
+        type: object
+        required:
+          - install
+          - test
+          - start
+        properties:
+          install:
+            type: string
+          test:
+            type: string
+          start:
+            type: string
+        additionalProperties: false
+      validate:
+        type: object
+        required:
+          - proxymock
+        properties:
+          proxymock:
+            type: object
+            required:
+              - dataset
+              - mode
+              - command
+            properties:
+              dataset:
+                type: string
+              mode:
+                type: string
+              command:
+                type: string
+            additionalProperties: false
+        additionalProperties: false
+      policy:
+        type: object
+        properties:
+          autoBranch:
+            type: boolean
+          autoMr:
+            type: boolean
+          autoMerge:
+            type: boolean
+        additionalProperties: false
+    additionalProperties: false
+additionalProperties: false
