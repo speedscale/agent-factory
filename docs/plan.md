@@ -108,7 +108,7 @@ Acceptance criteria:
 
 ### Task 5: Implement sandbox runner
 
-Status: next
+Status: complete
 
 Purpose:
 
@@ -128,7 +128,7 @@ Acceptance criteria:
 
 ### Task 6: Implement proxymock validator
 
-Status: pending
+Status: next
 
 Purpose:
 
@@ -166,4 +166,4 @@ Acceptance criteria:
 
 ## Current Priority
 
-Task 5 is the next implementation step.
+Task 6 is the next implementation step.
