@@ -70,7 +70,7 @@ Acceptance criteria:
 
 ### Task 3: Implement issue intake
 
-Status: next
+Status: complete
 
 Purpose:
 
@@ -89,7 +89,7 @@ Acceptance criteria:
 
 ### Task 4: Implement planner stub
 
-Status: pending
+Status: next
 
 Purpose:
 
@@ -166,4 +166,4 @@ Acceptance criteria:
 
 ## Current Priority
 
-Task 3 is the next implementation step.
+Task 4 is the next implementation step.
