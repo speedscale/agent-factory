@@ -128,7 +128,7 @@ Acceptance criteria:
 
 ### Task 6: Implement proxymock validator
 
-Status: next
+Status: complete
 
 Purpose:
 
@@ -147,7 +147,7 @@ Acceptance criteria:
 
 ### Task 7: Wire the golden path
 
-Status: pending
+Status: next
 
 Purpose:
 
@@ -166,4 +166,4 @@ Acceptance criteria:
 
 ## Current Priority
 
-Task 6 is the next implementation step.
+Task 7 is the next implementation step.
