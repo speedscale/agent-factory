@@ -8,6 +8,7 @@
     "build": "tsc -p tsconfig.json",
     "check": "tsc --noEmit -p tsconfig.json",
     "intake-api": "tsx src/bin/intake-api.ts",
+    "demo": "tsx src/bin/demo.ts",
     "planner": "tsx src/bin/planner.ts",
     "runner": "tsx src/bin/runner.ts",
     "validator": "tsx src/bin/validator.ts"

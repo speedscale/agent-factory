@@ -1,4 +1,49 @@
-import type { AgentPlan, AgentRun } from "../contracts/index.js";
+import type { AgentApp, AgentPlan, AgentRun } from "../contracts/index.js";
+
+export const sampleApp: AgentApp = {
+  apiVersion: "agents.speedscale.io/v1alpha1",
+  kind: "AgentApp",
+  metadata: {
+    name: "demo-node"
+  },
+  spec: {
+    repo: {
+      provider: "github",
+      url: "https://github.com/speedscale/demo",
+      defaultBranch: "main",
+      workdir: "node"
+    },
+    issue: {
+      labels: {
+        include: ["agent", "bug"]
+      }
+    },
+    build: {
+      install: "npm ci",
+      test: "npm test",
+      start: "npm start"
+    },
+    validate: {
+      proxymock: {
+        dataset: "sample-node-bug",
+        mode: "replay-with-mocks",
+        command: "proxymock replay"
+      }
+    },
+    policy: {
+      autoBranch: true,
+      autoMr: false,
+      autoMerge: false
+    }
+  }
+};
+
+export const sampleIssue = {
+  id: "bug-404-status",
+  title: "Node demo returns the wrong upstream status code",
+  body: "When upstream returns 404, the app returns 500.",
+  url: "https://github.com/speedscale/demo/issues/123"
+};
 
 export const sampleRun: AgentRun = {
   apiVersion: "agents.speedscale.io/v1alpha1",

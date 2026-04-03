@@ -20,4 +20,5 @@ The current repo contains the initial design docs and onboarding contract for th
 
 - [Architecture](docs/architecture.md)
 - [Plan](docs/plan.md)
+- [Golden Path Demo](docs/demo.md)
 - [Sample `AgentApp`](examples/apps/demo-node/agentapp.yaml)
