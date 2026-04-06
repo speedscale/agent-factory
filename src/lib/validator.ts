@@ -73,7 +73,8 @@ export async function loadValidatorContext(runInput: string): Promise<ValidatorC
 
 export async function runValidationStage(context: ValidatorContext): Promise<{ result: CommandResult; run: AgentRun }> {
   const command = context.app.spec.validate.proxymock.command;
-  const result = await runShellCommand(command, context.workspaceDir);
+  const workspaceCwd = path.join(context.workspaceDir, context.app.spec.repo.workdir);
+  const result = await runShellCommand(command, workspaceCwd);
   const validationLogPath = resolveFromRepo(
     context.run.status.artifacts.validationReport ?? path.posix.join("artifacts", context.run.metadata.name, "validation.log")
   );
