@@ -22,6 +22,7 @@ The current repo contains the initial design docs and onboarding contract for th
 - [Plan](docs/plan.md)
 - [Golden Path Demo](docs/demo.md)
 - [Local and Server Runbook](docs/server.md)
+- [Kubernetes Deployment Guide](docs/kubernetes.md)
 - [Microsvc Onboarding](docs/microsvc.md)
 - [Sample `AgentApp`](examples/apps/demo-node/agentapp.yaml)
 
@@ -73,3 +74,11 @@ See `docs/server.md` for full setup and verification steps.
 ```bash
 docker compose -f docker-compose.server.yml up --build
 ```
+
+## Run On Kubernetes
+
+```bash
+kubectl apply -k examples/deploy/kubernetes/base
+```
+
+See `docs/kubernetes.md` for cluster setup, run submission, and limits of the current deployment model.

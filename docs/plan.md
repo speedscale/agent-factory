@@ -166,4 +166,65 @@ Acceptance criteria:
 
 ## Current Priority
 
-All implementation tasks in this plan are complete.
+The initial golden path is complete and now extended with an operational hardening track.
+
+## Operational Hardening Track
+
+### Task 8: Add local run operations and worker claiming
+
+Status: complete
+
+Purpose:
+
+- make local service operation practical for day-to-day use
+- prevent duplicate run processing when multiple workers are started
+
+Deliverables:
+
+- run listing and retry operations
+- run claim file protocol with stale-claim TTL handling
+- updated runbook docs for operator workflows
+
+Acceptance criteria:
+
+- operators can list runs by phase and requeue runs from CLI
+- worker instances do not process the same run concurrently
+
+### Task 9: Provide Kubernetes deployment base
+
+Status: complete
+
+Purpose:
+
+- enable early cluster execution with the same intake/worker architecture
+
+Deliverables:
+
+- kustomize base for intake service and worker deployment
+- shared persistent storage wiring for artifacts and workspace
+- Kubernetes deployment guide
+
+Acceptance criteria:
+
+- manifests apply cleanly to a cluster
+- intake endpoint is reachable through service/port-forward
+- worker can process runs using shared run/artifact state
+
+### Task 10: Implement distributed queue backend
+
+Status: in progress
+
+Purpose:
+
+- remove single-filesystem queue bottleneck before multi-replica worker scaling
+
+Deliverables:
+
+- Redis-backed run queue implementation
+- backend selection docs and migration notes
+- worker behavior validation for filesystem vs Redis modes
+
+Acceptance criteria:
+
+- workers can consume queued runs via Redis without duplicate processing
+- filesystem mode remains a supported local default

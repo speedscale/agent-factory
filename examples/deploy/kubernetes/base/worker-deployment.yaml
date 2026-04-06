@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: worker
+  template:
+    metadata:
+      labels:
+        app: worker
+    spec:
+      initContainers:
+        - name: create-demo-fixture
+          image: ghcr.io/speedscale/agent-factory:latest
+          imagePullPolicy: IfNotPresent
+          command: ["node", "dist/bin/create-demo-fixture.js"]
+          volumeMounts:
+            - name: agent-data
+              mountPath: /app/artifacts
+              subPath: artifacts
+            - name: agent-data
+              mountPath: /app/.work
+              subPath: work
+      containers:
+        - name: worker
+          image: ghcr.io/speedscale/agent-factory:latest
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -lc
+            - PATH="/app/.work/demo-fixture/bin:$PATH" node dist/bin/worker.js --source /app/.work/demo-fixture --poll-ms 2000 --claim-ttl-ms 900000
+          env:
+            - name: RUN_QUEUE_BACKEND
+              value: filesystem
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+          volumeMounts:
+            - name: agent-data
+              mountPath: /app/artifacts
+              subPath: artifacts
+            - name: agent-data
+              mountPath: /app/.work
+              subPath: work
+      volumes:
+        - name: agent-data
+          persistentVolumeClaim:
+            claimName: agent-factory-data

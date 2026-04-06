@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: intake-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: intake-api
+  template:
+    metadata:
+      labels:
+        app: intake-api
+    spec:
+      containers:
+        - name: intake-api
+          image: ghcr.io/speedscale/agent-factory:latest
+          imagePullPolicy: IfNotPresent
+          command: ["node", "dist/bin/intake-api.js"]
+          ports:
+            - containerPort: 8080
+              name: http
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          volumeMounts:
+            - name: agent-data
+              mountPath: /app/artifacts
+              subPath: artifacts
+            - name: agent-data
+              mountPath: /app/.work
+              subPath: work
+      volumes:
+        - name: agent-data
+          persistentVolumeClaim:
+            claimName: agent-factory-data
