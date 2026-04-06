@@ -45,6 +45,11 @@ Queue backend selection:
 - `RUN_QUEUE_BACKEND=filesystem` (default, implemented)
 - `RUN_QUEUE_BACKEND=redis` (reserved, not implemented yet)
 
+Run operations:
+
+- list runs: `npm run runs -- list [--phase <phase>]`
+- retry a failed run: `npm run runs -- retry <run-name>`
+
 ### Terminal A: start intake API
 
 ```bash
@@ -69,6 +74,14 @@ Start worker with fixture source and proxymock shim on `PATH`:
 
 ```bash
 PATH="$(pwd)/.work/demo-fixture/bin:$PATH" npm run worker -- --source .work/demo-fixture
+```
+
+The worker claims runs with an on-disk claim file to avoid double-processing when multiple workers are running.
+
+Optional claim expiration override:
+
+```bash
+PATH="$(pwd)/.work/demo-fixture/bin:$PATH" npm run worker -- --source .work/demo-fixture --claim-ttl-ms 900000
 ```
 
 Use `--once` for one-shot processing in tests/CI:

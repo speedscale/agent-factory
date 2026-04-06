@@ -1,7 +1,5 @@
-import { readdir } from "node:fs/promises";
-import path from "node:path";
-import type { AgentRun } from "../contracts/index.js";
-import { readJsonFile, resolveFromRepo } from "./io.js";
+import { resolveFromRepo } from "./io.js";
+import { listRuns } from "./run-admin.js";
 
 export type RunQueueBackend = "filesystem" | "redis";
 
@@ -16,31 +14,12 @@ class FileSystemRunQueue implements RunQueue {
   constructor(private readonly artifactsRoot: string) {}
 
   async listQueuedRuns(): Promise<string[]> {
-    let entries: string[] = [];
-
-    try {
-      entries = await readdir(this.artifactsRoot);
-    } catch {
+    if (!this.artifactsRoot) {
       return [];
     }
 
-    const queued: string[] = [];
-
-    for (const entry of entries) {
-      const runJsonPath = path.join(this.artifactsRoot, entry, "run.json");
-
-      try {
-        const run = await readJsonFile<AgentRun>(runJsonPath);
-        if (run.status.phase === "queued") {
-          queued.push(run.metadata.name);
-        }
-      } catch {
-        continue;
-      }
-    }
-
-    queued.sort((a, b) => a.localeCompare(b));
-    return queued;
+    const runs = await listRuns("queued");
+    return runs.map((run) => run.metadata.name);
   }
 }
 
