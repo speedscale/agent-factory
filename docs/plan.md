@@ -250,7 +250,7 @@ Acceptance criteria:
 
 ### Task 12: Expose run status via service API
 
-Status: in progress
+Status: complete
 
 Purpose:
 
@@ -266,3 +266,22 @@ Acceptance criteria:
 
 - operators can query run state from intake service
 - API reflects run phases and artifact pointers consistently
+
+### Task 13: Redis-backed Kubernetes scaling profile
+
+Status: in progress
+
+Purpose:
+
+- provide a concrete multi-worker deployment profile for Redis queue mode in Kubernetes
+
+Deliverables:
+
+- kustomize overlay for Redis queue backend settings
+- worker replica guidance and safe defaults
+- deployment docs for Redis-enabled cluster mode
+
+Acceptance criteria:
+
+- operators can deploy a Redis queue profile with minimal manifest edits
+- multiple workers can be started against shared queue safely

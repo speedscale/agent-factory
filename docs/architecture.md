@@ -59,6 +59,7 @@ Use local mode for rapid iteration and deterministic demos:
 Use server mode for continuous, API-driven automation:
 
 - `intake-api` accepts run requests (`POST /runs`)
+- `intake-api` exposes run status queries (`GET /runs`, `GET /runs/{name}`)
 - `worker` polls queued runs and executes plan/build/validate
 - both services are stateless; run state is stored in artifact files
 - queue backend is selected via `RUN_QUEUE_BACKEND` (`filesystem` or `redis`)
