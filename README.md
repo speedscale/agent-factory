@@ -21,4 +21,39 @@ The current repo contains the initial design docs and onboarding contract for th
 - [Architecture](docs/architecture.md)
 - [Plan](docs/plan.md)
 - [Golden Path Demo](docs/demo.md)
+- [Local and Server Runbook](docs/server.md)
+- [Microsvc Onboarding](docs/microsvc.md)
 - [Sample `AgentApp`](examples/apps/demo-node/agentapp.yaml)
+
+## Run Locally
+
+```bash
+npm install
+npm run demo
+```
+
+This runs one end-to-end golden path and writes artifacts under `artifacts/<run-name>/`.
+
+## Run As Server
+
+Start intake API:
+
+```bash
+npm run intake-api
+```
+
+Start worker in another terminal:
+
+```bash
+PATH="$(pwd)/.work/demo-fixture/bin:$PATH" npm run worker -- --source .work/demo-fixture
+```
+
+Submit a run:
+
+```bash
+curl -sS -X POST http://localhost:8080/runs \
+  -H "content-type: application/json" \
+  --data-binary @examples/runs/demo-node-intake.json
+```
+
+See `docs/server.md` for full setup and verification steps.

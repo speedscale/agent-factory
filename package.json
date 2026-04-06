@@ -8,6 +8,8 @@
     "build": "tsc -p tsconfig.json",
     "check": "tsc --noEmit -p tsconfig.json",
     "intake-api": "tsx src/bin/intake-api.ts",
+    "worker": "tsx src/bin/worker.ts",
+    "create-demo-fixture": "tsx src/bin/create-demo-fixture.ts",
     "demo": "tsx src/bin/demo.ts",
     "planner": "tsx src/bin/planner.ts",
     "runner": "tsx src/bin/runner.ts",

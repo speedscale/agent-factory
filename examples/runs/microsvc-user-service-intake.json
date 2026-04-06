@@ -1,0 +1,45 @@
+{
+  "app": {
+    "apiVersion": "agents.speedscale.io/v1alpha1",
+    "kind": "AgentApp",
+    "metadata": {
+      "name": "microsvc-user-service"
+    },
+    "spec": {
+      "repo": {
+        "provider": "github",
+        "url": "https://github.com/speedscale/microsvc",
+        "defaultBranch": "master",
+        "workdir": "backend/user-service"
+      },
+      "issue": {
+        "labels": {
+          "include": ["agent", "bug"]
+        }
+      },
+      "build": {
+        "install": "make build",
+        "test": "make test",
+        "start": "make run"
+      },
+      "validate": {
+        "proxymock": {
+          "dataset": "microsvc-user-service-404",
+          "mode": "replay-with-mocks",
+          "command": "make proxymock-replay"
+        }
+      },
+      "policy": {
+        "autoBranch": true,
+        "autoMr": false,
+        "autoMerge": false
+      }
+    }
+  },
+  "issue": {
+    "id": "microsvc-user-service-404",
+    "title": "Microsvc user service returns 500 instead of 404 for a missing user",
+    "body": "When a client requests a user record that does not exist, the service responds with a generic 500 instead of preserving the expected 404 behavior.",
+    "url": "https://github.com/speedscale/microsvc/issues/58"
+  }
+}

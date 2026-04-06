@@ -2,86 +2,138 @@
 
 ## Overview
 
-Agent Factory is designed around a tight autonomous inner loop:
+Agent Factory is designed around one autonomous inner loop:
 
-`issue -> plan -> build -> validate`
+`issue -> triage -> plan -> build -> validate -> report`
 
-The system should operate on arbitrary onboarded applications by reading a declarative app manifest instead of encoding app-specific behavior in the control plane.
+The control plane must stay app-agnostic by reading a declarative `AgentApp` manifest instead of embedding repository-specific logic.
 
-## Planes
+## System Planes
 
 ### App Plane
 
-The app plane contains:
+The app plane owns:
 
-- application source code
-- tests
-- build commands
+- application source
+- tests and build configuration
 - runtime manifests
-- an onboarding manifest that tells Agent Factory how to work with the app
+- app onboarding manifest (`AgentApp`)
 
-The app plane must not contain agent orchestration logic.
+The app plane should not contain orchestration logic for the agent itself.
 
 ### Agent Plane
 
-The agent plane contains:
+The agent plane owns:
 
 - issue intake
-- triage
-- planning
-- sandbox execution
-- run state tracking
-- artifact collection
+- run queueing and state transitions
+- triage/planning
+- isolated workspace execution
+- artifact persistence and status reporting
 
-The agent plane decides what to try, but it does not define whether a fix is valid.
+The agent decides what to attempt, but it does not define correctness.
 
 ### Validation Plane
 
-The validation plane contains:
+The validation plane owns:
 
 - replay datasets
-- mock configuration
-- replay execution
-- result reporting
+- mock/replay command configuration
+- replay execution (`proxymock`)
+- pass/fail evidence
 
-The validation plane is the evidence layer. It should answer whether the proposed fix behaved correctly against known traffic.
+Validation is the proof layer that determines whether the candidate fix behaved as expected.
+
+## Runtime Modes
+
+### Local Mode
+
+Use local mode for rapid iteration and deterministic demos:
+
+- run `npm run demo` for a complete golden path
+- optional stage-by-stage commands: `intake-api`, `planner`, `runner`, `validator`
+- artifacts are written to `artifacts/<run-name>/`
+
+### Server Mode
+
+Use server mode for continuous, API-driven automation:
+
+- `intake-api` accepts run requests (`POST /runs`)
+- `worker` polls queued runs and executes plan/build/validate
+- both services are stateless; run state is stored in artifact files
+
+This is the minimal server architecture required to migrate from CLI-only operation to a daemonized agent model.
 
 ## Control Flow
 
-1. Intake receives an issue and creates a run.
-2. Planner produces a structured plan.
-3. Runner creates an isolated workspace for the target app.
-4. Runner applies a patch and executes declared build and test commands.
-5. Validator runs `proxymock`-based validation against the patched app.
-6. The system stores artifacts and marks the run as passed or failed.
+1. Intake receives an issue and app manifest, then writes `run.json` in `queued` phase.
+2. Worker picks queued runs and creates `plan.yaml`.
+3. Worker prepares isolated workspace and runs configured build/test command.
+4. Worker executes configured `proxymock` validation command.
+5. Worker updates run phase to `succeeded` or `failed` with summary.
+6. Artifacts remain available for audit and reproducibility.
 
-## Key Contracts
+## Component Contracts
 
-### AgentApp
+### `AgentApp`
 
-Each target app is represented by a manifest that declares:
+Each app manifest declares:
 
-- repository location
-- working directory
-- build and test commands
-- startup command
-- proxymock validation inputs
-- policy flags
+- repository location and default branch
+- app working directory
+- install/test/start commands
+- proxymock dataset/mode/command
+- policy flags (auto branch/MR/merge behavior)
 
-### Run Artifacts
+### `AgentRun`
+
+Each run captures:
+
+- issue id/title/body/url
+- workspace root and branch intent
+- lifecycle phase (`queued`, `planned`, `building`, `validating`, `succeeded`, `failed`)
+- artifact pointers
+
+### Artifact Set
 
 Each run should emit:
 
-- normalized issue summary
-- plan document
-- patch or diff
-- build and test logs
-- validation logs
-- final decision summary
+- `issue.json`
+- `app.json`
+- `run.json`
+- `plan.yaml`
+- `patch.diff`
+- `build.log`
+- `validation.log`
 
-## Design Constraints
+## Reliability and Safety Guardrails
 
-- apps must be loadable without changing the control plane
-- runner environments must be isolated
-- validation must be replay-based where possible
-- private internal dependencies should not be required for the public demo
+- **Deterministic workers**: execute one run at a time per worker process.
+- **Isolated workspace**: run commands under `.work/<run-name>`.
+- **Idempotent intake**: run identity is derived from app name + issue id.
+- **Evidence-first completion**: do not mark success without validation command exit `0`.
+- **App-agnostic control plane**: onboarding data lives in app manifest, not worker code.
+
+## Deployment Topology (Server)
+
+For early server deployments:
+
+- 1 intake API instance
+- 1+ worker instances (single-run concurrency per process)
+- shared persistent volume or object-backed artifact store
+
+In Kubernetes terms, this maps to one `Deployment` for API and one `Deployment` for workers, both mounting the same run store (or using a future external state backend).
+
+## What This Architecture Guarantees
+
+- You can run and test the factory locally end-to-end.
+- You can run and test the same flow as long-lived services.
+- Every phase emits inspectable artifacts that prove what happened.
+
+## Known Early Limitations
+
+- Current run store is file-based (single shared filesystem assumption).
+- Current planner/runner are deterministic stubs for reference behavior.
+- Queue semantics are polling-based, not event-stream based.
+
+These are acceptable for reference architecture and local/server validation of the inner loop.
