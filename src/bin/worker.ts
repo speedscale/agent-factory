@@ -154,6 +154,7 @@ function sleep(ms: number): Promise<void> {
 
 async function runWorker(queue: RunQueue, options: WorkerOptions): Promise<void> {
   console.log(JSON.stringify({ message: "worker started", queueBackend: queue.backend }, null, 2));
+  const useFilesystemClaim = queue.backend === "filesystem";
 
   while (true) {
     const queuedRuns = await queue.listQueuedRuns();
@@ -169,9 +170,11 @@ async function runWorker(queue: RunQueue, options: WorkerOptions): Promise<void>
     }
 
     for (const runName of queuedRuns) {
-      const claimed = await tryClaimRun(runName, options.claimTtlMs);
-      if (!claimed) {
-        continue;
+      if (useFilesystemClaim) {
+        const claimed = await tryClaimRun(runName, options.claimTtlMs);
+        if (!claimed) {
+          continue;
+        }
       }
 
       try {
@@ -182,7 +185,9 @@ async function runWorker(queue: RunQueue, options: WorkerOptions): Promise<void>
         await updateRun(runName, "failed", message);
         console.error(JSON.stringify({ message: "run failed", run: runName, error: message }, null, 2));
       } finally {
-        await releaseClaim(runName);
+        if (useFilesystemClaim) {
+          await releaseClaim(runName);
+        }
       }
     }
 
@@ -195,7 +200,12 @@ async function runWorker(queue: RunQueue, options: WorkerOptions): Promise<void>
 async function main(): Promise<void> {
   const options = parseOptions(process.argv.slice(2));
   const queue = createRunQueueFromEnv();
-  await runWorker(queue, options);
+
+  try {
+    await runWorker(queue, options);
+  } finally {
+    await queue.close();
+  }
 }
 
 void main().catch((error: unknown) => {

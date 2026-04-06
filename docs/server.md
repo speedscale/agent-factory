@@ -43,12 +43,20 @@ Server mode uses two long-lived processes.
 Queue backend selection:
 
 - `RUN_QUEUE_BACKEND=filesystem` (default, implemented)
-- `RUN_QUEUE_BACKEND=redis` (reserved, not implemented yet)
+- `RUN_QUEUE_BACKEND=redis` (implemented)
+
+Redis configuration:
+
+- `REDIS_URL` (example: `redis://127.0.0.1:6379`)
+- `REDIS_QUEUE_KEY` (default: `agent-factory:runs:queued`)
+- `RUN_QUEUE_BATCH_SIZE` (default: `25`)
 
 Run operations:
 
 - list runs: `npm run runs -- list [--phase <phase>]`
 - retry a failed run: `npm run runs -- retry <run-name>`
+
+When Redis backend is enabled, intake and retry operations enqueue run names to Redis and workers consume from Redis.
 
 ### Terminal A: start intake API
 
@@ -96,6 +104,12 @@ Build and start services:
 
 ```bash
 docker compose -f docker-compose.server.yml up --build
+```
+
+Enable Redis queue backend in compose:
+
+```bash
+RUN_QUEUE_BACKEND=redis docker compose -f docker-compose.server.yml up --build
 ```
 
 Then submit intake requests from another terminal:

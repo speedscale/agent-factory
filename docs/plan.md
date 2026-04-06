@@ -212,7 +212,7 @@ Acceptance criteria:
 
 ### Task 10: Implement distributed queue backend
 
-Status: in progress
+Status: complete
 
 Purpose:
 
@@ -228,3 +228,22 @@ Acceptance criteria:
 
 - workers can consume queued runs via Redis without duplicate processing
 - filesystem mode remains a supported local default
+
+### Task 11: Add durable run result summary
+
+Status: in progress
+
+Purpose:
+
+- make run outcomes easy to consume by operators and external automation
+
+Deliverables:
+
+- final `result.json` artifact per run
+- standardized fields for phase outcome, key commands, and artifact pointers
+- docs for using `result.json` in local and Kubernetes operation
+
+Acceptance criteria:
+
+- every completed run has a machine-readable result summary
+- operators can determine success/failure without parsing logs

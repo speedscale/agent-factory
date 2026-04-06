@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { AgentApp, AgentRun } from "../contracts/index.js";
 import { resolveFromRepo, writeJsonFile } from "./io.js";
+import { createRunQueueFromEnv } from "./run-queue.js";
 
 export interface RunIssueInput {
   id: string;
@@ -90,6 +91,13 @@ export async function createRunFromIssue(input: IntakeRequest): Promise<AgentRun
     writeJsonFile(resolveFromRepo(artifactRoot, "issue.json"), input.issue),
     initializeArtifactFiles(absoluteArtifactRoot)
   ]);
+
+  const queue = createRunQueueFromEnv();
+  try {
+    await queue.enqueueRun(run.metadata.name);
+  } finally {
+    await queue.close();
+  }
 
   return run;
 }
