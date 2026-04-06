@@ -1,0 +1,30 @@
+services:
+  intake-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["node", "dist/bin/intake-api.js"]
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./artifacts:/app/artifacts
+      - ./.work:/app/.work
+      - ./examples:/app/examples:ro
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command:
+      - /bin/sh
+      - -lc
+      - node dist/bin/create-demo-fixture.js && node dist/bin/worker.js --source /app/.work/demo-fixture
+    environment:
+      RUN_QUEUE_BACKEND: filesystem
+      PATH: /app/.work/demo-fixture/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    volumes:
+      - ./artifacts:/app/artifacts
+      - ./.work:/app/.work
+      - ./examples:/app/examples:ro
+    depends_on:
+      - intake-api

@@ -48,6 +48,8 @@ Start worker in another terminal:
 PATH="$(pwd)/.work/demo-fixture/bin:$PATH" npm run worker -- --source .work/demo-fixture
 ```
 
+Queue backend defaults to filesystem. Override with `RUN_QUEUE_BACKEND` when alternate backends are added.
+
 Submit a run:
 
 ```bash
@@ -57,3 +59,9 @@ curl -sS -X POST http://localhost:8080/runs \
 ```
 
 See `docs/server.md` for full setup and verification steps.
+
+## Run As Containers
+
+```bash
+docker compose -f docker-compose.server.yml up --build
+```
