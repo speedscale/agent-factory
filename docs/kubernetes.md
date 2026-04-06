@@ -45,6 +45,13 @@ curl -sS -X POST http://127.0.0.1:8080/runs \
   --data-binary @examples/runs/demo-node-intake.json
 ```
 
+Query run status from intake API:
+
+```bash
+curl -sS "http://127.0.0.1:8080/runs?phase=queued&limit=20&offset=0"
+curl -sS "http://127.0.0.1:8080/runs/<run-name>"
+```
+
 Watch worker logs:
 
 ```bash

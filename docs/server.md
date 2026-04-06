@@ -140,6 +140,13 @@ Expected outcome:
 - worker logs `run processed`
 - `artifacts/<run-name>/run.json` reaches `succeeded`
 
+Query run status from intake API:
+
+```bash
+curl -sS "http://127.0.0.1:8080/runs?phase=succeeded&limit=20&offset=0"
+curl -sS "http://127.0.0.1:8080/runs/<run-name>"
+```
+
 ## 4) Server Mode Test Assertions
 
 Use these checks after submitting a run:

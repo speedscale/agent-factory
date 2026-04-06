@@ -1,6 +1,8 @@
 import { createServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import type { AgentRunPhase } from "../contracts/index.js";
 import type { IntakeRequest } from "../lib/run-store.js";
+import { listRuns, loadRun } from "../lib/run-admin.js";
 import { createRunFromIssue } from "../lib/run-store.js";
 
 function sendJson(res: ServerResponse, statusCode: number, payload: unknown): void {
@@ -69,13 +71,117 @@ function isIntakeRequest(value: unknown): value is IntakeRequest {
   );
 }
 
+const allowedPhases: AgentRunPhase[] = [
+  "queued",
+  "planned",
+  "building",
+  "validating",
+  "succeeded",
+  "failed"
+];
+
+function parseRequestUrl(req: IncomingMessage): URL {
+  const host = req.headers.host ?? "localhost";
+  const path = req.url ?? "/";
+  return new URL(path, `http://${host}`);
+}
+
+function parsePhase(value: string | null): AgentRunPhase | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  if (!allowedPhases.includes(value as AgentRunPhase)) {
+    throw new Error(`unsupported phase '${value}'`);
+  }
+
+  return value as AgentRunPhase;
+}
+
+function parsePositiveInteger(value: string | null, fallback: number, key: string): number {
+  if (!value) {
+    return fallback;
+  }
+
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0 || !Number.isInteger(parsed)) {
+    throw new Error(`${key} must be a non-negative integer`);
+  }
+
+  return parsed;
+}
+
+async function listRunsHandler(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const parsedUrl = parseRequestUrl(req);
+  const phase = parsePhase(parsedUrl.searchParams.get("phase"));
+  const limit = Math.min(parsePositiveInteger(parsedUrl.searchParams.get("limit"), 20, "limit"), 100);
+  const offset = parsePositiveInteger(parsedUrl.searchParams.get("offset"), 0, "offset");
+
+  const runs = await listRuns(phase);
+  const page = runs.slice(offset, offset + limit);
+
+  sendJson(res, 200, {
+    count: page.length,
+    total: runs.length,
+    phase: phase ?? "all",
+    limit,
+    offset,
+    runs: page.map((run) => ({
+      name: run.metadata.name,
+      app: run.spec.appRef.name,
+      issue: {
+        id: run.spec.issue.id,
+        title: run.spec.issue.title
+      },
+      phase: run.status.phase,
+      summary: run.status.summary ?? "",
+      artifacts: run.status.artifacts
+    }))
+  });
+}
+
+async function getRunHandler(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const parsedUrl = parseRequestUrl(req);
+  const segments = parsedUrl.pathname.split("/").filter((segment) => segment.length > 0);
+  const runName = segments[1];
+
+  if (!runName) {
+    sendJson(res, 400, { error: "run name is required" });
+    return;
+  }
+
+  try {
+    const run = await loadRun(runName);
+    sendJson(res, 200, { run });
+  } catch {
+    sendJson(res, 404, { error: `run not found: ${runName}` });
+  }
+}
+
 async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  if (req.method === "GET" && req.url === "/healthz") {
+  const parsedUrl = parseRequestUrl(req);
+
+  if (req.method === "GET" && parsedUrl.pathname === "/healthz") {
     sendJson(res, 200, { ok: true, service: "intake-api" });
     return;
   }
 
-  if (req.method === "POST" && req.url === "/runs") {
+  if (req.method === "GET" && parsedUrl.pathname === "/runs") {
+    try {
+      await listRunsHandler(req, res);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "invalid query params";
+      sendJson(res, 400, { error: message });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && parsedUrl.pathname.startsWith("/runs/")) {
+    await getRunHandler(req, res);
+    return;
+  }
+
+  if (req.method === "POST" && parsedUrl.pathname === "/runs") {
     try {
       const body = await readJsonBody(req);
 
