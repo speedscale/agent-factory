@@ -269,7 +269,7 @@ Acceptance criteria:
 
 ### Task 13: Redis-backed Kubernetes scaling profile
 
-Status: in progress
+Status: complete
 
 Purpose:
 
@@ -285,3 +285,22 @@ Acceptance criteria:
 
 - operators can deploy a Redis queue profile with minimal manifest edits
 - multiple workers can be started against shared queue safely
+
+### Task 14: Queue and run observability metrics
+
+Status: in progress
+
+Purpose:
+
+- make queue health and run throughput visible for local and Kubernetes operations
+
+Deliverables:
+
+- intake/worker metrics endpoint(s) for run counters and queue depth
+- docs for baseline SLO checks and operational alerts
+- guidance for scaling decisions based on queue lag and processing rate
+
+Acceptance criteria:
+
+- operators can inspect queue depth and run outcomes without reading logs
+- scaling changes can be driven by observable queue and run metrics

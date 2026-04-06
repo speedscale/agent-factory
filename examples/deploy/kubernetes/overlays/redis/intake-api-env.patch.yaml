@@ -1,0 +1,18 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: intake-api
+spec:
+  template:
+    spec:
+      containers:
+        - name: intake-api
+          env:
+            - name: RUN_QUEUE_BACKEND
+              value: redis
+            - name: REDIS_URL
+              value: redis://redis:6379
+            - name: REDIS_QUEUE_KEY
+              value: agent-factory:runs:queued
+            - name: RUN_QUEUE_BATCH_SIZE
+              value: "50"
