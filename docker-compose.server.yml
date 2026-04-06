@@ -1,9 +1,19 @@
 services:
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
   intake-api:
     build:
       context: .
       dockerfile: Dockerfile
     command: ["node", "dist/bin/intake-api.js"]
+    environment:
+      RUN_QUEUE_BACKEND: ${RUN_QUEUE_BACKEND:-filesystem}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      REDIS_QUEUE_KEY: ${REDIS_QUEUE_KEY:-agent-factory:runs:queued}
+      RUN_QUEUE_BATCH_SIZE: ${RUN_QUEUE_BATCH_SIZE:-25}
     ports:
       - "8080:8080"
     volumes:
@@ -20,7 +30,10 @@ services:
       - -lc
       - node dist/bin/create-demo-fixture.js && node dist/bin/worker.js --source /app/.work/demo-fixture
     environment:
-      RUN_QUEUE_BACKEND: filesystem
+      RUN_QUEUE_BACKEND: ${RUN_QUEUE_BACKEND:-filesystem}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      REDIS_QUEUE_KEY: ${REDIS_QUEUE_KEY:-agent-factory:runs:queued}
+      RUN_QUEUE_BATCH_SIZE: ${RUN_QUEUE_BATCH_SIZE:-25}
       PATH: /app/.work/demo-fixture/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     volumes:
       - ./artifacts:/app/artifacts
@@ -28,3 +41,4 @@ services:
       - ./examples:/app/examples:ro
     depends_on:
       - intake-api
+      - redis

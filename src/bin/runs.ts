@@ -1,5 +1,6 @@
 import type { AgentRunPhase } from "../contracts/index.js";
 import { listRuns, requeueRun } from "../lib/run-admin.js";
+import { createRunQueueFromEnv } from "../lib/run-queue.js";
 
 const phases: AgentRunPhase[] = [
   "queued",
@@ -84,6 +85,12 @@ async function runRetry(argv: string[]): Promise<void> {
 
   const force = hasFlag(argv, ["--force"]);
   const run = await requeueRun(runName, force);
+  const queue = createRunQueueFromEnv();
+  try {
+    await queue.enqueueRun(run.metadata.name);
+  } finally {
+    await queue.close();
+  }
 
   console.log(
     JSON.stringify(

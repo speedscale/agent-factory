@@ -49,7 +49,12 @@ Start worker in another terminal:
 PATH="$(pwd)/.work/demo-fixture/bin:$PATH" npm run worker -- --source .work/demo-fixture
 ```
 
-Queue backend defaults to filesystem. Override with `RUN_QUEUE_BACKEND` when alternate backends are added.
+Queue backend defaults to filesystem. Redis backend is also supported:
+
+```bash
+RUN_QUEUE_BACKEND=redis REDIS_URL=redis://127.0.0.1:6379 npm run intake-api
+RUN_QUEUE_BACKEND=redis REDIS_URL=redis://127.0.0.1:6379 PATH="$(pwd)/.work/demo-fixture/bin:$PATH" npm run worker -- --source .work/demo-fixture
+```
 
 Run management commands:
 
