@@ -5,6 +5,7 @@ import { loadValidatorContext, runValidationStage } from "../lib/validator.js";
 import { readJsonFile, resolveFromRepo, writeJsonFile } from "../lib/io.js";
 import { createRunQueueFromEnv, type RunQueue } from "../lib/run-queue.js";
 import { RUN_CLAIM_FILENAME } from "../lib/run-admin.js";
+import { writeRunResultArtifact } from "../lib/run-result.js";
 import type { AgentRun } from "../contracts/index.js";
 
 interface WorkerOptions {
@@ -39,14 +40,20 @@ async function updateRun(runName: string, phase: AgentRun["status"]["phase"], su
   const runJsonPath = resolveRunJsonPath(runName);
   const run = await readJsonFile<AgentRun>(runJsonPath);
 
-  await writeJsonFile(runJsonPath, {
+  const nextRun: AgentRun = {
     ...run,
     status: {
       ...run.status,
       phase,
       summary
     }
-  });
+  };
+
+  await writeJsonFile(runJsonPath, nextRun);
+
+  if (phase === "failed" || phase === "succeeded") {
+    await writeRunResultArtifact(nextRun);
+  }
 }
 
 async function processRun(runName: string, sourceDir?: string): Promise<void> {

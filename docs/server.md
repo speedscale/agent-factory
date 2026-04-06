@@ -176,5 +176,8 @@ For every run, verify these files exist under `artifacts/<run-name>/`:
 - `patch.diff`
 - `build.log`
 - `validation.log`
+- `result.json`
 
 This artifact set is the minimum proof contract for `issue -> plan -> build -> validate`.
+
+`result.json` is the terminal summary artifact for operators and automation. It includes run identity, final phase, summary, command outcomes, and artifact pointers.

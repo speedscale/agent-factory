@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import type { AgentApp, AgentRun } from "../contracts/index.js";
 import { resolveFromRepo, writeJsonFile } from "./io.js";
 import { loadPlannerContext } from "./planner.js";
+import { writeRunResultArtifact } from "./run-result.js";
 
 export interface ValidatorContext {
   run: AgentRun;
@@ -79,36 +80,35 @@ export async function runValidationStage(context: ValidatorContext): Promise<{ r
     context.run.status.artifacts.validationReport ?? path.posix.join("artifacts", context.run.metadata.name, "validation.log")
   );
 
+  const nextRun: AgentRun = {
+    ...context.run,
+    status: {
+      ...context.run.status,
+      phase: result.exitCode === 0 ? "succeeded" : "failed",
+      summary:
+        result.exitCode === 0
+          ? `Validation succeeded: ${command}`
+          : `Validation failed: ${command}`
+    }
+  };
+
   await Promise.all([
     writeCommandLog(validationLogPath, result),
-    writeJsonFile(
-      resolveFromRepo("artifacts", context.run.metadata.name, "run.json"),
-      {
-        ...context.run,
-        status: {
-          ...context.run.status,
-          phase: result.exitCode === 0 ? "succeeded" : "failed",
-          summary:
-            result.exitCode === 0
-              ? `Validation succeeded: ${command}`
-              : `Validation failed: ${command}`
-        }
+    writeJsonFile(resolveFromRepo("artifacts", context.run.metadata.name, "run.json"), nextRun),
+    writeRunResultArtifact(nextRun, {
+      build: {
+        command: context.app.spec.build.test,
+        exitCode: 0
+      },
+      validation: {
+        command,
+        exitCode: result.exitCode
       }
-    )
+    })
   ]);
 
   return {
     result,
-    run: {
-      ...context.run,
-      status: {
-        ...context.run.status,
-        phase: result.exitCode === 0 ? "succeeded" : "failed",
-        summary:
-          result.exitCode === 0
-            ? `Validation succeeded: ${command}`
-            : `Validation failed: ${command}`
-      }
-    }
+    run: nextRun
   };
 }

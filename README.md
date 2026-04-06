@@ -35,6 +35,8 @@ npm run demo
 
 This runs one end-to-end golden path and writes artifacts under `artifacts/<run-name>/`.
 
+Completed runs include `artifacts/<run-name>/result.json` as a machine-readable terminal summary.
+
 ## Run As Server
 
 Start intake API:
