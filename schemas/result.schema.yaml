@@ -1,35 +1,49 @@
 $schema: https://json-schema.org/draft/2020-12/schema
-title: AgentRun
-description: A single execution of the issue-to-validate loop for a target app.
+title: AgentRunResult
+description: Machine-readable terminal summary of a run outcome.
 type: object
 required:
   - apiVersion
   - kind
   - metadata
   - spec
-  - status
 properties:
   apiVersion:
     type: string
     const: agents.speedscale.io/v1alpha1
   kind:
     type: string
-    const: AgentRun
+    const: AgentRunResult
   metadata:
     type: object
     required:
       - name
+      - generatedAt
     properties:
       name:
         type: string
-    additionalProperties: true
+      generatedAt:
+        type: string
+    additionalProperties: false
   spec:
     type: object
     required:
+      - runRef
       - appRef
       - issue
-      - workspace
+      - phase
+      - summary
+      - commands
+      - artifacts
     properties:
+      runRef:
+        type: object
+        required:
+          - name
+        properties:
+          name:
+            type: string
+        additionalProperties: false
       appRef:
         type: object
         required:
@@ -43,34 +57,14 @@ properties:
         required:
           - id
           - title
-          - body
         properties:
           id:
             type: string
           title:
             type: string
-          body:
-            type: string
           url:
             type: string
         additionalProperties: false
-      workspace:
-        type: object
-        required:
-          - root
-        properties:
-          root:
-            type: string
-          branch:
-            type: string
-        additionalProperties: false
-    additionalProperties: false
-  status:
-    type: object
-    required:
-      - phase
-      - artifacts
-    properties:
       phase:
         type: string
         enum:
@@ -82,9 +76,40 @@ properties:
           - failed
       summary:
         type: string
-      artifacts:
+      commands:
         type: object
         properties:
+          build:
+            type: object
+            required:
+              - command
+              - exitCode
+            properties:
+              command:
+                type: string
+              exitCode:
+                type: number
+            additionalProperties: false
+          validation:
+            type: object
+            required:
+              - command
+              - exitCode
+            properties:
+              command:
+                type: string
+              exitCode:
+                type: number
+            additionalProperties: false
+        additionalProperties: false
+      artifacts:
+        type: object
+        required:
+          - run
+          - result
+        properties:
+          run:
+            type: string
           plan:
             type: string
           patch:

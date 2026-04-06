@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import type { AgentApp, AgentRun } from "../contracts/index.js";
 import { readJsonFile, resolveFromRepo, writeJsonFile } from "./io.js";
 import { loadPlannerContext } from "./planner.js";
+import { writeRunResultArtifact } from "./run-result.js";
 
 export interface RunnerContext {
   run: AgentRun;
@@ -133,6 +134,15 @@ export async function runBuildStage(context: RunnerContext): Promise<{ result: C
   };
 
   await writeJsonFile(resolveFromRepo("artifacts", context.run.metadata.name, "run.json"), nextRun);
+
+  if (nextRun.status.phase === "failed") {
+    await writeRunResultArtifact(nextRun, {
+      build: {
+        command,
+        exitCode: result.exitCode
+      }
+    });
+  }
 
   return { result, run: nextRun };
 }

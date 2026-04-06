@@ -231,7 +231,7 @@ Acceptance criteria:
 
 ### Task 11: Add durable run result summary
 
-Status: in progress
+Status: complete
 
 Purpose:
 
@@ -247,3 +247,22 @@ Acceptance criteria:
 
 - every completed run has a machine-readable result summary
 - operators can determine success/failure without parsing logs
+
+### Task 12: Expose run status via service API
+
+Status: in progress
+
+Purpose:
+
+- allow operators and automation to query run progress without direct filesystem access
+
+Deliverables:
+
+- read-only API endpoints for run list/detail
+- optional phase filtering and basic pagination behavior
+- documentation updates for local and Kubernetes operation
+
+Acceptance criteria:
+
+- operators can query run state from intake service
+- API reflects run phases and artifact pointers consistently

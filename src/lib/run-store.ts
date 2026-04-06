@@ -37,7 +37,8 @@ async function initializeArtifactFiles(artifactRoot: string): Promise<void> {
     writeFile(path.join(artifactRoot, "plan.yaml"), "", "utf8"),
     writeFile(path.join(artifactRoot, "patch.diff"), "", "utf8"),
     writeFile(path.join(artifactRoot, "build.log"), "", "utf8"),
-    writeFile(path.join(artifactRoot, "validation.log"), "", "utf8")
+    writeFile(path.join(artifactRoot, "validation.log"), "", "utf8"),
+    writeFile(path.join(artifactRoot, "result.json"), "", "utf8")
   ]);
 }
 
@@ -80,7 +81,8 @@ export async function createRunFromIssue(input: IntakeRequest): Promise<AgentRun
         plan: ensureRelativePath(artifactRoot, "plan.yaml"),
         patch: ensureRelativePath(artifactRoot, "patch.diff"),
         buildLog: ensureRelativePath(artifactRoot, "build.log"),
-        validationReport: ensureRelativePath(artifactRoot, "validation.log")
+        validationReport: ensureRelativePath(artifactRoot, "validation.log"),
+        result: ensureRelativePath(artifactRoot, "result.json")
       }
     }
   };

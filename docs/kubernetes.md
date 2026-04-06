@@ -51,6 +51,13 @@ Watch worker logs:
 kubectl -n agent-factory logs deploy/worker -f
 ```
 
+Inspect terminal summary artifact in the shared volume-backed run directory:
+
+```bash
+kubectl -n agent-factory exec deploy/worker -- ls /app/artifacts/<run-name>
+kubectl -n agent-factory exec deploy/worker -- cat /app/artifacts/<run-name>/result.json
+```
+
 ## Current limits of this deployment
 
 - worker is wired to the local demo fixture source (`/app/.work/demo-fixture`)

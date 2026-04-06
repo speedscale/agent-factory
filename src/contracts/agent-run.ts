@@ -36,6 +36,7 @@ export interface AgentRun {
       patch?: string;
       buildLog?: string;
       validationReport?: string;
+      result?: string;
     };
   };
 }

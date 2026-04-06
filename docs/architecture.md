@@ -106,6 +106,7 @@ Each run should emit:
 - `patch.diff`
 - `build.log`
 - `validation.log`
+- `result.json`
 
 ## Reliability and Safety Guardrails
 
