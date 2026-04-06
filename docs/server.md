@@ -40,6 +40,11 @@ ls artifacts
 
 Server mode uses two long-lived processes.
 
+Queue backend selection:
+
+- `RUN_QUEUE_BACKEND=filesystem` (default, implemented)
+- `RUN_QUEUE_BACKEND=redis` (reserved, not implemented yet)
+
 ### Terminal A: start intake API
 
 ```bash
@@ -66,7 +71,35 @@ Start worker with fixture source and proxymock shim on `PATH`:
 PATH="$(pwd)/.work/demo-fixture/bin:$PATH" npm run worker -- --source .work/demo-fixture
 ```
 
-### Terminal C: submit a run request
+Use `--once` for one-shot processing in tests/CI:
+
+```bash
+PATH="$(pwd)/.work/demo-fixture/bin:$PATH" npm run worker -- --source .work/demo-fixture --once
+```
+
+## 3) Server Mode with Docker Compose
+
+Build and start services:
+
+```bash
+docker compose -f docker-compose.server.yml up --build
+```
+
+Then submit intake requests from another terminal:
+
+```bash
+curl -sS -X POST http://127.0.0.1:8080/runs \
+  -H "content-type: application/json" \
+  --data-binary @examples/runs/demo-node-intake.json
+```
+
+Stop services:
+
+```bash
+docker compose -f docker-compose.server.yml down
+```
+
+### Terminal C: submit a run request (without Docker)
 
 ```bash
 curl -sS -X POST http://localhost:8080/runs \
@@ -80,7 +113,7 @@ Expected outcome:
 - worker logs `run processed`
 - `artifacts/<run-name>/run.json` reaches `succeeded`
 
-## 3) Server Mode Test Assertions
+## 4) Server Mode Test Assertions
 
 Use these checks after submitting a run:
 
@@ -105,7 +138,7 @@ Notes:
 - The worker already executes planner/runner/validator automatically; manual stage commands are for debugging.
 - `--source` must point at a directory that contains the app workdir from `AgentApp` (`node/` in demo).
 
-## 4) Artifact Expectations
+## 5) Artifact Expectations
 
 For every run, verify these files exist under `artifacts/<run-name>/`:
 

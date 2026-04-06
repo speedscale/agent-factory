@@ -26,7 +26,7 @@ coverage/
 # language-specific
 node_modules/
 vendor/
-bin/
+/bin/
 
 # local runtime state
 .cache/

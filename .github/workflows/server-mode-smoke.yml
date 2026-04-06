@@ -1,0 +1,79 @@
+name: Server Mode Smoke
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  server-mode-smoke:
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npm run check
+
+      - name: Create demo fixture
+        run: npm run create-demo-fixture
+
+      - name: Start intake API
+        run: |
+          npm run intake-api > intake-api.log 2>&1 &
+          echo $! > intake-api.pid
+
+      - name: Wait for intake API health
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sSf http://127.0.0.1:8080/healthz > /dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "intake-api failed to become healthy"
+          exit 1
+
+      - name: Submit run request
+        run: |
+          curl -sS -X POST http://127.0.0.1:8080/runs \
+            -H "content-type: application/json" \
+            --data-binary @examples/runs/demo-node-intake.json > intake-response.json
+          node -e 'const fs=require("fs"); const payload=JSON.parse(fs.readFileSync("intake-response.json","utf8")); if(!payload.run?.metadata?.name){process.exit(1)}; fs.appendFileSync(process.env.GITHUB_ENV, `RUN_NAME=${payload.run.metadata.name}\n`); console.log(payload.run.metadata.name);'
+
+      - name: Process run with worker
+        run: |
+          PATH="$PWD/.work/demo-fixture/bin:$PATH" npm run worker -- --source .work/demo-fixture --once > worker.log 2>&1
+
+      - name: Assert run succeeded
+        run: |
+          node -e 'const fs=require("fs"); const path=require("path"); const runName=process.env.RUN_NAME; const run=JSON.parse(fs.readFileSync(path.join("artifacts", runName, "run.json"), "utf8")); if(run.status.phase !== "succeeded"){console.error(JSON.stringify(run, null, 2)); process.exit(1)}; console.log(JSON.stringify({run: runName, phase: run.status.phase, summary: run.status.summary}, null, 2));'
+
+      - name: Stop intake API
+        if: always()
+        run: |
+          if [ -f intake-api.pid ]; then
+            kill "$(cat intake-api.pid)" || true
+          fi
+
+      - name: Upload debug logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-mode-smoke-logs
+          path: |
+            intake-api.log
+            worker.log
+            intake-response.json

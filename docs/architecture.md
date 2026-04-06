@@ -61,6 +61,7 @@ Use server mode for continuous, API-driven automation:
 - `intake-api` accepts run requests (`POST /runs`)
 - `worker` polls queued runs and executes plan/build/validate
 - both services are stateless; run state is stored in artifact files
+- queue backend is selected via `RUN_QUEUE_BACKEND` (`filesystem` now, `redis` reserved)
 
 This is the minimal server architecture required to migrate from CLI-only operation to a daemonized agent model.
 
@@ -133,6 +134,7 @@ In Kubernetes terms, this maps to one `Deployment` for API and one `Deployment` 
 ## Known Early Limitations
 
 - Current run store is file-based (single shared filesystem assumption).
+- Redis-backed queue is intentionally stubbed for future implementation.
 - Current planner/runner are deterministic stubs for reference behavior.
 - Queue semantics are polling-based, not event-stream based.
 

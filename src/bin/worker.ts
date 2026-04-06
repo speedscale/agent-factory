@@ -1,9 +1,8 @@
-import { readdir } from "node:fs/promises";
-import path from "node:path";
 import { buildPlan, loadPlannerContext, writePlanArtifact } from "../lib/planner.js";
 import { loadRunnerContext, runBuildStage } from "../lib/runner.js";
 import { loadValidatorContext, runValidationStage } from "../lib/validator.js";
 import { readJsonFile, resolveFromRepo, writeJsonFile } from "../lib/io.js";
+import { createRunQueueFromEnv, type RunQueue } from "../lib/run-queue.js";
 import type { AgentRun } from "../contracts/index.js";
 
 interface WorkerOptions {
@@ -41,35 +40,6 @@ async function updateRun(runName: string, phase: AgentRun["status"]["phase"], su
       summary
     }
   });
-}
-
-async function listQueuedRuns(): Promise<string[]> {
-  const artifactsRoot = resolveFromRepo("artifacts");
-
-  let entries: string[] = [];
-  try {
-    entries = await readdir(artifactsRoot);
-  } catch {
-    return [];
-  }
-
-  const queued: string[] = [];
-
-  for (const entry of entries) {
-    const runJsonPath = path.join(artifactsRoot, entry, "run.json");
-
-    try {
-      const run = await readJsonFile<AgentRun>(runJsonPath);
-      if (run.status.phase === "queued") {
-        queued.push(run.metadata.name);
-      }
-    } catch {
-      continue;
-    }
-  }
-
-  queued.sort((a, b) => a.localeCompare(b));
-  return queued;
 }
 
 async function processRun(runName: string, sourceDir?: string): Promise<void> {
@@ -115,9 +85,11 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function runWorker(options: WorkerOptions): Promise<void> {
+async function runWorker(queue: RunQueue, options: WorkerOptions): Promise<void> {
+  console.log(JSON.stringify({ message: "worker started", queueBackend: queue.backend }, null, 2));
+
   while (true) {
-    const queuedRuns = await listQueuedRuns();
+    const queuedRuns = await queue.listQueuedRuns();
 
     if (queuedRuns.length === 0) {
       if (options.once) {
@@ -148,7 +120,8 @@ async function runWorker(options: WorkerOptions): Promise<void> {
 
 async function main(): Promise<void> {
   const options = parseOptions(process.argv.slice(2));
-  await runWorker(options);
+  const queue = createRunQueueFromEnv();
+  await runWorker(queue, options);
 }
 
 void main().catch((error: unknown) => {
