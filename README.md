@@ -50,6 +50,14 @@ PATH="$(pwd)/.work/demo-fixture/bin:$PATH" npm run worker -- --source .work/demo
 
 Queue backend defaults to filesystem. Override with `RUN_QUEUE_BACKEND` when alternate backends are added.
 
+Run management commands:
+
+```bash
+npm run runs -- list
+npm run runs -- list --phase failed
+npm run runs -- retry <run-name>
+```
+
 Submit a run:
 
 ```bash

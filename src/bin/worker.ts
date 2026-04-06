@@ -1,14 +1,17 @@
+import { open, stat, unlink } from "node:fs/promises";
 import { buildPlan, loadPlannerContext, writePlanArtifact } from "../lib/planner.js";
 import { loadRunnerContext, runBuildStage } from "../lib/runner.js";
 import { loadValidatorContext, runValidationStage } from "../lib/validator.js";
 import { readJsonFile, resolveFromRepo, writeJsonFile } from "../lib/io.js";
 import { createRunQueueFromEnv, type RunQueue } from "../lib/run-queue.js";
+import { RUN_CLAIM_FILENAME } from "../lib/run-admin.js";
 import type { AgentRun } from "../contracts/index.js";
 
 interface WorkerOptions {
   sourceDir?: string;
   once: boolean;
   pollMs: number;
+  claimTtlMs: number;
 }
 
 function getArg(argv: string[], flagNames: string[]): string | undefined {
@@ -26,6 +29,10 @@ function hasFlag(argv: string[], flagNames: string[]): boolean {
 
 function resolveRunJsonPath(runName: string): string {
   return resolveFromRepo("artifacts", runName, "run.json");
+}
+
+function resolveRunClaimPath(runName: string): string {
+  return resolveFromRepo("artifacts", runName, RUN_CLAIM_FILENAME);
 }
 
 async function updateRun(runName: string, phase: AgentRun["status"]["phase"], summary: string): Promise<void> {
@@ -64,20 +71,80 @@ async function processRun(runName: string, sourceDir?: string): Promise<void> {
   await runValidationStage(validatorContext);
 }
 
+async function tryClaimRun(runName: string, claimTtlMs: number): Promise<boolean> {
+  const claimPath = resolveRunClaimPath(runName);
+  const payload = {
+    workerPid: process.pid,
+    claimedAt: new Date().toISOString()
+  };
+
+  try {
+    const handle = await open(claimPath, "wx");
+    await handle.writeFile(`${JSON.stringify(payload, null, 2)}\n`, "utf8");
+    await handle.close();
+    return true;
+  } catch (error) {
+    const maybeFsError = error as NodeJS.ErrnoException;
+    if (maybeFsError.code !== "EEXIST") {
+      throw error;
+    }
+
+    if (claimTtlMs <= 0) {
+      return false;
+    }
+
+    try {
+      const current = await stat(claimPath);
+      const ageMs = Date.now() - current.mtimeMs;
+      if (ageMs < claimTtlMs) {
+        return false;
+      }
+
+      await unlink(claimPath);
+    } catch {
+      return false;
+    }
+
+    try {
+      const retryHandle = await open(claimPath, "wx");
+      await retryHandle.writeFile(`${JSON.stringify(payload, null, 2)}\n`, "utf8");
+      await retryHandle.close();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+async function releaseClaim(runName: string): Promise<void> {
+  try {
+    await unlink(resolveRunClaimPath(runName));
+  } catch {
+    // no-op
+  }
+}
+
 function parseOptions(argv: string[]): WorkerOptions {
   const sourceDir = getArg(argv, ["--source", "-s"]);
   const once = hasFlag(argv, ["--once"]);
   const pollArg = getArg(argv, ["--poll-ms", "-p"]);
+  const claimTtlArg = getArg(argv, ["--claim-ttl-ms"]);
   const pollMs = Number(pollArg ?? "2000");
+  const claimTtlMs = Number(claimTtlArg ?? "900000");
 
   if (!Number.isFinite(pollMs) || pollMs <= 0) {
     throw new Error("--poll-ms must be a positive integer");
   }
 
+  if (!Number.isFinite(claimTtlMs) || claimTtlMs < 0) {
+    throw new Error("--claim-ttl-ms must be a non-negative integer");
+  }
+
   return {
     sourceDir,
     once,
-    pollMs: Math.floor(pollMs)
+    pollMs: Math.floor(pollMs),
+    claimTtlMs: Math.floor(claimTtlMs)
   };
 }
 
@@ -102,6 +169,11 @@ async function runWorker(queue: RunQueue, options: WorkerOptions): Promise<void>
     }
 
     for (const runName of queuedRuns) {
+      const claimed = await tryClaimRun(runName, options.claimTtlMs);
+      if (!claimed) {
+        continue;
+      }
+
       try {
         await processRun(runName, options.sourceDir);
         console.log(JSON.stringify({ message: "run processed", run: runName }, null, 2));
@@ -109,6 +181,8 @@ async function runWorker(queue: RunQueue, options: WorkerOptions): Promise<void>
         const message = error instanceof Error ? error.message : "run processing failed";
         await updateRun(runName, "failed", message);
         console.error(JSON.stringify({ message: "run failed", run: runName, error: message }, null, 2));
+      } finally {
+        await releaseClaim(runName);
       }
     }
 

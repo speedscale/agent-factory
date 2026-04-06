@@ -111,6 +111,7 @@ Each run should emit:
 
 - **Deterministic workers**: execute one run at a time per worker process.
 - **Isolated workspace**: run commands under `.work/<run-name>`.
+- **Run claiming**: workers create a per-run claim file before processing to avoid double execution.
 - **Idempotent intake**: run identity is derived from app name + issue id.
 - **Evidence-first completion**: do not mark success without validation command exit `0`.
 - **App-agnostic control plane**: onboarding data lives in app manifest, not worker code.
