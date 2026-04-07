@@ -1,0 +1,49 @@
+{
+  "app": {
+    "apiVersion": "agents.speedscale.io/v1alpha1",
+    "kind": "AgentApp",
+    "metadata": {
+      "name": "replace-with-app-name"
+    },
+    "spec": {
+      "repo": {
+        "provider": "github",
+        "url": "https://github.com/<owner>/<repo>",
+        "defaultBranch": "main",
+        "workdir": "."
+      },
+      "issue": {
+        "labels": {
+          "include": [
+            "agent-ready",
+            "bug",
+            "validation-required"
+          ]
+        }
+      },
+      "build": {
+        "install": "<install command>",
+        "test": "<test command>",
+        "start": "<start command>"
+      },
+      "validate": {
+        "proxymock": {
+          "dataset": "<dataset>",
+          "mode": "replay-with-mocks",
+          "command": "<validation command>"
+        }
+      },
+      "policy": {
+        "autoBranch": true,
+        "autoMr": false,
+        "autoMerge": false
+      }
+    }
+  },
+  "issue": {
+    "id": "<issue-id>",
+    "title": "<issue-title>",
+    "body": "<problem statement + expected behavior + acceptance checks>",
+    "url": "https://github.com/<owner>/<repo>/issues/<number>"
+  }
+}

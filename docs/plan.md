@@ -65,6 +65,7 @@ Deliverables:
 - issue selection contract (labels/template)
 - triage output shape with root-cause hypothesis
 - patch proposal flow with reproducible validation evidence
+- operator pass/fail rubric and first-live-run checklist
 
 Exit criteria:
 
@@ -112,10 +113,11 @@ Exit criteria:
 ## Immediate Next Actions
 
 1. pick the first real issue/repo pair for Phase B execution
-2. define the pass/fail rubric for autonomous ticket completion
+2. submit the first real-ticket intake payload
 3. run one autonomous ticket through intake -> result with operator review
 
 ## Notes
 
 - Historical completed work is tracked in `docs/history.md`.
 - `docs/architecture.md` remains the source of truth for system shape.
+- Phase B execution details and rubric are tracked in `docs/autonomy-mvp.md`.
