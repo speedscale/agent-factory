@@ -34,6 +34,7 @@ function createRunName(appName: string, issueId: string): string {
 
 async function initializeArtifactFiles(artifactRoot: string): Promise<void> {
   await Promise.all([
+    writeFile(path.join(artifactRoot, "triage.json"), "", "utf8"),
     writeFile(path.join(artifactRoot, "plan.yaml"), "", "utf8"),
     writeFile(path.join(artifactRoot, "patch.diff"), "", "utf8"),
     writeFile(path.join(artifactRoot, "build.log"), "", "utf8"),
@@ -78,6 +79,7 @@ export async function createRunFromIssue(input: IntakeRequest): Promise<AgentRun
     status: {
       phase: "queued",
       artifacts: {
+        triage: ensureRelativePath(artifactRoot, "triage.json"),
         plan: ensureRelativePath(artifactRoot, "plan.yaml"),
         patch: ensureRelativePath(artifactRoot, "patch.diff"),
         buildLog: ensureRelativePath(artifactRoot, "build.log"),

@@ -110,6 +110,8 @@ properties:
         properties:
           run:
             type: string
+          triage:
+            type: string
           plan:
             type: string
           patch:

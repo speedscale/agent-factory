@@ -50,6 +50,7 @@ export async function writeRunResultArtifact(
       commands,
       artifacts: {
         run: runPath,
+        triage: run.status.artifacts.triage,
         plan: run.status.artifacts.plan,
         patch: run.status.artifacts.patch,
         buildLog: run.status.artifacts.buildLog,

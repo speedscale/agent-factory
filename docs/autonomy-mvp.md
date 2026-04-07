@@ -41,6 +41,7 @@ Treat the run as **fail** when any criterion is missing or contradictory.
 ## Evidence bundle required for review
 
 - run record: `run.json`
+- triage artifact: `triage.json`
 - plan: `plan.yaml`
 - patch summary: `patch.diff`
 - build evidence: `build.log`

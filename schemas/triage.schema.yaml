@@ -1,0 +1,71 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+title: AgentTriage
+description: Structured triage artifact for a run.
+type: object
+required:
+  - apiVersion
+  - kind
+  - metadata
+  - spec
+properties:
+  apiVersion:
+    type: string
+    const: agents.speedscale.io/v1alpha1
+  kind:
+    type: string
+    const: AgentTriage
+  metadata:
+    type: object
+    required:
+      - name
+    properties:
+      name:
+        type: string
+    additionalProperties: false
+  spec:
+    type: object
+    required:
+      - runRef
+      - issue
+      - hypothesis
+      - confidence
+      - candidatePaths
+      - rationale
+    properties:
+      runRef:
+        type: object
+        required:
+          - name
+        properties:
+          name:
+            type: string
+        additionalProperties: false
+      issue:
+        type: object
+        required:
+          - id
+          - title
+        properties:
+          id:
+            type: string
+          title:
+            type: string
+        additionalProperties: false
+      hypothesis:
+        type: string
+      confidence:
+        type: string
+        enum:
+          - low
+          - medium
+          - high
+      candidatePaths:
+        type: array
+        items:
+          type: string
+      rationale:
+        type: array
+        items:
+          type: string
+    additionalProperties: false
+additionalProperties: false

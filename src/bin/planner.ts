@@ -1,7 +1,7 @@
 import path from "node:path";
 import { samplePlan, sampleRun } from "../lib/sample-data.js";
 import { writeJsonFile } from "../lib/io.js";
-import { buildPlan, loadPlannerContext, writePlanArtifact } from "../lib/planner.js";
+import { buildPlan, loadPlannerContext, writePlanArtifact, writeTriageArtifact } from "../lib/planner.js";
 
 function getRunInput(argv: string[]): string | undefined {
   const flagIndex = argv.findIndex((value) => value === "--run" || value === "-r");
@@ -34,6 +34,7 @@ async function runPlanner(runInput: string): Promise<unknown> {
 
   await Promise.all([
     writePlanArtifact(context.runDir, plan),
+    writeTriageArtifact(context, plan),
     writeJsonFile(runJsonPath, updatedRun)
   ]);
 

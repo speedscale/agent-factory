@@ -60,6 +60,6 @@ Validation succeeded: make proxymock-replay
 
 Phase B infrastructure path for first live run is now working. Next gap is autonomous ticket quality (triage/patch intent), not runtime orchestration.
 
-1. capture explicit triage hypothesis artifact tied to the real issue
-2. generate patch proposal evidence (currently patch artifact is runner placeholder)
-3. complete operator decision record against full autonomy rubric
+1. run-to-PR automation from successful run artifacts
+2. complete operator decision record against full autonomy rubric
+3. validate that generated PR scope stays aligned to issue acceptance checks

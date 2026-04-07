@@ -106,6 +106,7 @@ Each run should emit:
 - `issue.json`
 - `app.json`
 - `run.json`
+- `triage.json`
 - `plan.yaml`
 - `patch.diff`
 - `build.log`

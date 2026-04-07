@@ -1,7 +1,7 @@
 import { open, stat, unlink } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { Server } from "node:http";
-import { buildPlan, loadPlannerContext, writePlanArtifact } from "../lib/planner.js";
+import { buildPlan, loadPlannerContext, writePlanArtifact, writeTriageArtifact } from "../lib/planner.js";
 import { loadRunnerContext, runBuildStage } from "../lib/runner.js";
 import { loadValidatorContext, runValidationStage } from "../lib/validator.js";
 import { readJsonFile, resolveFromRepo, writeJsonFile } from "../lib/io.js";
@@ -78,6 +78,7 @@ async function processRun(runName: string, sourceDir?: string): Promise<void> {
 
   await Promise.all([
     writePlanArtifact(plannerContext.runDir, plan),
+    writeTriageArtifact(plannerContext, plan),
     updateRun(runName, "planned", plan.spec.summary)
   ]);
 

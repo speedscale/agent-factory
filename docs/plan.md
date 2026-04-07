@@ -112,9 +112,9 @@ Exit criteria:
 
 ## Immediate Next Actions
 
-1. add explicit triage artifact for real-ticket runs (root-cause hypothesis contract)
-2. replace placeholder patch output with real patch proposal capture
-3. run operator decision against full autonomy rubric in `docs/phase-b-first-run.md`
+1. add run-to-pr automation (create branch, commit patch, open PR)
+2. run operator decision against full autonomy rubric in `docs/phase-b-first-run.md`
+3. execute one microsvc ticket with automatic PR output
 
 ## Notes
 

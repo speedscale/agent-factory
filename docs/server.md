@@ -221,6 +221,7 @@ For every run, verify these files exist under `artifacts/<run-name>/`:
 - `app.json`
 - `issue.json`
 - `run.json`
+- `triage.json`
 - `plan.yaml`
 - `patch.diff`
 - `build.log`

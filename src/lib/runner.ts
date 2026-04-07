@@ -92,6 +92,60 @@ async function writeCommandLog(logPath: string, result: CommandResult): Promise<
   await writeFile(logPath, `${payload}\n`, "utf8");
 }
 
+async function capturePatchArtifact(context: RunnerContext, buildCommand: string): Promise<void> {
+  const patchPath = resolveFromRepo(context.run.status.artifacts.patch ?? path.posix.join("artifacts", context.run.metadata.name, "patch.diff"));
+
+  if (!context.sourceDir) {
+    await writeFile(
+      patchPath,
+      [
+        "--- a/sandbox",
+        "+++ b/sandbox",
+        "@@",
+        "+ runner executed the configured build command in an isolated workspace",
+        `+ command: ${buildCommand}`
+      ].join("\n") + "\n",
+      "utf8"
+    );
+    return;
+  }
+
+  const diffResult = await runShellCommand(
+    `git diff --no-index -- "${context.sourceDir}" "${context.workspaceDir}"`,
+    resolveFromRepo(".")
+  );
+
+  if (diffResult.exitCode === 1 && diffResult.stdout.trim().length > 0) {
+    await writeFile(patchPath, diffResult.stdout, "utf8");
+    return;
+  }
+
+  if (diffResult.exitCode === 0) {
+    await writeFile(
+      patchPath,
+      [
+        "# no source changes detected in workspace",
+        `# build command executed: ${buildCommand}`
+      ].join("\n") + "\n",
+      "utf8"
+    );
+    return;
+  }
+
+  await writeFile(
+    patchPath,
+    [
+      "# patch capture failed",
+      `# command: git diff --no-index -- \"${context.sourceDir}\" \"${context.workspaceDir}\"`,
+      `# exitCode: ${diffResult.exitCode}`,
+      diffResult.stderr.trimEnd()
+    ]
+      .filter((line) => line.length > 0)
+      .join("\n") + "\n",
+    "utf8"
+  );
+}
+
 export async function loadRunnerContext(runInput: string, sourceDir?: string): Promise<RunnerContext> {
   const plannerContext = await loadPlannerContext(runInput);
   return {
@@ -116,17 +170,7 @@ export async function runBuildStage(context: RunnerContext): Promise<{ result: C
 
   await Promise.all([
     writeCommandLog(resolveFromRepo(context.run.status.artifacts.buildLog ?? path.posix.join("artifacts", context.run.metadata.name, "build.log")), result),
-    writeFile(
-      resolveFromRepo(context.run.status.artifacts.patch ?? path.posix.join("artifacts", context.run.metadata.name, "patch.diff")),
-      [
-        "--- a/sandbox",
-        "+++ b/sandbox",
-        "@@",
-        "+ runner executed the configured build command in an isolated workspace",
-        `+ command: ${command}`
-      ].join("\n") + "\n",
-      "utf8"
-    )
+    capturePatchArtifact(context, command)
   ]);
 
   const nextRun: AgentRun = {
