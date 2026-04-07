@@ -29,6 +29,24 @@ Keep changes aligned with that goal. Prefer small, explicit contracts over broad
 - Put user-facing examples and sample issues in `examples/issues/`.
 - Put schemas and machine-readable contracts in `schemas/`.
 
+## Versioning Policy
+
+- Every pull request must bump `package.json` version.
+- Use semantic versioning:
+  - patch: docs-only, fixes, minor behavior hardening
+  - minor: new user-visible capability or contract extension
+  - major: breaking contract change
+- Do not merge PRs without a version bump.
+
+## Multi-Repo Agent Instruction Resolution
+
+When Agent Factory is used to change another repository:
+
+1. Read this repo's `AGENTS.md` and the target repo's `AGENTS.md` before planning changes.
+2. Apply the stricter rule when instructions overlap.
+3. If instructions conflict and cannot both be satisfied, stop and ask for operator decision.
+4. In PR summaries, state which instruction files were applied.
+
 ## Out of Scope For Early Commits
 
 - full production CI/CD design
