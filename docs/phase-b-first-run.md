@@ -37,18 +37,15 @@ This is the concrete execution plan for the first real-ticket autonomous run.
 ## Latest execution result
 
 - run name: `run-microsvc-user-service-microsvc-user-service-404`
-- final phase: `failed`
+- final phase: `succeeded`
 - build command: `make test` (exit `0`)
-- validation command: `make proxymock-replay` (exit `2`)
-- key failure: service failed to become ready due runtime dependency failure
+- validation command: `make proxymock-replay` (exit `0`)
+- result: replay validation completed successfully with runtime dependency + service bootstrap flow
 
 Observed validation error excerpt:
 
 ```text
-service bootstrap timed out: localhost:8081 did not become ready
-...
-HikariPool-1 - Exception during pool initialization
-org.postgresql.util.PSQLException: The connection attempt failed.
+Validation succeeded: make proxymock-replay
 ```
 
 ## What was implemented during this run
@@ -56,11 +53,13 @@ org.postgresql.util.PSQLException: The connection attempt failed.
 - workspace copy now excludes `node_modules`, `.git`, `.work`, and `artifacts` to avoid recursive copy failures
 - validation flow now supports service bootstrap (`validate.proxymock.service`) with TCP readiness waiting
 - validation logs now include captured service stdout/stderr on bootstrap timeout
+- validation supports dependency setup/teardown hooks (`validate.proxymock.dependencies`)
+- microsvc profile now boots an isolated postgres dependency container and runs user-service on `SERVER_PORT=8081`
 
 ## Next remediation for Phase B
 
-Before the first ticket can pass autonomously, runtime dependency bootstrapping must be added for validation service startup:
+Phase B infrastructure path for first live run is now working. Next gap is autonomous ticket quality (triage/patch intent), not runtime orchestration.
 
-1. provide dependency profile for service bootstrap (DB/mock endpoints/env)
-2. start dependencies before service bootstrap
-3. re-run replay validation and evaluate against rubric
+1. capture explicit triage hypothesis artifact tied to the real issue
+2. generate patch proposal evidence (currently patch artifact is runner placeholder)
+3. complete operator decision record against full autonomy rubric

@@ -36,6 +36,10 @@
             "host": "localhost",
             "port": 8081,
             "startupTimeoutSeconds": 90
+          },
+          "dependencies": {
+            "setupCommand": "<optional setup command>",
+            "teardownCommand": "<optional teardown command>"
           }
         }
       },
