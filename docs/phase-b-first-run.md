@@ -63,6 +63,12 @@ Phase B infrastructure path for first live run is now working. Next gap is auton
 
 End-to-end proof (ticket -> run -> validate -> PR) is now demonstrated for the selected microsvc issue path.
 
+For ongoing proofs, populate `evidence.json` with:
+
+- discovery notes from logs
+- Speedscale capture dataset + request/response summary
+- local repro steps and observed/expected behavior
+
 1. run-to-PR automation from successful run artifacts
 2. complete operator decision record against full autonomy rubric
 3. validate that generated PR scope stays aligned to issue acceptance checks

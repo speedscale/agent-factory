@@ -33,6 +33,7 @@ export interface AgentRunResult {
     };
     artifacts: {
       run: string;
+      evidence?: string;
       triage?: string;
       plan?: string;
       patch?: string;

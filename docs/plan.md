@@ -112,9 +112,9 @@ Exit criteria:
 
 ## Immediate Next Actions
 
-1. execute one microsvc ticket with automatic PR output
-2. run operator decision against full autonomy rubric in `docs/phase-b-first-run.md`
-3. classify remaining autonomy gaps by failure type (`triage`, `patch quality`, `validation fidelity`)
+1. execute one microsvc ticket with logs/capture/repro evidence populated in `evidence.json`
+2. generate PR via `run-to-pr` and verify evidence sections render correctly
+3. run operator decision against full autonomy rubric in `docs/phase-b-first-run.md`
 
 ## Notes
 

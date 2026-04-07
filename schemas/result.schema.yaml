@@ -110,6 +110,8 @@ properties:
         properties:
           run:
             type: string
+          evidence:
+            type: string
           triage:
             type: string
           plan:
