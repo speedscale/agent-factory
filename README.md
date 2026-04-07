@@ -1,115 +1,32 @@
 # Agent Factory
 
-Agent Factory is a public reference architecture for an autonomous inner dev loop:
+Agent Factory is a reference architecture for an autonomous inner loop:
 
 `issue -> plan -> build -> validate`
 
-The goal is simple: take a bug report, generate a plan, attempt a fix in an isolated workspace, and validate the result against recorded traffic with `proxymock`.
+It takes an intake payload, creates a run workspace, attempts a fix, validates with replay evidence, and emits artifacts for operator review.
 
-This repo is intentionally focused on the tight inner loop, not full CI/CD or production deployment.
+## Start Here
 
-The core design keeps three boundaries clear:
+- **I want to run Agent Factory:** see `docs/users.md`
+- **I want to build/change Agent Factory:** see `docs/developers.md`
+- **I need the full doc index:** see `docs/README.md`
 
-- **app**: the target codebase
-- **agent**: planning and code execution
-- **validation**: replay-based proof
+## Audience Split
 
-Apps should be onboarded declaratively through a small manifest instead of being hardcoded into the control plane.
+- **Users (operators/integrators):** deployment, run submission, metrics, troubleshooting, and day-2 operations
+- **Developers (contributors):** architecture, contracts, roadmap, release flow, and implementation history
 
-The current repo contains the initial design docs and onboarding contract for the first implementation pass.
-
-- [Architecture](docs/architecture.md)
-- [Plan](docs/plan.md)
-- [Implementation History](docs/history.md)
-- [Autonomy MVP Guide](docs/autonomy-mvp.md)
-- [Phase B First Run](docs/phase-b-first-run.md)
-- [Release Checklist](docs/release.md)
-- [Golden Path Demo](docs/demo.md)
-- [Local and Server Runbook](docs/server.md)
-- [Kubernetes Deployment Guide](docs/kubernetes.md)
-- [Operations Runbook](docs/operations.md)
-- [Microsvc Onboarding](docs/microsvc.md)
-- [Sample `AgentApp`](examples/apps/demo-node/agentapp.yaml)
-
-## Run Locally
+## Quick Run (Local Golden Path)
 
 ```bash
 npm install
 npm run demo
 ```
 
-This runs one end-to-end golden path and writes artifacts under `artifacts/<run-name>/`.
+Artifacts land in `artifacts/<run-name>/`, including terminal summary `result.json`.
 
-Completed runs include `artifacts/<run-name>/result.json` as a machine-readable terminal summary.
-
-## Run As Server
-
-Start intake API:
-
-```bash
-npm run intake-api
-```
-
-Start worker in another terminal:
-
-```bash
-PATH="$(pwd)/.work/demo-fixture/bin:$PATH" npm run worker -- --source .work/demo-fixture
-```
-
-Queue backend defaults to filesystem. Redis backend is also supported:
-
-```bash
-RUN_QUEUE_BACKEND=redis REDIS_URL=redis://127.0.0.1:6379 npm run intake-api
-RUN_QUEUE_BACKEND=redis REDIS_URL=redis://127.0.0.1:6379 PATH="$(pwd)/.work/demo-fixture/bin:$PATH" npm run worker -- --source .work/demo-fixture
-```
-
-Run management commands:
-
-```bash
-npm run runs -- list
-npm run runs -- list --phase failed
-npm run runs -- retry <run-name>
-```
-
-Submit a run:
-
-```bash
-curl -sS -X POST http://localhost:8080/runs \
-  -H "content-type: application/json" \
-  --data-binary @examples/runs/demo-node-intake.json
-```
-
-Query run status via API:
-
-```bash
-curl -sS "http://localhost:8080/runs?phase=queued&limit=20&offset=0"
-curl -sS "http://localhost:8080/runs/run-demo-node-bug-404-status"
-```
-
-Queue/run metrics:
-
-```bash
-curl -sS "http://localhost:8080/metrics"
-```
-
-Optional token auth for run APIs and metrics:
-
-```bash
-INTAKE_API_TOKEN=change-me npm run intake-api
-curl -sS -H "Authorization: Bearer change-me" "http://localhost:8080/runs"
-```
-
-When `INTAKE_API_TOKEN` is unset, local dev mode stays open (no auth required).
-
-See `docs/server.md` for full setup and verification steps.
-
-## Run As Containers
-
-```bash
-docker compose -f docker-compose.server.yml up --build
-```
-
-Always-on mode (restart policies + health checks):
+## Quick Run (Always-On Compose)
 
 ```bash
 cp .env.server.example .env.server
@@ -117,46 +34,22 @@ docker compose --env-file .env.server -f docker-compose.server.yml up -d
 docker compose --env-file .env.server -f docker-compose.server.yml ps
 ```
 
-Pinned image release mode:
-
-```bash
-AGENT_FACTORY_IMAGE=ghcr.io/speedscale/agent-factory:v0.1.0 docker compose -f docker-compose.server.yml up -d
-```
-
-## Run On Kubernetes
+## Quick Run (Kubernetes)
 
 ```bash
 kubectl apply -k examples/deploy/kubernetes/base
-```
-
-Redis-backed scaling profile:
-
-```bash
 kubectl apply -k examples/deploy/kubernetes/overlays/redis
 ```
 
-Auth-token profile:
+Submit runs through intake API `POST /runs` using payloads in `examples/runs/`.
 
-```bash
-kubectl apply -k examples/deploy/kubernetes/overlays/auth-token
-```
+## Core Artifacts Per Run
 
-See `docs/kubernetes.md` for cluster setup, run submission, and limits of the current deployment model.
-
-## Start Real Ticket Autonomy
-
-- Use `examples/issues/agent-ready-ticket-template.md` to prepare an agent-ready issue.
-- Use `examples/runs/real-ticket-intake.template.json` to submit the first real ticket intake payload.
-- Evaluate run evidence with `docs/autonomy-mvp.md` pass/fail rubric.
-
-Create a PR from a succeeded run:
-
-```bash
-npm run run-to-pr -- --run <run-name> --repo /path/to/target-repo
-```
-
-Before creating the PR, fill `artifacts/<run-name>/evidence.json` with:
-
-- discovery evidence from logs
-- Speedscale/proxymock capture details
-- local reproduction steps and observed/expected behavior
+- `run.json`
+- `triage.json`
+- `plan.yaml`
+- `patch.diff`
+- `build.log`
+- `validation.log`
+- `evidence.json`
+- `result.json`

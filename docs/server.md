@@ -1,9 +1,13 @@
 # Local and Server Runbook
 
+Audience: Agent Factory users/operators.
+
 This runbook shows how to execute and verify Agent Factory in both modes:
 
 - local one-shot golden path
 - server-style intake + worker loop
+
+For a quicker summary path, start at `docs/users.md` and come back here for full command-level detail.
 
 ## Prerequisites
 
@@ -179,7 +183,7 @@ Stop services:
 docker compose --env-file .env.server -f docker-compose.server.yml down
 ```
 
-### Terminal C: submit a run request (without Docker)
+### Submit a run request
 
 ```bash
 curl -sS -X POST http://localhost:8080/runs \
@@ -226,28 +230,13 @@ See `docs/operations.md` for threshold values and remediation workflow.
 
 ## 4) Server Mode Test Assertions
 
-Use these checks after submitting a run:
+After submission, confirm:
 
-```bash
-ls artifacts
-```
+- intake returns a run name
+- worker logs show the run progressing through `planned -> built -> validated`
+- `artifacts/<run-name>/run.json` ends in `succeeded` or `failed` with explicit summary
 
-```bash
-npm run planner -- --run <run-name>
-```
-
-```bash
-npm run runner -- --run <run-name> --source .work/demo-fixture
-```
-
-```bash
-PATH="$(pwd)/.work/demo-fixture/bin:$PATH" npm run validator -- --run <run-name>
-```
-
-Notes:
-
-- The worker already executes planner/runner/validator automatically; manual stage commands are for debugging.
-- `--source` must point at a directory that contains the app workdir from `AgentApp` (`node/` in demo).
+Manual `planner` / `runner` / `validator` command execution is developer debugging workflow and is documented in `docs/developers.md`.
 
 ## 5) Artifact Expectations
 

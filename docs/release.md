@@ -1,5 +1,7 @@
 # Release Checklist
 
+Audience: Agent Factory developers/release maintainers.
+
 Use this checklist to produce a repeatable, versioned Agent Factory release.
 
 ## 1) Choose release version
