@@ -107,6 +107,14 @@ properties:
                   startupTimeoutSeconds:
                     type: number
                 additionalProperties: false
+              dependencies:
+                type: object
+                properties:
+                  setupCommand:
+                    type: string
+                  teardownCommand:
+                    type: string
+                additionalProperties: false
             additionalProperties: false
         additionalProperties: false
       policy:

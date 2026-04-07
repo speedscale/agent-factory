@@ -112,9 +112,9 @@ Exit criteria:
 
 ## Immediate Next Actions
 
-1. define runtime dependency bootstrap profile for `speedscale/microsvc#58` validation
-2. implement dependency startup hooks before service bootstrap
-3. re-run first live ticket and complete operator decision record in `docs/phase-b-first-run.md`
+1. add explicit triage artifact for real-ticket runs (root-cause hypothesis contract)
+2. replace placeholder patch output with real patch proposal capture
+3. run operator decision against full autonomy rubric in `docs/phase-b-first-run.md`
 
 ## Notes
 

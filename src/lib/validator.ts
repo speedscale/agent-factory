@@ -122,6 +122,18 @@ async function writeCommandLog(logPath: string, result: CommandResult): Promise<
   await writeFile(logPath, `${payload}\n`, "utf8");
 }
 
+function formatCommandOutput(result: CommandResult, label: string): string {
+  return [
+    `[${label}] ${result.command}`,
+    result.stdout.trimEnd() ? "[stdout]" : "",
+    result.stdout.trimEnd(),
+    result.stderr.trimEnd() ? "[stderr]" : "",
+    result.stderr.trimEnd()
+  ]
+    .filter((line) => line.length > 0)
+    .join("\n");
+}
+
 export async function loadValidatorContext(runInput: string): Promise<ValidatorContext> {
   const plannerContext = await loadPlannerContext(runInput);
   return {
@@ -133,97 +145,138 @@ export async function loadValidatorContext(runInput: string): Promise<ValidatorC
 export async function runValidationStage(context: ValidatorContext): Promise<{ result: CommandResult; run: AgentRun }> {
   const command = context.app.spec.validate.proxymock.command;
   const workspaceCwd = path.join(context.workspaceDir, context.app.spec.repo.workdir);
+  const dependencies = context.app.spec.validate.proxymock.dependencies;
   const service = context.app.spec.validate.proxymock.service;
-  let serviceProcess: ChildProcess | undefined;
-  let serviceStdout = "";
-  let serviceStderr = "";
-
-  if (service) {
-    const serviceCommand = service.command ?? context.app.spec.build.start;
-    const serviceHost = service.host ?? "localhost";
-    const startupTimeoutSeconds = service.startupTimeoutSeconds ?? 60;
-
-    serviceProcess = spawnService(serviceCommand, workspaceCwd);
-    serviceProcess.stdout?.on("data", (chunk: Buffer) => {
-      serviceStdout += chunk.toString("utf8");
-    });
-    serviceProcess.stderr?.on("data", (chunk: Buffer) => {
-      serviceStderr += chunk.toString("utf8");
-    });
-
-    const ready = await waitForTcp(serviceHost, service.port, startupTimeoutSeconds * 1000);
-
-    if (!ready) {
-      await stopService(serviceProcess);
-
-      const failedResult: CommandResult = {
-        command,
-        exitCode: 1,
-        stdout: "",
-        stderr: [
-          `service bootstrap timed out: ${serviceHost}:${service.port} did not become ready`,
-          serviceStdout.trimEnd() ? "[service stdout]" : "",
-          serviceStdout.trimEnd(),
-          serviceStderr.trimEnd() ? "[service stderr]" : "",
-          serviceStderr.trimEnd()
-        ]
-          .filter((line) => line.length > 0)
-          .join("\n")
-      };
-
-      const validationLogPath = resolveFromRepo(
-        context.run.status.artifacts.validationReport ?? path.posix.join("artifacts", context.run.metadata.name, "validation.log")
-      );
-
-      const failedRun: AgentRun = {
-        ...context.run,
-        status: {
-          ...context.run.status,
-          phase: "failed",
-          summary: `Validation failed: service bootstrap timeout for ${serviceHost}:${service.port}`
-        }
-      };
-
-      await Promise.all([
-        writeCommandLog(validationLogPath, failedResult),
-        writeJsonFile(resolveFromRepo("artifacts", context.run.metadata.name, "run.json"), failedRun),
-        writeRunResultArtifact(failedRun, {
-          build: {
-            command: context.app.spec.build.test,
-            exitCode: 0
-          },
-          validation: {
-            command,
-            exitCode: failedResult.exitCode
-          }
-        })
-      ]);
-
-      return {
-        result: failedResult,
-        run: failedRun
-      };
-    }
-  }
-
-  const result = await runShellCommand(command, workspaceCwd);
   const validationLogPath = resolveFromRepo(
     context.run.status.artifacts.validationReport ?? path.posix.join("artifacts", context.run.metadata.name, "validation.log")
   );
-
-  const nextRun: AgentRun = {
-    ...context.run,
-    status: {
-      ...context.run.status,
-      phase: result.exitCode === 0 ? "succeeded" : "failed",
-      summary:
-        result.exitCode === 0
-          ? `Validation succeeded: ${command}`
-          : `Validation failed: ${command}`
-    }
-  };
+  let serviceProcess: ChildProcess | undefined;
+  let serviceStdout = "";
+  let serviceStderr = "";
+  let dependencySetupExecuted = false;
 
   try {
+    if (dependencies?.setupCommand) {
+      const setupResult = await runShellCommand(dependencies.setupCommand, workspaceCwd);
+      dependencySetupExecuted = true;
+
+      if (setupResult.exitCode !== 0) {
+        const failedResult: CommandResult = {
+          command,
+          exitCode: 1,
+          stdout: "",
+          stderr: `dependency setup failed\n${formatCommandOutput(setupResult, "dependency setup")}`
+        };
+
+        const failedRun: AgentRun = {
+          ...context.run,
+          status: {
+            ...context.run.status,
+            phase: "failed",
+            summary: "Validation failed: dependency setup command failed"
+          }
+        };
+
+        await Promise.all([
+          writeCommandLog(validationLogPath, failedResult),
+          writeJsonFile(resolveFromRepo("artifacts", context.run.metadata.name, "run.json"), failedRun),
+          writeRunResultArtifact(failedRun, {
+            build: {
+              command: context.app.spec.build.test,
+              exitCode: 0
+            },
+            validation: {
+              command,
+              exitCode: failedResult.exitCode
+            }
+          })
+        ]);
+
+        return {
+          result: failedResult,
+          run: failedRun
+        };
+      }
+    }
+
+    if (service) {
+      const serviceCommand = service.command ?? context.app.spec.build.start;
+      const serviceHost = service.host ?? "localhost";
+      const startupTimeoutSeconds = service.startupTimeoutSeconds ?? 60;
+
+      serviceProcess = spawnService(serviceCommand, workspaceCwd);
+      serviceProcess.stdout?.on("data", (chunk: Buffer) => {
+        serviceStdout += chunk.toString("utf8");
+      });
+      serviceProcess.stderr?.on("data", (chunk: Buffer) => {
+        serviceStderr += chunk.toString("utf8");
+      });
+
+      const ready = await waitForTcp(serviceHost, service.port, startupTimeoutSeconds * 1000);
+
+      if (!ready) {
+        await stopService(serviceProcess);
+
+        const failedResult: CommandResult = {
+          command,
+          exitCode: 1,
+          stdout: "",
+          stderr: [
+            `service bootstrap timed out: ${serviceHost}:${service.port} did not become ready`,
+            serviceStdout.trimEnd() ? "[service stdout]" : "",
+            serviceStdout.trimEnd(),
+            serviceStderr.trimEnd() ? "[service stderr]" : "",
+            serviceStderr.trimEnd()
+          ]
+            .filter((line) => line.length > 0)
+            .join("\n")
+        };
+
+        const failedRun: AgentRun = {
+          ...context.run,
+          status: {
+            ...context.run.status,
+            phase: "failed",
+            summary: `Validation failed: service bootstrap timeout for ${serviceHost}:${service.port}`
+          }
+        };
+
+        await Promise.all([
+          writeCommandLog(validationLogPath, failedResult),
+          writeJsonFile(resolveFromRepo("artifacts", context.run.metadata.name, "run.json"), failedRun),
+          writeRunResultArtifact(failedRun, {
+            build: {
+              command: context.app.spec.build.test,
+              exitCode: 0
+            },
+            validation: {
+              command,
+              exitCode: failedResult.exitCode
+            }
+          })
+        ]);
+
+        return {
+          result: failedResult,
+          run: failedRun
+        };
+      }
+    }
+
+    const result = await runShellCommand(command, workspaceCwd);
+
+    const nextRun: AgentRun = {
+      ...context.run,
+      status: {
+        ...context.run.status,
+        phase: result.exitCode === 0 ? "succeeded" : "failed",
+        summary:
+          result.exitCode === 0
+            ? `Validation succeeded: ${command}`
+            : `Validation failed: ${command}`
+      }
+    };
+
     await Promise.all([
       writeCommandLog(validationLogPath, result),
       writeJsonFile(resolveFromRepo("artifacts", context.run.metadata.name, "run.json"), nextRun),
@@ -238,12 +291,16 @@ export async function runValidationStage(context: ValidatorContext): Promise<{ r
         }
       })
     ]);
+
+    return {
+      result,
+      run: nextRun
+    };
   } finally {
     await stopService(serviceProcess);
-  }
 
-  return {
-    result,
-    run: nextRun
-  };
+    if (dependencySetupExecuted && dependencies?.teardownCommand) {
+      await runShellCommand(dependencies.teardownCommand, workspaceCwd);
+    }
+  }
 }

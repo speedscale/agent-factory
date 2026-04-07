@@ -33,6 +33,10 @@ export interface AgentApp {
           port: number;
           startupTimeoutSeconds?: number;
         };
+        dependencies?: {
+          setupCommand?: string;
+          teardownCommand?: string;
+        };
       };
     };
     policy?: {
