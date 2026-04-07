@@ -20,6 +20,7 @@ The current repo contains the initial design docs and onboarding contract for th
 
 - [Architecture](docs/architecture.md)
 - [Plan](docs/plan.md)
+- [Implementation History](docs/history.md)
 - [Golden Path Demo](docs/demo.md)
 - [Local and Server Runbook](docs/server.md)
 - [Kubernetes Deployment Guide](docs/kubernetes.md)
