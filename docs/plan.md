@@ -307,7 +307,7 @@ Acceptance criteria:
 
 ### Task 15: Ops dashboards and alert thresholds
 
-Status: in progress
+Status: complete
 
 Purpose:
 
@@ -323,3 +323,22 @@ Acceptance criteria:
 
 - operators can map metric values to concrete scaling/remediation decisions
 - threshold guidance is documented and usable without private tooling
+
+### Task 16: API auth and basic access control
+
+Status: in progress
+
+Purpose:
+
+- protect intake and run status endpoints in shared environments
+
+Deliverables:
+
+- simple token-based auth option for intake API
+- docs for local dev bypass and secured deployment mode
+- Kubernetes env wiring examples for secure mode
+
+Acceptance criteria:
+
+- unsecured mode remains available for local quickstart
+- secured mode blocks unauthenticated requests to run APIs

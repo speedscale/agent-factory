@@ -23,6 +23,7 @@ The current repo contains the initial design docs and onboarding contract for th
 - [Golden Path Demo](docs/demo.md)
 - [Local and Server Runbook](docs/server.md)
 - [Kubernetes Deployment Guide](docs/kubernetes.md)
+- [Operations Runbook](docs/operations.md)
 - [Microsvc Onboarding](docs/microsvc.md)
 - [Sample `AgentApp`](examples/apps/demo-node/agentapp.yaml)
 

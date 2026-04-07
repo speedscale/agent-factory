@@ -106,3 +106,5 @@ This is sufficient to prove service-mode architecture on cluster, including Redi
 - Start with overlay default `worker.replicas=3` and observe queue drain behavior.
 - Increase `RUN_QUEUE_BATCH_SIZE` only after confirming worker CPU/memory headroom.
 - Keep intake at 1 replica initially; scale intake only if run submission rate requires it.
+
+See `docs/operations.md` for queue lag thresholds, failed-run ratio targets, and remediation steps.

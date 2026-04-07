@@ -166,6 +166,8 @@ Baseline operational checks:
 - `runsFailed` does not increase continuously over multiple polling intervals
 - queue depth growth faster than processed runs indicates scale-up need (add worker replicas)
 
+See `docs/operations.md` for threshold values and remediation workflow.
+
 ## 4) Server Mode Test Assertions
 
 Use these checks after submitting a run:
