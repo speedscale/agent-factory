@@ -19,6 +19,9 @@ If you are building locally and using kind/minikube, load the image into your cl
 
 ## Deploy
 
+The base kustomization pins the Agent Factory image tag via `examples/deploy/kubernetes/base/kustomization.yaml` `images.newTag`.
+Update that tag for each release.
+
 ### Base profile (filesystem queue)
 
 ```bash
