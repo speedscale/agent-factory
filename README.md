@@ -21,6 +21,7 @@ The current repo contains the initial design docs and onboarding contract for th
 - [Architecture](docs/architecture.md)
 - [Plan](docs/plan.md)
 - [Implementation History](docs/history.md)
+- [Autonomy MVP Guide](docs/autonomy-mvp.md)
 - [Release Checklist](docs/release.md)
 - [Golden Path Demo](docs/demo.md)
 - [Local and Server Runbook](docs/server.md)
@@ -132,3 +133,9 @@ kubectl apply -k examples/deploy/kubernetes/overlays/auth-token
 ```
 
 See `docs/kubernetes.md` for cluster setup, run submission, and limits of the current deployment model.
+
+## Start Real Ticket Autonomy
+
+- Use `examples/issues/agent-ready-ticket-template.md` to prepare an agent-ready issue.
+- Use `examples/runs/real-ticket-intake.template.json` to submit the first real ticket intake payload.
+- Evaluate run evidence with `docs/autonomy-mvp.md` pass/fail rubric.
