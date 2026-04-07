@@ -110,8 +110,12 @@ async function capturePatchArtifact(context: RunnerContext, buildCommand: string
     return;
   }
 
+  const appWorkdir = context.app.spec.repo.workdir;
+  const sourceAppDir = path.join(context.sourceDir, appWorkdir);
+  const workspaceAppDir = path.join(context.workspaceDir, appWorkdir);
+
   const diffResult = await runShellCommand(
-    `git diff --no-index -- "${context.sourceDir}" "${context.workspaceDir}"`,
+    `git diff --no-index -- "${sourceAppDir}" "${workspaceAppDir}"`,
     resolveFromRepo(".")
   );
 
@@ -136,7 +140,7 @@ async function capturePatchArtifact(context: RunnerContext, buildCommand: string
     patchPath,
     [
       "# patch capture failed",
-      `# command: git diff --no-index -- \"${context.sourceDir}\" \"${context.workspaceDir}\"`,
+      `# command: git diff --no-index -- \"${sourceAppDir}\" \"${workspaceAppDir}\"`,
       `# exitCode: ${diffResult.exitCode}`,
       diffResult.stderr.trimEnd()
     ]
