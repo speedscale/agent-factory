@@ -6,7 +6,7 @@ This document defines how to run the first real autonomous ticket loop with revi
 
 MVP target is one issue on one real repository with this outcome:
 
-`selected issue -> triage -> patch proposal -> build+validate evidence -> operator decision`
+`logs/capture discovery -> local repro -> triage -> patch proposal -> replay validation -> PR`
 
 ## Ticket intake contract
 
@@ -19,6 +19,9 @@ Required fields:
 - impact/scope
 - acceptance checks
 - validation service bootstrap details when replay requires live service startup
+- discovery evidence source (`logs`, `speedscale-capture`, or both)
+- capture dataset and request/response summary
+- concrete local reproduction steps
 
 Recommended labels:
 
@@ -41,6 +44,7 @@ Treat the run as **fail** when any criterion is missing or contradictory.
 ## Evidence bundle required for review
 
 - run record: `run.json`
+- incident evidence: `evidence.json`
 - triage artifact: `triage.json`
 - plan: `plan.yaml`
 - patch summary: `patch.diff`
@@ -65,9 +69,11 @@ Reject and rerun if:
 ## First live run checklist
 
 1. choose one `agent-ready` bug issue
-2. submit run through intake API
-3. monitor `/runs` and `/metrics`
-4. collect evidence bundle
-5. evaluate against pass/fail rubric
-6. record operator decision
-7. if pass, generate PR from run artifacts via `npm run run-to-pr -- --run <run-name> --repo <repo-path>`
+2. identify the bug from logs and/or Speedscale capture
+3. download capture locally (proxymock dataset) and define repro steps
+4. submit run through intake API
+5. monitor `/runs` and `/metrics`
+6. collect evidence bundle
+7. evaluate against pass/fail rubric
+8. record operator decision
+9. if pass, generate PR from run artifacts via `npm run run-to-pr -- --run <run-name> --repo <repo-path>`

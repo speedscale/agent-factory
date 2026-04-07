@@ -4,7 +4,7 @@
 
 Agent Factory is designed around one autonomous inner loop:
 
-`issue -> triage -> plan -> build -> validate -> report`
+`discover -> capture -> reproduce -> triage -> patch -> validate -> report`
 
 The control plane must stay app-agnostic by reading a declarative `AgentApp` manifest instead of embedding repository-specific logic.
 
@@ -42,6 +42,8 @@ The validation plane owns:
 - replay execution (`proxymock`)
 - pass/fail evidence
 
+In practice, Speedscale capture and proxymock replay provide the request/response evidence chain from incident discovery through fix validation.
+
 Validation is the proof layer that determines whether the candidate fix behaved as expected.
 
 ## Runtime Modes
@@ -72,11 +74,12 @@ This is the minimal server architecture required to migrate from CLI-only operat
 ## Control Flow
 
 1. Intake receives an issue and app manifest, then writes `run.json` in `queued` phase.
-2. Worker picks queued runs and creates `plan.yaml`.
-3. Worker prepares isolated workspace and runs configured build/test command.
-4. Worker executes configured `proxymock` validation command.
-5. Worker updates run phase to `succeeded` or `failed` with summary.
-6. Artifacts remain available for audit and reproducibility.
+2. Evidence artifact captures discovery source, capture dataset details, and repro notes.
+3. Worker picks queued runs and creates `triage.json` + `plan.yaml`.
+4. Worker prepares isolated workspace and runs configured build/test command.
+5. Worker executes configured proxymock replay validation command.
+6. Worker updates run phase to `succeeded` or `failed` with summary.
+7. Artifacts remain available for audit and reproducibility.
 
 ## Component Contracts
 
@@ -106,6 +109,7 @@ Each run should emit:
 - `issue.json`
 - `app.json`
 - `run.json`
+- `evidence.json`
 - `triage.json`
 - `plan.yaml`
 - `patch.diff`

@@ -1,20 +1,19 @@
 $schema: https://json-schema.org/draft/2020-12/schema
-title: AgentRun
-description: A single execution of the issue-to-validate loop for a target app.
+title: AgentEvidence
+description: Structured incident evidence for run investigation and replay validation.
 type: object
 required:
   - apiVersion
   - kind
   - metadata
   - spec
-  - status
 properties:
   apiVersion:
     type: string
     const: agents.speedscale.io/v1alpha1
   kind:
     type: string
-    const: AgentRun
+    const: AgentEvidence
   metadata:
     type: object
     required:
@@ -22,15 +21,18 @@ properties:
     properties:
       name:
         type: string
-    additionalProperties: true
+    additionalProperties: false
   spec:
     type: object
     required:
-      - appRef
+      - runRef
       - issue
-      - workspace
+      - discovery
+      - capture
+      - reproduction
+      - replayValidation
     properties:
-      appRef:
+      runRef:
         type: object
         required:
           - name
@@ -43,62 +45,71 @@ properties:
         required:
           - id
           - title
-          - body
         properties:
           id:
             type: string
           title:
             type: string
-          body:
-            type: string
           url:
             type: string
         additionalProperties: false
-      workspace:
+      discovery:
         type: object
         required:
-          - root
+          - source
+          - notes
         properties:
-          root:
+          source:
             type: string
-          branch:
+            enum:
+              - logs
+              - speedscale-capture
+              - both
+              - unknown
+          notes:
             type: string
         additionalProperties: false
-    additionalProperties: false
-  status:
-    type: object
-    required:
-      - phase
-      - artifacts
-    properties:
-      phase:
-        type: string
-        enum:
-          - queued
-          - planned
-          - building
-          - validating
-          - succeeded
-          - failed
-      summary:
-        type: string
-      artifacts:
+      capture:
         type: object
         properties:
-          evidence:
+          dataset:
             type: string
-          triage:
+          downloadCommand:
             type: string
-          plan:
+          requestResponseSummary:
             type: string
-          patch:
+        additionalProperties: false
+      reproduction:
+        type: object
+        required:
+          - steps
+        properties:
+          steps:
+            type: array
+            items:
+              type: string
+          expectedBehavior:
             type: string
-          buildLog:
+          observedBehavior:
             type: string
-          validationReport:
+        additionalProperties: false
+      suspectedBug:
+        type: string
+      fixSummary:
+        type: string
+      replayValidation:
+        type: object
+        properties:
+          command:
             type: string
+          exitCode:
+            type: number
           result:
             type: string
+            enum:
+              - pass
+              - fail
+              - pending
         additionalProperties: false
     additionalProperties: false
 additionalProperties: false

@@ -1,7 +1,7 @@
 import { cp, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
-import type { AgentApp, AgentRun } from "../contracts/index.js";
+import type { AgentApp, AgentEvidence, AgentRun } from "../contracts/index.js";
 import { readJsonFile, resolveFromRepo } from "../lib/io.js";
 
 interface Options {
@@ -154,6 +154,16 @@ async function stageAndCommit(repoPath: string, appWorkdir: string, branch: stri
 }
 
 async function openPullRequest(repoPath: string, branch: string, base: string, title: string, run: AgentRun): Promise<string> {
+  const runDir = resolveFromRepo("artifacts", run.metadata.name);
+  const evidencePath = path.join(runDir, "evidence.json");
+
+  let evidence: AgentEvidence | undefined;
+  try {
+    evidence = await readJsonFile<AgentEvidence>(evidencePath);
+  } catch {
+    evidence = undefined;
+  }
+
   const push = await runShell(`git push -u origin ${branch}`, repoPath);
   if (push.exitCode !== 0) {
     throw new Error(`failed to push branch: ${push.stderr || push.stdout}`);
@@ -161,11 +171,42 @@ async function openPullRequest(repoPath: string, branch: string, base: string, t
 
   const body = [
     "## Summary",
-    `- automated run-to-PR output for ${run.metadata.name}`,
     `- issue: ${run.spec.issue.title}`,
+    `- automated run id: ${run.metadata.name}`,
+    evidence?.spec.fixSummary ? `- suspected fix: ${evidence.spec.fixSummary}` : "- suspected fix: document code-level fix summary",
     "",
-    "## Evidence",
+    "## Discovery Evidence",
+    evidence?.spec.discovery?.notes || "- summarize what logs showed before capture",
+    "",
+    "## Speedscale Capture",
+    evidence?.spec.capture?.dataset ? `- dataset: ${evidence.spec.capture.dataset}` : "- dataset: <capture dataset>",
+    evidence?.spec.capture?.downloadCommand
+      ? `- download command: \`${evidence.spec.capture.downloadCommand}\``
+      : "- download command: <proxymock download command>",
+    evidence?.spec.capture?.requestResponseSummary || "- request/response summary: <status code delta and payload details>",
+    "",
+    "## Reproduction",
+    ...(evidence?.spec.reproduction?.steps?.length
+      ? evidence.spec.reproduction.steps.map((step, index) => `${index + 1}. ${step}`)
+      : ["1. document local repro steps"]),
+    evidence?.spec.reproduction?.observedBehavior
+      ? `- observed: ${evidence.spec.reproduction.observedBehavior}`
+      : "- observed: <observed behavior>",
+    evidence?.spec.reproduction?.expectedBehavior
+      ? `- expected: ${evidence.spec.reproduction.expectedBehavior}`
+      : "- expected: <expected behavior>",
+    "",
+    "## Replay Validation",
+    evidence?.spec.replayValidation?.command
+      ? `- command: \`${evidence.spec.replayValidation.command}\``
+      : "- command: <replay command>",
+    evidence?.spec.replayValidation?.result
+      ? `- result: ${evidence.spec.replayValidation.result}`
+      : "- result: <pass/fail>",
+    "",
+    "## Artifacts",
     `- run artifact: artifacts/${run.metadata.name}/run.json`,
+    `- evidence artifact: artifacts/${run.metadata.name}/evidence.json`,
     `- triage artifact: artifacts/${run.metadata.name}/triage.json`,
     `- patch artifact: artifacts/${run.metadata.name}/patch.diff`,
     `- validation artifact: artifacts/${run.metadata.name}/validation.log`,
