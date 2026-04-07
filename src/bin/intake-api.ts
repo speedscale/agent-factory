@@ -7,6 +7,72 @@ import { createRunQueueFromEnv } from "../lib/run-queue.js";
 import { createRunFromIssue } from "../lib/run-store.js";
 
 const apiToken = process.env.INTAKE_API_TOKEN;
+const evidenceDiscoverySources = new Set(["logs", "speedscale-capture", "both", "unknown"]);
+const trivialCommands = new Set(["true", ":", "exit 0", "/bin/true"]);
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((entry) => typeof entry === "string");
+}
+
+function isOptionalString(value: unknown): value is string | undefined {
+  return typeof value === "undefined" || typeof value === "string";
+}
+
+function isOptionalCapture(value: unknown): boolean {
+  if (typeof value === "undefined") {
+    return true;
+  }
+
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const capture = value as Record<string, unknown>;
+  return (
+    isOptionalString(capture.dataset) &&
+    isOptionalString(capture.downloadCommand) &&
+    isOptionalString(capture.requestResponseSummary)
+  );
+}
+
+function isOptionalEvidence(value: unknown): boolean {
+  if (typeof value === "undefined") {
+    return true;
+  }
+
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const evidence = value as Record<string, unknown>;
+  const discovery = evidence.discovery as Record<string, unknown> | undefined;
+  const reproduction = evidence.reproduction as Record<string, unknown> | undefined;
+
+  return (
+    typeof discovery === "object" &&
+    discovery !== null &&
+    typeof discovery.source === "string" &&
+    evidenceDiscoverySources.has(discovery.source) &&
+    typeof discovery.notes === "string" &&
+    isOptionalCapture(evidence.capture) &&
+    typeof reproduction === "object" &&
+    reproduction !== null &&
+    isStringArray(reproduction.steps) &&
+    isOptionalString(reproduction.expectedBehavior) &&
+    isOptionalString(reproduction.observedBehavior) &&
+    isOptionalString(evidence.suspectedBug) &&
+    isOptionalString(evidence.fixSummary)
+  );
+}
+
+function isMeaningfulCommand(value: unknown): boolean {
+  if (typeof value !== "string") {
+    return false;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  return normalized.length > 0 && !trivialCommands.has(normalized);
+}
 
 function sendJson(res: ServerResponse, statusCode: number, payload: unknown): void {
   res.statusCode = statusCode;
@@ -37,6 +103,7 @@ function isIntakeRequest(value: unknown): value is IntakeRequest {
   const candidate = value as Record<string, unknown>;
   const app = candidate.app as Record<string, unknown> | undefined;
   const issue = candidate.issue as Record<string, unknown> | undefined;
+  const evidence = candidate.evidence;
 
   if (
     typeof app !== "object" ||
@@ -60,17 +127,18 @@ function isIntakeRequest(value: unknown): value is IntakeRequest {
     typeof appRepo?.url === "string" &&
     typeof appRepo?.defaultBranch === "string" &&
     typeof appRepo?.workdir === "string" &&
+    isMeaningfulCommand(appBuild?.test) &&
     typeof appBuild?.install === "string" &&
-    typeof appBuild?.test === "string" &&
     typeof appBuild?.start === "string" &&
     typeof appProxymock?.dataset === "string" &&
     typeof appProxymock?.mode === "string" &&
-    typeof appProxymock?.command === "string" &&
+    isMeaningfulCommand(appProxymock?.command) &&
     typeof issue === "object" &&
     issue !== null &&
     typeof issue.id === "string" &&
     typeof issue.title === "string" &&
-    typeof issue.body === "string"
+    typeof issue.body === "string" &&
+    isOptionalEvidence(evidence)
   );
 }
 
@@ -277,7 +345,8 @@ async function handler(req: IncomingMessage, res: ServerResponse): Promise<void>
 
       if (!isIntakeRequest(body)) {
         sendJson(res, 400, {
-          error: "request must include app.metadata.name and issue.id/title/body"
+          error:
+            "request must include app.metadata.name and issue.id/title/body, and build.test + validate.proxymock.command must be non-trivial commands"
         });
         return;
       }

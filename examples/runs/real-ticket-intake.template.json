@@ -55,5 +55,26 @@
     "title": "<issue-title>",
     "body": "<problem statement + expected behavior + acceptance checks>",
     "url": "https://github.com/<owner>/<repo>/issues/<number>"
+  },
+  "evidence": {
+    "discovery": {
+      "source": "both",
+      "notes": "<what logs or captures showed before patching>"
+    },
+    "capture": {
+      "dataset": "<proxymock dataset>",
+      "downloadCommand": "<command used to pull capture>",
+      "requestResponseSummary": "<key request path and observed/expected status details>"
+    },
+    "reproduction": {
+      "steps": [
+        "<step 1>",
+        "<step 2>"
+      ],
+      "expectedBehavior": "<expected behavior>",
+      "observedBehavior": "<observed behavior>"
+    },
+    "suspectedBug": "<likely root cause before code fix>",
+    "fixSummary": "<summary of proposed fix intent>"
   }
 }

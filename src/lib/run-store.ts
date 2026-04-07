@@ -11,9 +11,29 @@ export interface RunIssueInput {
   url?: string;
 }
 
+export interface IntakeEvidenceInput {
+  discovery: {
+    source: AgentEvidence["spec"]["discovery"]["source"];
+    notes: string;
+  };
+  capture?: {
+    dataset?: string;
+    downloadCommand?: string;
+    requestResponseSummary?: string;
+  };
+  reproduction: {
+    steps: string[];
+    expectedBehavior?: string;
+    observedBehavior?: string;
+  };
+  suspectedBug?: string;
+  fixSummary?: string;
+}
+
 export interface IntakeRequest {
   app: AgentApp;
   issue: RunIssueInput;
+  evidence?: IntakeEvidenceInput;
 }
 
 function slugify(value: string): string {
@@ -134,6 +154,29 @@ export async function createRunFromIssue(input: IntakeRequest): Promise<AgentRun
     title: input.issue.title,
     url: input.issue.url
   };
+
+  if (input.evidence) {
+    evidence.spec.discovery = {
+      source: input.evidence.discovery.source,
+      notes: input.evidence.discovery.notes
+    };
+
+    evidence.spec.capture = {
+      dataset: input.evidence.capture?.dataset,
+      downloadCommand: input.evidence.capture?.downloadCommand,
+      requestResponseSummary: input.evidence.capture?.requestResponseSummary
+    };
+
+    evidence.spec.reproduction = {
+      steps: input.evidence.reproduction.steps,
+      expectedBehavior: input.evidence.reproduction.expectedBehavior,
+      observedBehavior: input.evidence.reproduction.observedBehavior
+    };
+
+    evidence.spec.suspectedBug = input.evidence.suspectedBug;
+    evidence.spec.fixSummary = input.evidence.fixSummary;
+  }
+
   await writeJsonFile(evidencePath, evidence);
 
   const queue = createRunQueueFromEnv();

@@ -72,3 +72,28 @@ For ongoing proofs, populate `evidence.json` with:
 1. run-to-PR automation from successful run artifacts
 2. complete operator decision record against full autonomy rubric
 3. validate that generated PR scope stays aligned to issue acceptance checks
+
+## Operator decision records
+
+- run name: `run-microsvc-user-service-microsvc-user-service-404`
+- final phase: `succeeded`
+- issue acceptance checks satisfied: yes
+- validation command passed: yes (`make proxymock-replay`)
+- scope remained ticket-focused: yes
+- decision: approve
+- notes: Evidence bundle and generated PR were sufficient for operator review.
+
+- run name: `run-microsvc-speedscale-overlay-microsvc-overlay-sidecar-inject-true`
+- final phase: `succeeded`
+- issue acceptance checks satisfied: no
+- validation command passed: no (command was `true`, treated as non-evidence)
+- scope remained ticket-focused: mixed
+- decision: reject
+- notes: PR generation produced one superseded PR (`#67`) with unrelated content because source repo state was dirty; clean PR (`https://github.com/speedscale/microsvc/pull/68`) was created manually from the correct overlay-only commit.
+
+## PR evidence quality review (run-to-pr)
+
+- evaluated run: `run-microsvc-speedscale-overlay-microsvc-overlay-sidecar-inject-true`
+- section completeness: pass (discovery/capture/repro/replay sections rendered)
+- evidence quality: fail (`replayValidation.command` was `true`, which does not satisfy autonomy rubric)
+- remediation shipped: intake now rejects trivial `build.test` and `validate.proxymock.command` values to prevent false-positive successful runs.
