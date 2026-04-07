@@ -112,9 +112,22 @@ Exit criteria:
 
 ## Immediate Next Actions
 
-1. execute one microsvc ticket with automatic PR output
-2. run operator decision against full autonomy rubric in `docs/phase-b-first-run.md`
-3. classify remaining autonomy gaps by failure type (`triage`, `patch quality`, `validation fidelity`)
+1. execute one microsvc ticket with logs/capture/repro evidence populated in `evidence.json`
+2. generate PR via `run-to-pr` and verify evidence sections render correctly
+3. run operator decision against full autonomy rubric in `docs/phase-b-first-run.md`
+
+## Context Reset Handoff
+
+Use this checkpoint after context reset:
+
+1. confirm PR `#20` is merged and `main` is synced
+2. select one microsvc issue with observable log signal
+3. populate run `evidence.json` with:
+   - discovery notes from logs
+   - Speedscale/proxymock capture dataset details
+   - reproducible local steps and expected vs observed behavior
+4. execute run, verify replay result, then run `run-to-pr`
+5. evaluate generated PR with `docs/autonomy-mvp.md` rubric and record decision in `docs/phase-b-first-run.md`
 
 ## Notes
 

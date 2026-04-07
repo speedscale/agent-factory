@@ -221,6 +221,7 @@ For every run, verify these files exist under `artifacts/<run-name>/`:
 - `app.json`
 - `issue.json`
 - `run.json`
+- `evidence.json`
 - `triage.json`
 - `plan.yaml`
 - `patch.diff`
@@ -231,3 +232,5 @@ For every run, verify these files exist under `artifacts/<run-name>/`:
 This artifact set is the minimum proof contract for `issue -> plan -> build -> validate`.
 
 `result.json` is the terminal summary artifact for operators and automation. It includes run identity, final phase, summary, command outcomes, and artifact pointers.
+
+`evidence.json` captures the incident investigation chain (logs/capture summary, repro steps, and replay outcome) and should be reflected in PR summaries.

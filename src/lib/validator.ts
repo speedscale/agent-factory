@@ -2,8 +2,8 @@ import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 import * as net from "node:net";
-import type { AgentApp, AgentRun } from "../contracts/index.js";
-import { resolveFromRepo, writeJsonFile } from "./io.js";
+import type { AgentApp, AgentEvidence, AgentRun } from "../contracts/index.js";
+import { readJsonFile, resolveFromRepo, writeJsonFile } from "./io.js";
 import { loadPlannerContext } from "./planner.js";
 import { writeRunResultArtifact } from "./run-result.js";
 
@@ -134,6 +134,29 @@ function formatCommandOutput(result: CommandResult, label: string): string {
     .join("\n");
 }
 
+async function updateEvidenceReplay(
+  context: ValidatorContext,
+  command: string,
+  exitCode: number,
+  result: "pass" | "fail"
+): Promise<void> {
+  const evidencePath = resolveFromRepo(
+    context.run.status.artifacts.evidence ?? path.posix.join("artifacts", context.run.metadata.name, "evidence.json")
+  );
+
+  try {
+    const evidence = await readJsonFile<AgentEvidence>(evidencePath);
+    evidence.spec.replayValidation = {
+      command,
+      exitCode,
+      result
+    };
+    await writeJsonFile(evidencePath, evidence);
+  } catch {
+    // best effort
+  }
+}
+
 export async function loadValidatorContext(runInput: string): Promise<ValidatorContext> {
   const plannerContext = await loadPlannerContext(runInput);
   return {
@@ -191,6 +214,8 @@ export async function runValidationStage(context: ValidatorContext): Promise<{ r
             }
           })
         ]);
+
+        await updateEvidenceReplay(context, command, failedResult.exitCode, "fail");
 
         return {
           result: failedResult,
@@ -291,6 +316,8 @@ export async function runValidationStage(context: ValidatorContext): Promise<{ r
         }
       })
     ]);
+
+    await updateEvidenceReplay(context, command, result.exitCode, result.exitCode === 0 ? "pass" : "fail");
 
     return {
       result,

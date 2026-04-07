@@ -146,3 +146,9 @@ Create a PR from a succeeded run:
 ```bash
 npm run run-to-pr -- --run <run-name> --repo /path/to/target-repo
 ```
+
+Before creating the PR, fill `artifacts/<run-name>/evidence.json` with:
+
+- discovery evidence from logs
+- Speedscale/proxymock capture details
+- local reproduction steps and observed/expected behavior

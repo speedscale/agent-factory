@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { AgentApp, AgentRun } from "../contracts/index.js";
-import { resolveFromRepo, writeJsonFile } from "./io.js";
+import type { AgentApp, AgentEvidence, AgentRun } from "../contracts/index.js";
+import { readJsonFile, resolveFromRepo, writeJsonFile } from "./io.js";
 import { createRunQueueFromEnv } from "./run-queue.js";
 
 export interface RunIssueInput {
@@ -33,7 +33,37 @@ function createRunName(appName: string, issueId: string): string {
 }
 
 async function initializeArtifactFiles(artifactRoot: string): Promise<void> {
+  const runName = path.basename(artifactRoot);
+  const evidenceSeed: AgentEvidence = {
+    apiVersion: "agents.speedscale.io/v1alpha1",
+    kind: "AgentEvidence",
+    metadata: {
+      name: `evidence-${runName}`
+    },
+    spec: {
+      runRef: {
+        name: runName
+      },
+      issue: {
+        id: "pending",
+        title: "pending"
+      },
+      discovery: {
+        source: "unknown",
+        notes: "Record how the bug was discovered from logs or Speedscale capture."
+      },
+      capture: {},
+      reproduction: {
+        steps: ["Document local repro steps here."]
+      },
+      replayValidation: {
+        result: "pending"
+      }
+    }
+  };
+
   await Promise.all([
+    writeFile(path.join(artifactRoot, "evidence.json"), `${JSON.stringify(evidenceSeed, null, 2)}\n`, "utf8"),
     writeFile(path.join(artifactRoot, "triage.json"), "", "utf8"),
     writeFile(path.join(artifactRoot, "plan.yaml"), "", "utf8"),
     writeFile(path.join(artifactRoot, "patch.diff"), "", "utf8"),
@@ -79,6 +109,7 @@ export async function createRunFromIssue(input: IntakeRequest): Promise<AgentRun
     status: {
       phase: "queued",
       artifacts: {
+        evidence: ensureRelativePath(artifactRoot, "evidence.json"),
         triage: ensureRelativePath(artifactRoot, "triage.json"),
         plan: ensureRelativePath(artifactRoot, "plan.yaml"),
         patch: ensureRelativePath(artifactRoot, "patch.diff"),
@@ -95,6 +126,15 @@ export async function createRunFromIssue(input: IntakeRequest): Promise<AgentRun
     writeJsonFile(resolveFromRepo(artifactRoot, "issue.json"), input.issue),
     initializeArtifactFiles(absoluteArtifactRoot)
   ]);
+
+  const evidencePath = resolveFromRepo(artifactRoot, "evidence.json");
+  const evidence = await readJsonFile<AgentEvidence>(evidencePath);
+  evidence.spec.issue = {
+    id: input.issue.id,
+    title: input.issue.title,
+    url: input.issue.url
+  };
+  await writeJsonFile(evidencePath, evidence);
 
   const queue = createRunQueueFromEnv();
   try {
