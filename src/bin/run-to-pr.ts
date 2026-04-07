@@ -1,4 +1,5 @@
-import { cp, mkdir } from "node:fs/promises";
+import { cp, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import type { AgentApp, AgentEvidence, AgentRun } from "../contracts/index.js";
@@ -213,12 +214,19 @@ async function openPullRequest(repoPath: string, branch: string, base: string, t
     `- result artifact: artifacts/${run.metadata.name}/result.json`
   ].join("\n");
 
-  const create = await runShell(
-    `gh pr create --base "${base}" --head "${branch}" --title "${title.replace(/"/g, '\\"')}" --body "${body
-      .replace(/"/g, '\\"')
-      .replace(/\$/g, "\\$")}"`,
-    repoPath
-  );
+  const bodyDir = await mkdtemp(path.join(os.tmpdir(), "agent-factory-pr-body-"));
+  const bodyFilePath = path.join(bodyDir, "body.md");
+  let create: CommandResult;
+
+  try {
+    await writeFile(bodyFilePath, `${body}\n`, "utf8");
+    create = await runShell(
+      `gh pr create --base "${base}" --head "${branch}" --title "${title.replace(/"/g, '\\"')}" --body-file "${bodyFilePath}"`,
+      repoPath
+    );
+  } finally {
+    await rm(bodyDir, { recursive: true, force: true });
+  }
 
   if (create.exitCode !== 0) {
     throw new Error(`failed to create PR: ${create.stderr || create.stdout}`);
