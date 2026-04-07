@@ -14,5 +14,5 @@ This file keeps a compact record of completed work so `docs/plan.md` can stay fo
 
 - Intake API: create runs, query runs, query metrics.
 - Worker: consume queue (filesystem or Redis), execute plan/build/validate, emit artifacts.
-- Artifact contract: `app.json`, `issue.json`, `run.json`, `plan.yaml`, `patch.diff`, `build.log`, `validation.log`, `result.json`.
+- Artifact contract: `app.json`, `issue.json`, `run.json`, `triage.json`, `plan.yaml`, `patch.diff`, `build.log`, `validation.log`, `result.json`.
 - Deployability: local, compose, and Kubernetes profiles.

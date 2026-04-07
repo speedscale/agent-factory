@@ -1,5 +1,5 @@
 import path from "node:path";
-import type { AgentApp, AgentPlan, AgentRun } from "../contracts/index.js";
+import type { AgentApp, AgentPlan, AgentRun, AgentTriage } from "../contracts/index.js";
 import { readJsonFile, resolveFromRepo, writeJsonFile } from "./io.js";
 
 export interface PlannerRunContext {
@@ -43,6 +43,20 @@ function inferTargetPaths(app: AgentApp): string[] {
 
 function inferValidationCommand(app: AgentApp): string {
   return app.spec.validate.proxymock.command;
+}
+
+function inferConfidence(issue: AgentRun["spec"]["issue"]): AgentTriage["spec"]["confidence"] {
+  const text = `${issue.title} ${issue.body}`.toLowerCase();
+
+  if (text.includes("404") && text.includes("500")) {
+    return "high";
+  }
+
+  if (text.includes("timeout") || text.includes("retry") || text.includes("connection")) {
+    return "medium";
+  }
+
+  return "low";
 }
 
 function buildPlanFromContext(context: PlannerRunContext): AgentPlan {
@@ -100,6 +114,35 @@ function buildPlanFromContext(context: PlannerRunContext): AgentPlan {
 
 export function writePlanArtifact(runDir: string, plan: AgentPlan): Promise<void> {
   return writeJsonFile(path.join(runDir, "plan.yaml"), plan);
+}
+
+export function writeTriageArtifact(context: PlannerRunContext, plan: AgentPlan): Promise<void> {
+  const triage: AgentTriage = {
+    apiVersion: "agents.speedscale.io/v1alpha1",
+    kind: "AgentTriage",
+    metadata: {
+      name: `triage-${context.run.metadata.name}`
+    },
+    spec: {
+      runRef: {
+        name: context.run.metadata.name
+      },
+      issue: {
+        id: context.run.spec.issue.id,
+        title: context.run.spec.issue.title
+      },
+      hypothesis: plan.spec.hypothesis,
+      confidence: inferConfidence(context.run.spec.issue),
+      candidatePaths: inferTargetPaths(context.app),
+      rationale: [
+        `Issue summary: ${plan.spec.summary}`,
+        `Validation command: ${plan.spec.validation.command}`,
+        "Target paths selected from app workdir and issue heuristics."
+      ]
+    }
+  };
+
+  return writeJsonFile(path.join(context.runDir, "triage.json"), triage);
 }
 
 export function buildPlan(context: PlannerRunContext): AgentPlan {

@@ -85,6 +85,8 @@ properties:
       artifacts:
         type: object
         properties:
+          triage:
+            type: string
           plan:
             type: string
           patch:

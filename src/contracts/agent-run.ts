@@ -32,6 +32,7 @@ export interface AgentRun {
     phase: AgentRunPhase;
     summary?: string;
     artifacts: {
+      triage?: string;
       plan?: string;
       patch?: string;
       buildLog?: string;

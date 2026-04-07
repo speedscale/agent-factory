@@ -2,7 +2,7 @@ import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createRunFromIssue } from "../lib/run-store.js";
-import { buildPlan, loadPlannerContext, writePlanArtifact } from "../lib/planner.js";
+import { buildPlan, loadPlannerContext, writePlanArtifact, writeTriageArtifact } from "../lib/planner.js";
 import { loadRunnerContext, runBuildStage } from "../lib/runner.js";
 import { loadValidatorContext, runValidationStage } from "../lib/validator.js";
 import { readJsonFile, resolveFromRepo, writeJsonFile } from "../lib/io.js";
@@ -63,6 +63,7 @@ async function main(): Promise<void> {
 
     await Promise.all([
       writePlanArtifact(plannerContext.runDir, plan),
+      writeTriageArtifact(plannerContext, plan),
       persistPlannedRun(run.metadata.name, plan.spec.summary)
     ]);
 
