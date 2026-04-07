@@ -19,9 +19,28 @@ Required fields:
 - impact/scope
 - acceptance checks
 - validation service bootstrap details when replay requires live service startup
+- meaningful build and validation commands (`build.test` and `validate.proxymock.command` cannot be trivial no-op commands like `true` or `:`)
 - discovery evidence source (`logs`, `speedscale-capture`, or both)
 - capture dataset and request/response summary
 - concrete local reproduction steps
+
+Intake payloads should include a top-level `evidence` object so `artifacts/<run>/evidence.json` is pre-populated before planner/runner execution.
+
+Minimum `evidence` keys for real-ticket runs:
+
+- `discovery.source`
+- `discovery.notes`
+- `reproduction.steps`
+
+Recommended `evidence` keys:
+
+- `capture.dataset`
+- `capture.downloadCommand`
+- `capture.requestResponseSummary`
+- `reproduction.expectedBehavior`
+- `reproduction.observedBehavior`
+- `suspectedBug`
+- `fixSummary`
 
 Recommended labels:
 

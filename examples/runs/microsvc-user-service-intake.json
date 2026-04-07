@@ -51,5 +51,26 @@
     "title": "Microsvc user service returns 500 instead of 404 for a missing user",
     "body": "When a client requests a user record that does not exist, the service responds with a generic 500 instead of preserving the expected 404 behavior.",
     "url": "https://github.com/speedscale/microsvc/issues/58"
+  },
+  "evidence": {
+    "discovery": {
+      "source": "both",
+      "notes": "Issue reports and replay traces show missing-user requests should return 404, but user-service currently emits 500 for that path."
+    },
+    "capture": {
+      "dataset": "microsvc-user-service-404",
+      "requestResponseSummary": "Replay path for missing user returns observed 500 instead of expected 404 in captured traffic."
+    },
+    "reproduction": {
+      "steps": [
+        "Start postgres dependency and user-service with SERVER_PORT=8081.",
+        "Run make proxymock-replay from backend/user-service.",
+        "Observe status code for missing-user request in replay output."
+      ],
+      "expectedBehavior": "Missing user response remains 404 from user-service.",
+      "observedBehavior": "Replay currently reports 500 for the missing-user request path."
+    },
+    "suspectedBug": "Error handling in the user lookup path maps not-found conditions to generic internal server errors.",
+    "fixSummary": "Preserve domain-level not-found behavior and return 404 instead of collapsing to 500."
   }
 }
