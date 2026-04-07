@@ -147,6 +147,25 @@ curl -sS "http://127.0.0.1:8080/runs?phase=succeeded&limit=20&offset=0"
 curl -sS "http://127.0.0.1:8080/runs/<run-name>"
 ```
 
+Query intake metrics (queue depth + run totals):
+
+```bash
+curl -sS "http://127.0.0.1:8080/metrics"
+```
+
+Optional worker metrics endpoint:
+
+```bash
+WORKER_METRICS_PORT=9090 PATH="$(pwd)/.work/demo-fixture/bin:$PATH" npm run worker -- --source .work/demo-fixture
+curl -sS "http://127.0.0.1:9090/metrics"
+```
+
+Baseline operational checks:
+
+- queue depth stays near `0` during steady state
+- `runsFailed` does not increase continuously over multiple polling intervals
+- queue depth growth faster than processed runs indicates scale-up need (add worker replicas)
+
 ## 4) Server Mode Test Assertions
 
 Use these checks after submitting a run:

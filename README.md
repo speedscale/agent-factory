@@ -81,6 +81,12 @@ curl -sS "http://localhost:8080/runs?phase=queued&limit=20&offset=0"
 curl -sS "http://localhost:8080/runs/run-demo-node-bug-404-status"
 ```
 
+Queue/run metrics:
+
+```bash
+curl -sS "http://localhost:8080/metrics"
+```
+
 See `docs/server.md` for full setup and verification steps.
 
 ## Run As Containers

@@ -1,4 +1,6 @@
 import { open, stat, unlink } from "node:fs/promises";
+import { createServer } from "node:http";
+import type { Server } from "node:http";
 import { buildPlan, loadPlannerContext, writePlanArtifact } from "../lib/planner.js";
 import { loadRunnerContext, runBuildStage } from "../lib/runner.js";
 import { loadValidatorContext, runValidationStage } from "../lib/validator.js";
@@ -13,6 +15,20 @@ interface WorkerOptions {
   once: boolean;
   pollMs: number;
   claimTtlMs: number;
+}
+
+interface WorkerMetrics {
+  queueBackend: RunQueue["backend"];
+  startedAt: string;
+  pollMs: number;
+  loops: number;
+  batchesWithRuns: number;
+  lastBatchSize: number;
+  runsProcessed: number;
+  runsFailed: number;
+  runClaimsSkipped: number;
+  lastRun?: string;
+  lastRunAt?: string;
 }
 
 function getArg(argv: string[], flagNames: string[]): string | undefined {
@@ -159,48 +175,128 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function startWorkerMetricsServer(metrics: WorkerMetrics): Server | undefined {
+  const metricsPortRaw = process.env.WORKER_METRICS_PORT;
+  if (!metricsPortRaw) {
+    return undefined;
+  }
+
+  const port = Number(metricsPortRaw);
+  if (!Number.isFinite(port) || port <= 0 || !Number.isInteger(port)) {
+    throw new Error("WORKER_METRICS_PORT must be a positive integer");
+  }
+
+  const server = createServer((req, res) => {
+    const path = req.url ?? "/";
+
+    if (req.method === "GET" && path === "/healthz") {
+      res.statusCode = 200;
+      res.setHeader("content-type", "application/json");
+      res.end(`${JSON.stringify({ ok: true, service: "worker" }, null, 2)}\n`);
+      return;
+    }
+
+    if (req.method === "GET" && path === "/metrics") {
+      res.statusCode = 200;
+      res.setHeader("content-type", "application/json");
+      res.end(`${JSON.stringify({ service: "worker", generatedAt: new Date().toISOString(), metrics }, null, 2)}\n`);
+      return;
+    }
+
+    res.statusCode = 404;
+    res.setHeader("content-type", "application/json");
+    res.end(`${JSON.stringify({ error: "not found" }, null, 2)}\n`);
+  });
+
+  server.listen(port, () => {
+    console.log(`worker metrics listening on http://localhost:${port}`);
+  });
+
+  return server;
+}
+
+async function stopWorkerMetricsServer(server?: Server): Promise<void> {
+  if (!server) {
+    return;
+  }
+
+  await new Promise<void>((resolve) => {
+    server.close(() => resolve());
+  });
+}
+
 async function runWorker(queue: RunQueue, options: WorkerOptions): Promise<void> {
+  const metrics: WorkerMetrics = {
+    queueBackend: queue.backend,
+    startedAt: new Date().toISOString(),
+    pollMs: options.pollMs,
+    loops: 0,
+    batchesWithRuns: 0,
+    lastBatchSize: 0,
+    runsProcessed: 0,
+    runsFailed: 0,
+    runClaimsSkipped: 0
+  };
+
+  const metricsServer = startWorkerMetricsServer(metrics);
+
   console.log(JSON.stringify({ message: "worker started", queueBackend: queue.backend }, null, 2));
   const useFilesystemClaim = queue.backend === "filesystem";
 
-  while (true) {
-    const queuedRuns = await queue.listQueuedRuns();
+  try {
+    while (true) {
+      metrics.loops += 1;
+      const queuedRuns = await queue.listQueuedRuns();
+      metrics.lastBatchSize = queuedRuns.length;
+      if (queuedRuns.length > 0) {
+        metrics.batchesWithRuns += 1;
+      }
 
-    if (queuedRuns.length === 0) {
+      if (queuedRuns.length === 0) {
+        if (options.once) {
+          console.log(JSON.stringify({ message: "no queued runs found" }, null, 2));
+          return;
+        }
+
+        await sleep(options.pollMs);
+        continue;
+      }
+
+      for (const runName of queuedRuns) {
+        if (useFilesystemClaim) {
+          const claimed = await tryClaimRun(runName, options.claimTtlMs);
+          if (!claimed) {
+            metrics.runClaimsSkipped += 1;
+            continue;
+          }
+        }
+
+        try {
+          await processRun(runName, options.sourceDir);
+          metrics.runsProcessed += 1;
+          metrics.lastRun = runName;
+          metrics.lastRunAt = new Date().toISOString();
+          console.log(JSON.stringify({ message: "run processed", run: runName }, null, 2));
+        } catch (error) {
+          metrics.runsFailed += 1;
+          metrics.lastRun = runName;
+          metrics.lastRunAt = new Date().toISOString();
+          const message = error instanceof Error ? error.message : "run processing failed";
+          await updateRun(runName, "failed", message);
+          console.error(JSON.stringify({ message: "run failed", run: runName, error: message }, null, 2));
+        } finally {
+          if (useFilesystemClaim) {
+            await releaseClaim(runName);
+          }
+        }
+      }
+
       if (options.once) {
-        console.log(JSON.stringify({ message: "no queued runs found" }, null, 2));
         return;
       }
-
-      await sleep(options.pollMs);
-      continue;
     }
-
-    for (const runName of queuedRuns) {
-      if (useFilesystemClaim) {
-        const claimed = await tryClaimRun(runName, options.claimTtlMs);
-        if (!claimed) {
-          continue;
-        }
-      }
-
-      try {
-        await processRun(runName, options.sourceDir);
-        console.log(JSON.stringify({ message: "run processed", run: runName }, null, 2));
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "run processing failed";
-        await updateRun(runName, "failed", message);
-        console.error(JSON.stringify({ message: "run failed", run: runName, error: message }, null, 2));
-      } finally {
-        if (useFilesystemClaim) {
-          await releaseClaim(runName);
-        }
-      }
-    }
-
-    if (options.once) {
-      return;
-    }
+  } finally {
+    await stopWorkerMetricsServer(metricsServer);
   }
 }
 

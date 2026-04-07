@@ -8,6 +8,7 @@ export interface RunQueue {
   backend: RunQueueBackend;
   enqueueRun(runName: string): Promise<void>;
   listQueuedRuns(): Promise<string[]>;
+  getQueueDepth(): Promise<number>;
   close(): Promise<void>;
 }
 
@@ -27,6 +28,11 @@ class FileSystemRunQueue implements RunQueue {
 
     const runs = await listRuns("queued");
     return runs.map((run) => run.metadata.name);
+  }
+
+  async getQueueDepth(): Promise<number> {
+    const runs = await listRuns("queued");
+    return runs.length;
   }
 
   async close(): Promise<void> {
@@ -86,6 +92,11 @@ class RedisRunQueue implements RunQueue {
     }
 
     return queuedRuns;
+  }
+
+  async getQueueDepth(): Promise<number> {
+    const client = await this.getClient();
+    return await client.lLen(this.key);
   }
 
   async close(): Promise<void> {

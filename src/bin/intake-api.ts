@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { AgentRunPhase } from "../contracts/index.js";
 import type { IntakeRequest } from "../lib/run-store.js";
 import { listRuns, loadRun } from "../lib/run-admin.js";
+import { createRunQueueFromEnv } from "../lib/run-queue.js";
 import { createRunFromIssue } from "../lib/run-store.js";
 
 function sendJson(res: ServerResponse, statusCode: number, payload: unknown): void {
@@ -158,6 +159,42 @@ async function getRunHandler(req: IncomingMessage, res: ServerResponse): Promise
   }
 }
 
+async function metricsHandler(res: ServerResponse): Promise<void> {
+  const runs = await listRuns();
+  const phaseCounts: Record<string, number> = {
+    queued: 0,
+    planned: 0,
+    building: 0,
+    validating: 0,
+    succeeded: 0,
+    failed: 0
+  };
+
+  for (const run of runs) {
+    phaseCounts[run.status.phase] = (phaseCounts[run.status.phase] ?? 0) + 1;
+  }
+
+  const queue = createRunQueueFromEnv();
+
+  try {
+    const queueDepth = await queue.getQueueDepth();
+    sendJson(res, 200, {
+      service: "intake-api",
+      generatedAt: new Date().toISOString(),
+      runTotals: {
+        total: runs.length,
+        byPhase: phaseCounts
+      },
+      queue: {
+        backend: queue.backend,
+        depth: queueDepth
+      }
+    });
+  } finally {
+    await queue.close();
+  }
+}
+
 async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const parsedUrl = parseRequestUrl(req);
 
@@ -173,6 +210,11 @@ async function handler(req: IncomingMessage, res: ServerResponse): Promise<void>
       const message = error instanceof Error ? error.message : "invalid query params";
       sendJson(res, 400, { error: message });
     }
+    return;
+  }
+
+  if (req.method === "GET" && parsedUrl.pathname === "/metrics") {
+    await metricsHandler(res);
     return;
   }
 

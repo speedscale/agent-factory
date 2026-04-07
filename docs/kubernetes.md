@@ -72,11 +72,19 @@ curl -sS "http://127.0.0.1:8080/runs?phase=queued&limit=20&offset=0"
 curl -sS "http://127.0.0.1:8080/runs/<run-name>"
 ```
 
+Queue/run metrics from intake API:
+
+```bash
+curl -sS "http://127.0.0.1:8080/metrics"
+```
+
 Watch worker logs:
 
 ```bash
 kubectl -n agent-factory logs deploy/worker -f
 ```
+
+Optional: enable worker metrics endpoint by adding `WORKER_METRICS_PORT` env in deployment and querying `/metrics` via pod port-forward.
 
 Inspect terminal summary artifact in the shared volume-backed run directory:
 

@@ -288,7 +288,7 @@ Acceptance criteria:
 
 ### Task 14: Queue and run observability metrics
 
-Status: in progress
+Status: complete
 
 Purpose:
 
@@ -304,3 +304,22 @@ Acceptance criteria:
 
 - operators can inspect queue depth and run outcomes without reading logs
 - scaling changes can be driven by observable queue and run metrics
+
+### Task 15: Ops dashboards and alert thresholds
+
+Status: in progress
+
+Purpose:
+
+- define practical operating thresholds for queue lag, failure rate, and throughput
+
+Deliverables:
+
+- baseline dashboard query examples for local and Kubernetes modes
+- threshold recommendations for queue depth and failed run rate
+- runbook guidance for common remediation actions
+
+Acceptance criteria:
+
+- operators can map metric values to concrete scaling/remediation decisions
+- threshold guidance is documented and usable without private tooling
