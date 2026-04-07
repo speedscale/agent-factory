@@ -22,6 +22,7 @@ The current repo contains the initial design docs and onboarding contract for th
 - [Plan](docs/plan.md)
 - [Implementation History](docs/history.md)
 - [Autonomy MVP Guide](docs/autonomy-mvp.md)
+- [Phase B First Run](docs/phase-b-first-run.md)
 - [Release Checklist](docs/release.md)
 - [Golden Path Demo](docs/demo.md)
 - [Local and Server Runbook](docs/server.md)
