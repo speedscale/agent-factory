@@ -27,6 +27,12 @@ export interface AgentApp {
         dataset: string;
         mode: string;
         command: string;
+        service?: {
+          command?: string;
+          host?: string;
+          port: number;
+          startupTimeoutSeconds?: number;
+        };
       };
     };
     policy?: {

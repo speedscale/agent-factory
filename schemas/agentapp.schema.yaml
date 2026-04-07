@@ -93,6 +93,20 @@ properties:
                 type: string
               command:
                 type: string
+              service:
+                type: object
+                required:
+                  - port
+                properties:
+                  command:
+                    type: string
+                  host:
+                    type: string
+                  port:
+                    type: number
+                  startupTimeoutSeconds:
+                    type: number
+                additionalProperties: false
             additionalProperties: false
         additionalProperties: false
       policy:
