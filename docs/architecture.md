@@ -60,7 +60,9 @@ Use server mode for continuous, API-driven automation:
 
 - `intake-api` accepts run requests (`POST /runs`)
 - `intake-api` exposes run status queries (`GET /runs`, `GET /runs/{name}`)
+- `intake-api` exposes queue/run metrics (`GET /metrics`)
 - `worker` polls queued runs and executes plan/build/validate
+- `worker` can expose optional local metrics endpoint when `WORKER_METRICS_PORT` is set
 - both services are stateless; run state is stored in artifact files
 - queue backend is selected via `RUN_QUEUE_BACKEND` (`filesystem` or `redis`)
 
