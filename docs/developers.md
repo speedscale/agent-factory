@@ -57,6 +57,19 @@ PATH="$(pwd)/.work/demo-fixture/bin:$PATH" npm run validator -- --run <run-name>
 - preserve artifact-first evidence for operator decisions
 - avoid introducing private/internal dependencies
 - update docs when behavior changes
+- bump `package.json` version in every PR
+
+## Agent Instruction Resolution Across Repos
+
+When Agent Factory drives changes in a target repo, read and apply both instruction sets:
+
+- `agent-factory/AGENTS.md`
+- `<target-repo>/AGENTS.md`
+
+Rule precedence:
+
+1. stricter constraint wins when both can be satisfied
+2. if constraints conflict, stop and request operator direction
 
 ## Release Expectations
 
