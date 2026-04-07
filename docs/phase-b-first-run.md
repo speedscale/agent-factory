@@ -1,5 +1,7 @@
 # Phase B First Live Run
 
+Audience: Agent Factory developers and operators tracking Phase B execution outcomes.
+
 This is the concrete execution plan for the first real-ticket autonomous run.
 
 ## Selected target

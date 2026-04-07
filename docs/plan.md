@@ -1,5 +1,7 @@
 # Execution Plan
 
+Audience: Agent Factory developers/contributors.
+
 ## Goal
 
 Operate Agent Factory as an autonomous software factory that can reliably run:
