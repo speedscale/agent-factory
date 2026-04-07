@@ -26,7 +26,13 @@
         "proxymock": {
           "dataset": "microsvc-user-service-404",
           "mode": "replay-with-mocks",
-          "command": "make proxymock-replay"
+          "command": "make proxymock-replay",
+          "service": {
+            "command": "./mvnw spring-boot:run",
+            "host": "localhost",
+            "port": 8081,
+            "startupTimeoutSeconds": 90
+          }
         }
       },
       "policy": {

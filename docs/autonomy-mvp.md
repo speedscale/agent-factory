@@ -18,6 +18,7 @@ Required fields:
 - observed behavior
 - impact/scope
 - acceptance checks
+- validation service bootstrap details when replay requires live service startup
 
 Recommended labels:
 

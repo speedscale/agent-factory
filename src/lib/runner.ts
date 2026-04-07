@@ -61,9 +61,20 @@ async function prepareWorkspace(context: RunnerContext): Promise<void> {
   await mkdir(context.workspaceDir, { recursive: true });
 
   if (context.sourceDir) {
+    const excludedSegments = new Set([".git", "node_modules", "artifacts", ".work"]);
+
     await cp(context.sourceDir, context.workspaceDir, {
       recursive: true,
-      force: true
+      force: true,
+      filter: (sourcePath) => {
+        const relative = path.relative(context.sourceDir as string, sourcePath);
+        if (!relative || relative === ".") {
+          return true;
+        }
+
+        const segments = relative.split(path.sep);
+        return !segments.some((segment) => excludedSegments.has(segment));
+      }
     });
   }
 }

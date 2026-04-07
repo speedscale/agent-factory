@@ -112,9 +112,9 @@ Exit criteria:
 
 ## Immediate Next Actions
 
-1. selected first real issue/repo pair: `speedscale/microsvc#58`
-2. submit `examples/runs/microsvc-user-service-intake.json` via intake API
-3. run one autonomous ticket through intake -> result with operator review (tracked in `docs/phase-b-first-run.md`)
+1. define runtime dependency bootstrap profile for `speedscale/microsvc#58` validation
+2. implement dependency startup hooks before service bootstrap
+3. re-run first live ticket and complete operator decision record in `docs/phase-b-first-run.md`
 
 ## Notes
 

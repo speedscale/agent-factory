@@ -30,7 +30,13 @@
         "proxymock": {
           "dataset": "<dataset>",
           "mode": "replay-with-mocks",
-          "command": "<validation command>"
+          "command": "<validation command>",
+          "service": {
+            "command": "<service start command>",
+            "host": "localhost",
+            "port": 8081,
+            "startupTimeoutSeconds": 90
+          }
         }
       },
       "policy": {
