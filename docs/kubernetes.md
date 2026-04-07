@@ -1,5 +1,7 @@
 # Kubernetes Deployment Guide
 
+Audience: Agent Factory users/operators.
+
 This guide shows how to run Agent Factory on Kubernetes using the same intake/worker split used locally.
 
 ## What this deployment includes

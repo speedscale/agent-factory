@@ -1,5 +1,7 @@
 # Operations Runbook
 
+Audience: Agent Factory users/operators.
+
 This guide defines baseline checks, alert thresholds, and remediation actions for Agent Factory.
 
 ## Key metrics

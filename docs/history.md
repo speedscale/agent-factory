@@ -1,5 +1,7 @@
 # Implementation History
 
+Audience: Agent Factory developers/contributors.
+
 This file keeps a compact record of completed work so `docs/plan.md` can stay focused on forward execution.
 
 ## Completed Milestones

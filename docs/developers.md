@@ -1,0 +1,69 @@
+# Agent Factory Developer Guide
+
+This guide is for contributors who change Agent Factory itself.
+
+## Design Boundaries
+
+Keep these planes explicit:
+
+- **app plane:** target repository and workload behavior
+- **agent plane:** triage, planning, patching, orchestration
+- **validation plane:** replay/capture evidence and pass/fail signal
+
+The goal is trustworthy autonomy, not hidden magic.
+
+## Source of Truth Documents
+
+- architecture details: `docs/architecture.md`
+- roadmap and current priorities: `docs/plan.md`
+- autonomy contract and rubric: `docs/autonomy-mvp.md`
+- run record and operator outcomes: `docs/phase-b-first-run.md`
+- implementation history: `docs/history.md`
+- release process: `docs/release.md`
+
+## Core Contracts to Preserve
+
+- `AgentApp`: app + repo + build + validate policy
+- `AgentRun`: lifecycle state, artifacts, timestamps, ownership
+- artifact set per run: `triage.json`, `plan.yaml`, `patch.diff`, `build.log`, `validation.log`, `evidence.json`, `result.json`
+
+## Development Workflow
+
+```bash
+npm install
+npm run check
+npm run demo
+```
+
+For service-mode checks:
+
+```bash
+npm run intake-api
+PATH="$(pwd)/.work/demo-fixture/bin:$PATH" npm run worker -- --source .work/demo-fixture --once
+```
+
+Manual stage debugging (when investigating a specific run):
+
+```bash
+npm run planner -- --run <run-name>
+npm run runner -- --run <run-name> --source .work/demo-fixture
+PATH="$(pwd)/.work/demo-fixture/bin:$PATH" npm run validator -- --run <run-name>
+```
+
+## Contribution Expectations
+
+- keep app/agent/validation boundaries clear
+- prefer explicit contracts over implicit coupling
+- preserve artifact-first evidence for operator decisions
+- avoid introducing private/internal dependencies
+- update docs when behavior changes
+
+## Release Expectations
+
+Use `docs/release.md` checklist:
+
+- version/tag selected
+- build + checks pass
+- image published and pinned
+- deploy manifests updated to release tag
+- post-deploy health/run/metrics verification completed

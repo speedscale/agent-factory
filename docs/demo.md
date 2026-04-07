@@ -1,5 +1,7 @@
 # Golden Path Demo
 
+Audience: Agent Factory users/operators.
+
 Run the full local loop with:
 
 ```bash

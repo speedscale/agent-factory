@@ -1,5 +1,7 @@
 # Real Ticket Autonomy MVP
 
+Audience: Agent Factory developers and operators evaluating run quality.
+
 This document defines how to run the first real autonomous ticket loop with reviewable evidence.
 
 ## Scope

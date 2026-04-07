@@ -1,5 +1,7 @@
 # Reference Architecture
 
+Audience: Agent Factory developers/contributors.
+
 ## Overview
 
 Agent Factory is designed around one autonomous inner loop:
