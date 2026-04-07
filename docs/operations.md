@@ -27,6 +27,8 @@ curl -sS http://127.0.0.1:8080/metrics
 curl -sS http://127.0.0.1:9090/metrics
 ```
 
+If `INTAKE_API_TOKEN` is enabled, include `Authorization: Bearer <token>` on intake metrics requests.
+
 ### Kubernetes mode
 
 ```bash

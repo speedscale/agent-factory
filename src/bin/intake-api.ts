@@ -6,6 +6,8 @@ import { listRuns, loadRun } from "../lib/run-admin.js";
 import { createRunQueueFromEnv } from "../lib/run-queue.js";
 import { createRunFromIssue } from "../lib/run-store.js";
 
+const apiToken = process.env.INTAKE_API_TOKEN;
+
 function sendJson(res: ServerResponse, statusCode: number, payload: unknown): void {
   res.statusCode = statusCode;
   res.setHeader("content-type", "application/json");
@@ -112,6 +114,32 @@ function parsePositiveInteger(value: string | null, fallback: number, key: strin
   return parsed;
 }
 
+function isAuthorized(req: IncomingMessage): boolean {
+  if (!apiToken || apiToken.length === 0) {
+    return true;
+  }
+
+  const authorization = req.headers.authorization;
+  if (authorization && authorization.startsWith("Bearer ")) {
+    const token = authorization.slice("Bearer ".length).trim();
+    if (token === apiToken) {
+      return true;
+    }
+  }
+
+  const apiKey = req.headers["x-api-key"];
+  if (typeof apiKey === "string" && apiKey === apiToken) {
+    return true;
+  }
+
+  return false;
+}
+
+function sendUnauthorized(res: ServerResponse): void {
+  res.setHeader("www-authenticate", 'Bearer realm="agent-factory-intake"');
+  sendJson(res, 401, { error: "unauthorized" });
+}
+
 async function listRunsHandler(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const parsedUrl = parseRequestUrl(req);
   const phase = parsePhase(parsedUrl.searchParams.get("phase"));
@@ -204,6 +232,11 @@ async function handler(req: IncomingMessage, res: ServerResponse): Promise<void>
   }
 
   if (req.method === "GET" && parsedUrl.pathname === "/runs") {
+    if (!isAuthorized(req)) {
+      sendUnauthorized(res);
+      return;
+    }
+
     try {
       await listRunsHandler(req, res);
     } catch (error) {
@@ -214,16 +247,31 @@ async function handler(req: IncomingMessage, res: ServerResponse): Promise<void>
   }
 
   if (req.method === "GET" && parsedUrl.pathname === "/metrics") {
+    if (!isAuthorized(req)) {
+      sendUnauthorized(res);
+      return;
+    }
+
     await metricsHandler(res);
     return;
   }
 
   if (req.method === "GET" && parsedUrl.pathname.startsWith("/runs/")) {
+    if (!isAuthorized(req)) {
+      sendUnauthorized(res);
+      return;
+    }
+
     await getRunHandler(req, res);
     return;
   }
 
   if (req.method === "POST" && parsedUrl.pathname === "/runs") {
+    if (!isAuthorized(req)) {
+      sendUnauthorized(res);
+      return;
+    }
+
     try {
       const body = await readJsonBody(req);
 

@@ -326,7 +326,7 @@ Acceptance criteria:
 
 ### Task 16: API auth and basic access control
 
-Status: in progress
+Status: complete
 
 Purpose:
 
@@ -342,3 +342,22 @@ Acceptance criteria:
 
 - unsecured mode remains available for local quickstart
 - secured mode blocks unauthenticated requests to run APIs
+
+### Task 17: Packaging and release hardening
+
+Status: in progress
+
+Purpose:
+
+- ensure deployments are repeatable and traceable across local, compose, and Kubernetes modes
+
+Deliverables:
+
+- image/tag versioning guidance for deploy manifests
+- release checklist for build, smoke, and docs synchronization
+- cleanup guidance for stale local/remote branches and artifacts
+
+Acceptance criteria:
+
+- operators can deploy pinned image versions instead of mutable tags
+- release steps are documented and can be repeated without ad hoc decisions
