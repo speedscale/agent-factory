@@ -95,4 +95,10 @@ docker compose -f docker-compose.server.yml up --build
 kubectl apply -k examples/deploy/kubernetes/base
 ```
 
+Redis-backed scaling profile:
+
+```bash
+kubectl apply -k examples/deploy/kubernetes/overlays/redis
+```
+
 See `docs/kubernetes.md` for cluster setup, run submission, and limits of the current deployment model.

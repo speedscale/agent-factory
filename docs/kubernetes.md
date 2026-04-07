@@ -19,14 +19,34 @@ If you are building locally and using kind/minikube, load the image into your cl
 
 ## Deploy
 
+### Base profile (filesystem queue)
+
 ```bash
 kubectl apply -k examples/deploy/kubernetes/base
 ```
+
+### Redis scaling profile
+
+```bash
+kubectl apply -k examples/deploy/kubernetes/overlays/redis
+```
+
+The Redis profile adds:
+
+- in-cluster Redis (`StatefulSet` + `Service`)
+- Redis queue env wiring for intake and worker
+- worker replicas scaled to `3` by default
 
 Check status:
 
 ```bash
 kubectl -n agent-factory get deploy,pods,svc,pvc
+```
+
+For Redis profile, also check:
+
+```bash
+kubectl -n agent-factory get statefulset redis
 ```
 
 ## Submit a run
@@ -68,7 +88,13 @@ kubectl -n agent-factory exec deploy/worker -- cat /app/artifacts/<run-name>/res
 ## Current limits of this deployment
 
 - worker is wired to the local demo fixture source (`/app/.work/demo-fixture`)
-- queue backend is filesystem only
-- PVC assumes single-writer style semantics for this early reference path
+- shared PVC still backs artifacts/workspace state
+- Redis profile is single-Redis-instance for reference architecture (no HA)
 
-This is sufficient to prove service-mode architecture on cluster before introducing Redis queueing and multi-replica worker scaling.
+This is sufficient to prove service-mode architecture on cluster, including Redis-backed multi-worker queue consumption.
+
+## Scaling guidance
+
+- Start with overlay default `worker.replicas=3` and observe queue drain behavior.
+- Increase `RUN_QUEUE_BATCH_SIZE` only after confirming worker CPU/memory headroom.
+- Keep intake at 1 replica initially; scale intake only if run submission rate requires it.
