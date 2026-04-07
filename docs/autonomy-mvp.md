@@ -70,3 +70,4 @@ Reject and rerun if:
 4. collect evidence bundle
 5. evaluate against pass/fail rubric
 6. record operator decision
+7. if pass, generate PR from run artifacts via `npm run run-to-pr -- --run <run-name> --repo <repo-path>`

@@ -140,3 +140,9 @@ See `docs/kubernetes.md` for cluster setup, run submission, and limits of the cu
 - Use `examples/issues/agent-ready-ticket-template.md` to prepare an agent-ready issue.
 - Use `examples/runs/real-ticket-intake.template.json` to submit the first real ticket intake payload.
 - Evaluate run evidence with `docs/autonomy-mvp.md` pass/fail rubric.
+
+Create a PR from a succeeded run:
+
+```bash
+npm run run-to-pr -- --run <run-name> --repo /path/to/target-repo
+```

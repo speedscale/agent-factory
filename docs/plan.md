@@ -112,9 +112,9 @@ Exit criteria:
 
 ## Immediate Next Actions
 
-1. add run-to-pr automation (create branch, commit patch, open PR)
+1. execute one microsvc ticket with automatic PR output
 2. run operator decision against full autonomy rubric in `docs/phase-b-first-run.md`
-3. execute one microsvc ticket with automatic PR output
+3. classify remaining autonomy gaps by failure type (`triage`, `patch quality`, `validation fidelity`)
 
 ## Notes
 
