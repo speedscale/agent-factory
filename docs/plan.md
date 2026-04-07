@@ -112,12 +112,13 @@ Exit criteria:
 
 ## Immediate Next Actions
 
-1. pick the first real issue/repo pair for Phase B execution
-2. submit the first real-ticket intake payload
-3. run one autonomous ticket through intake -> result with operator review
+1. selected first real issue/repo pair: `speedscale/microsvc#58`
+2. submit `examples/runs/microsvc-user-service-intake.json` via intake API
+3. run one autonomous ticket through intake -> result with operator review (tracked in `docs/phase-b-first-run.md`)
 
 ## Notes
 
 - Historical completed work is tracked in `docs/history.md`.
 - `docs/architecture.md` remains the source of truth for system shape.
 - Phase B execution details and rubric are tracked in `docs/autonomy-mvp.md`.
+- first live run target and decision template are tracked in `docs/phase-b-first-run.md`.
