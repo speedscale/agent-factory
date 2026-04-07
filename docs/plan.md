@@ -117,7 +117,9 @@ Exit criteria:
 1. execute one microsvc ticket with logs/capture/repro evidence populated in `evidence.json`
 2. require endpoint-level performance evidence from Speedscale snapshot/capture before posting benchmark claims
 3. run replay in the intended target environment (local vs staging cluster must be explicit in artifacts and issue comments)
-4. record operator decision against full autonomy rubric in `docs/phase-b-first-run.md`, including explicit next action
+4. deploy the queue-drain Job runtime profile (`examples/deploy/kubernetes/overlays/job-runtime`) and verify run completion with TTL cleanup
+5. wire GitHub + Slack intake relays to canonical ticket intake shape (`schemas/ticket-intake.schema.yaml`)
+6. record operator decision against full autonomy rubric in `docs/phase-b-first-run.md`, including explicit next action
 
 ## Performance Research Standard (Within Reason)
 

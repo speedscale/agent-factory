@@ -36,6 +36,12 @@ kubectl apply -k examples/deploy/kubernetes/base
 kubectl apply -k examples/deploy/kubernetes/overlays/redis
 ```
 
+### Job runtime profile (queue-drain Jobs)
+
+```bash
+kubectl apply -k examples/deploy/kubernetes/overlays/job-runtime
+```
+
 ### Auth-token profile
 
 ```bash
@@ -55,6 +61,13 @@ The Redis profile adds:
 - in-cluster Redis (`StatefulSet` + `Service`)
 - Redis queue env wiring for intake and worker
 - worker replicas scaled to `3` by default
+
+The job-runtime profile adds:
+
+- Redis queue profile
+- disables the long-lived `worker` deployment (`replicas: 0`)
+- a CronJob that spawns short-lived worker Jobs (`--once`) every 2 minutes
+- Job retention controls (`ttlSecondsAfterFinished`, history limits)
 
 Check status:
 
@@ -120,8 +133,11 @@ kubectl -n agent-factory exec deploy/worker -- cat /app/artifacts/<run-name>/res
 - worker is wired to the local demo fixture source (`/app/.work/demo-fixture`)
 - shared PVC still backs artifacts/workspace state
 - Redis profile is single-Redis-instance for reference architecture (no HA)
+- webhook relay and Slack command adapter are expected as external intake adapters that call `POST /runs`
 
 This is sufficient to prove service-mode architecture on cluster, including Redis-backed multi-worker queue consumption.
+
+For bot identity and webhook/slack operating model, see `docs/cluster-bot-runtime.md`.
 
 ## Scaling guidance
 

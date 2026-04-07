@@ -12,6 +12,7 @@ Use this index to find the right docs by audience.
 - `docs/users.md` - primary user guide (run modes, deployment, submission, operations)
 - `docs/server.md` - detailed local/server runbook
 - `docs/kubernetes.md` - Kubernetes deployment details
+- `docs/cluster-bot-runtime.md` - webhook/slack bot runtime on Kubernetes
 - `docs/operations.md` - metrics thresholds and remediation runbook
 - `docs/microsvc.md` - microsvc walkthrough
 
