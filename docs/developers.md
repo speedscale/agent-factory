@@ -57,7 +57,7 @@ PATH="$(pwd)/.work/demo-fixture/bin:$PATH" npm run validator -- --run <run-name>
 - preserve artifact-first evidence for operator decisions
 - avoid introducing private/internal dependencies
 - update docs when behavior changes
-- bump `package.json` version in every PR
+- do not bump `package.json` in normal PRs; CI bumps version on merge to `main`
 
 ## Agent Instruction Resolution Across Repos
 

@@ -31,12 +31,13 @@ Keep changes aligned with that goal. Prefer small, explicit contracts over broad
 
 ## Versioning Policy
 
-- Every pull request must bump `package.json` version.
-- Use semantic versioning:
+- Version bumps are CI-managed on merge to `main`.
+- Contributors should not manually bump `package.json` in feature PRs unless explicitly doing a release-oriented change.
+- CI currently applies a patch bump automatically after merges to `main`.
+- Use semantic versioning intent for release planning:
   - patch: docs-only, fixes, minor behavior hardening
   - minor: new user-visible capability or contract extension
   - major: breaking contract change
-- Do not merge PRs without a version bump.
 
 ## Multi-Repo Agent Instruction Resolution
 
