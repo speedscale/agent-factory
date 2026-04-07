@@ -31,6 +31,20 @@ kubectl apply -k examples/deploy/kubernetes/base
 kubectl apply -k examples/deploy/kubernetes/overlays/redis
 ```
 
+### Auth-token profile
+
+```bash
+kubectl apply -k examples/deploy/kubernetes/overlays/auth-token
+```
+
+Update the token value before production use:
+
+```bash
+kubectl -n agent-factory create secret generic intake-api-auth \
+  --from-literal=INTAKE_API_TOKEN=<strong-token> \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
+
 The Redis profile adds:
 
 - in-cluster Redis (`StatefulSet` + `Service`)
@@ -61,6 +75,7 @@ Submit sample intake payload:
 
 ```bash
 curl -sS -X POST http://127.0.0.1:8080/runs \
+  -H "Authorization: Bearer <token-if-enabled>" \
   -H "content-type: application/json" \
   --data-binary @examples/runs/demo-node-intake.json
 ```
@@ -71,6 +86,8 @@ Query run status from intake API:
 curl -sS "http://127.0.0.1:8080/runs?phase=queued&limit=20&offset=0"
 curl -sS "http://127.0.0.1:8080/runs/<run-name>"
 ```
+
+If auth-token overlay is enabled, include the authorization header for run and metrics endpoints.
 
 Queue/run metrics from intake API:
 

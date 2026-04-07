@@ -88,6 +88,15 @@ Queue/run metrics:
 curl -sS "http://localhost:8080/metrics"
 ```
 
+Optional token auth for run APIs and metrics:
+
+```bash
+INTAKE_API_TOKEN=change-me npm run intake-api
+curl -sS -H "Authorization: Bearer change-me" "http://localhost:8080/runs"
+```
+
+When `INTAKE_API_TOKEN` is unset, local dev mode stays open (no auth required).
+
 See `docs/server.md` for full setup and verification steps.
 
 ## Run As Containers
@@ -106,6 +115,12 @@ Redis-backed scaling profile:
 
 ```bash
 kubectl apply -k examples/deploy/kubernetes/overlays/redis
+```
+
+Auth-token profile:
+
+```bash
+kubectl apply -k examples/deploy/kubernetes/overlays/auth-token
 ```
 
 See `docs/kubernetes.md` for cluster setup, run submission, and limits of the current deployment model.

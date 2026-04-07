@@ -14,6 +14,7 @@ services:
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       REDIS_QUEUE_KEY: ${REDIS_QUEUE_KEY:-agent-factory:runs:queued}
       RUN_QUEUE_BATCH_SIZE: ${RUN_QUEUE_BATCH_SIZE:-25}
+      INTAKE_API_TOKEN: ${INTAKE_API_TOKEN:-}
     ports:
       - "8080:8080"
     volumes:

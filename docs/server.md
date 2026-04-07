@@ -70,6 +70,24 @@ Health check:
 curl -s http://localhost:8080/healthz
 ```
 
+Optional secure mode (token auth):
+
+```bash
+INTAKE_API_TOKEN=change-me npm run intake-api
+```
+
+In secure mode, include either header on run/metrics requests:
+
+```bash
+Authorization: Bearer change-me
+```
+
+or
+
+```bash
+x-api-key: change-me
+```
+
 ### Terminal B: create fixture and start worker
 
 Create a deterministic local app fixture and proxymock shim:
@@ -130,9 +148,12 @@ docker compose -f docker-compose.server.yml down
 
 ```bash
 curl -sS -X POST http://localhost:8080/runs \
+  -H "Authorization: Bearer change-me" \
   -H "content-type: application/json" \
   --data-binary @examples/runs/demo-node-intake.json
 ```
+
+If secure mode is disabled, omit the auth header.
 
 Expected outcome:
 
