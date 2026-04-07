@@ -109,6 +109,14 @@ See `docs/server.md` for full setup and verification steps.
 docker compose -f docker-compose.server.yml up --build
 ```
 
+Always-on mode (restart policies + health checks):
+
+```bash
+cp .env.server.example .env.server
+docker compose --env-file .env.server -f docker-compose.server.yml up -d
+docker compose --env-file .env.server -f docker-compose.server.yml ps
+```
+
 Pinned image release mode:
 
 ```bash

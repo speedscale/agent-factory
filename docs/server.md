@@ -124,10 +124,45 @@ Build and start services:
 docker compose -f docker-compose.server.yml up --build
 ```
 
+Run as always-on services (recommended):
+
+```bash
+cp .env.server.example .env.server
+docker compose --env-file .env.server -f docker-compose.server.yml up -d
+```
+
+This profile enables:
+
+- container restart policy (`unless-stopped`) for intake/worker/redis
+- health checks for intake and redis
+- worker metrics endpoint on `:9090`
+- configurable worker source via `WORKER_SOURCE`
+
+Check status:
+
+```bash
+docker compose --env-file .env.server -f docker-compose.server.yml ps
+curl -sS http://127.0.0.1:8080/healthz
+curl -sS http://127.0.0.1:9090/metrics
+```
+
+View logs:
+
+```bash
+docker compose --env-file .env.server -f docker-compose.server.yml logs -f intake-api worker
+```
+
 Enable Redis queue backend in compose:
 
 ```bash
 RUN_QUEUE_BACKEND=redis docker compose -f docker-compose.server.yml up --build
+```
+
+To run worker against a real repo (instead of demo fixture), mount that repo and set `WORKER_SOURCE`.
+Example:
+
+```bash
+WORKER_SOURCE=/repos/microsvc docker compose --env-file .env.server -f docker-compose.server.yml up -d
 ```
 
 Then submit intake requests from another terminal:
@@ -141,7 +176,7 @@ curl -sS -X POST http://127.0.0.1:8080/runs \
 Stop services:
 
 ```bash
-docker compose -f docker-compose.server.yml down
+docker compose --env-file .env.server -f docker-compose.server.yml down
 ```
 
 ### Terminal C: submit a run request (without Docker)

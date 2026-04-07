@@ -1,8 +1,14 @@
 services:
   redis:
     image: redis:7
+    restart: unless-stopped
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   intake-api:
     image: ${AGENT_FACTORY_IMAGE:-ghcr.io/speedscale/agent-factory:v0.1.0}
@@ -16,8 +22,18 @@ services:
       REDIS_QUEUE_KEY: ${REDIS_QUEUE_KEY:-agent-factory:runs:queued}
       RUN_QUEUE_BATCH_SIZE: ${RUN_QUEUE_BATCH_SIZE:-25}
       INTAKE_API_TOKEN: ${INTAKE_API_TOKEN:-}
+    restart: unless-stopped
     ports:
       - "8080:8080"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"fetch('http://127.0.0.1:8080/healthz').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
     volumes:
       - ./artifacts:/app/artifacts
       - ./.work:/app/.work
@@ -31,17 +47,29 @@ services:
     command:
       - /bin/sh
       - -lc
-      - node dist/bin/create-demo-fixture.js && node dist/bin/worker.js --source /app/.work/demo-fixture
+      - |
+        SOURCE="${WORKER_SOURCE:-/app/.work/demo-fixture}"
+        if [ "$$SOURCE" = "/app/.work/demo-fixture" ]; then
+          node dist/bin/create-demo-fixture.js
+        fi
+        node dist/bin/worker.js --source "$$SOURCE"
     environment:
       RUN_QUEUE_BACKEND: ${RUN_QUEUE_BACKEND:-filesystem}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       REDIS_QUEUE_KEY: ${REDIS_QUEUE_KEY:-agent-factory:runs:queued}
       RUN_QUEUE_BATCH_SIZE: ${RUN_QUEUE_BATCH_SIZE:-25}
+      WORKER_SOURCE: ${WORKER_SOURCE:-/app/.work/demo-fixture}
+      WORKER_METRICS_PORT: ${WORKER_METRICS_PORT:-9090}
       PATH: /app/.work/demo-fixture/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
     volumes:
       - ./artifacts:/app/artifacts
       - ./.work:/app/.work
       - ./examples:/app/examples:ro
     depends_on:
-      - intake-api
-      - redis
+      intake-api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
