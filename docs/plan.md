@@ -113,8 +113,35 @@ Exit criteria:
 ## Immediate Next Actions
 
 1. execute one microsvc ticket with logs/capture/repro evidence populated in `evidence.json`
-2. generate PR via `run-to-pr` and verify evidence sections render correctly
-3. run operator decision against full autonomy rubric in `docs/phase-b-first-run.md`
+2. require endpoint-level performance evidence from Speedscale snapshot/capture before posting benchmark claims
+3. run replay in the intended target environment (local vs staging cluster must be explicit in artifacts and issue comments)
+4. record operator decision against full autonomy rubric in `docs/phase-b-first-run.md`, including explicit next action
+
+## Performance Research Standard (Within Reason)
+
+When a ticket is performance-oriented (CPU/latency/load), treat completion as research + evidence, not just command success.
+
+Minimum evidence package:
+
+- source of traffic data: Speedscale snapshot/dataset id (or explicitly marked local fixture)
+- environment scope: local workstation vs cluster namespace/context
+- endpoint-level latency table (p50/p95/p99, request count, mismatch/failure rate)
+- service resource view at test time (CPU/memory sample, pod/deployment identity)
+- assumptions/limits section (what was not measured)
+- concrete next step with owner/action/target metric
+
+Guardrail:
+
+- do not present local fixture replay as staging or production-equivalent benchmark.
+
+Execution checklist for performance tickets:
+
+1. Establish baseline from local replay (endpoint table + command log + assumptions).
+2. Establish environment baseline from staging replay against the intended namespace/workload.
+3. Compare local vs staging endpoint latency and failure/mismatch rates in one side-by-side table.
+4. Attach Speedscale snapshot context (dataset id, capture window, and endpoint hit distribution) before proposing fixes.
+5. Name the top 1-3 hotspot endpoints and propose a specific optimization experiment per endpoint.
+6. Define next validation run with explicit target (for example: reduce p95 on endpoint X by N% under same replay profile).
 
 ## Context Reset Handoff
 
