@@ -67,11 +67,23 @@ Use server mode for continuous, API-driven automation:
 - `intake-api` exposes queue/run metrics (`GET /metrics`)
 - `intake-api` supports optional token auth for run and metrics endpoints (`INTAKE_API_TOKEN`)
 - `worker` polls queued runs and executes plan/build/validate
+- external webhook/slack adapters can translate events into canonical intake requests
 - `worker` can expose optional local metrics endpoint when `WORKER_METRICS_PORT` is set
 - both services are stateless; run state is stored in artifact files
 - queue backend is selected via `RUN_QUEUE_BACKEND` (`filesystem` or `redis`)
 
 This is the minimal server architecture required to migrate from CLI-only operation to a daemonized agent model.
+
+### Cluster Bot Mode
+
+Use cluster bot mode for ticket-driven automation across repositories:
+
+- GitHub webhooks and Slack commands feed a canonical intake event
+- intake queues runs and workers execute as short-lived Kubernetes Jobs
+- automation credentials are bot-scoped (not operator personal identity)
+- completed Jobs are garbage-collected with TTL/history limits
+
+See `docs/cluster-bot-runtime.md` for deployment profile and identity contract.
 
 ## Control Flow
 

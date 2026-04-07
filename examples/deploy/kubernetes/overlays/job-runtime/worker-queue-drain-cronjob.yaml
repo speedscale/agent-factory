@@ -1,0 +1,63 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: worker-queue-drain
+spec:
+  schedule: "*/2 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      ttlSecondsAfterFinished: 3600
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: Never
+          initContainers:
+            - name: create-demo-fixture
+              image: ghcr.io/speedscale/agent-factory
+              imagePullPolicy: IfNotPresent
+              command: ["node", "dist/bin/create-demo-fixture.js"]
+              volumeMounts:
+                - name: agent-data
+                  mountPath: /app/artifacts
+                  subPath: artifacts
+                - name: agent-data
+                  mountPath: /app/.work
+                  subPath: work
+          containers:
+            - name: worker
+              image: ghcr.io/speedscale/agent-factory
+              imagePullPolicy: IfNotPresent
+              command:
+                - /bin/sh
+                - -lc
+                - PATH="/app/.work/demo-fixture/bin:$PATH" node dist/bin/worker.js --source /app/.work/demo-fixture --once --poll-ms 2000 --claim-ttl-ms 900000
+              env:
+                - name: RUN_QUEUE_BACKEND
+                  value: redis
+                - name: REDIS_URL
+                  value: redis://redis:6379
+                - name: REDIS_QUEUE_KEY
+                  value: agent-factory:runs:queued
+                - name: RUN_QUEUE_BATCH_SIZE
+                  value: "20"
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                limits:
+                  cpu: 1000m
+                  memory: 1Gi
+              volumeMounts:
+                - name: agent-data
+                  mountPath: /app/artifacts
+                  subPath: artifacts
+                - name: agent-data
+                  mountPath: /app/.work
+                  subPath: work
+          volumes:
+            - name: agent-data
+              persistentVolumeClaim:
+                claimName: agent-factory-data

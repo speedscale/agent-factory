@@ -20,6 +20,13 @@ interface CommandResult {
   stderr: string;
 }
 
+interface GitIdentity {
+  authorName: string;
+  authorEmail: string;
+  committerName: string;
+  committerEmail: string;
+}
+
 function getArg(argv: string[], names: string[]): string | undefined {
   const index = argv.findIndex((value) => names.includes(value));
   if (index >= 0 && typeof argv[index + 1] === "string") {
@@ -63,12 +70,15 @@ function resolveRunPath(runInput: string): string {
   return runInput.endsWith(".json") ? resolveFromRepo(runInput) : resolveFromRepo("artifacts", runInput, "run.json");
 }
 
-function runShell(command: string, cwd: string): Promise<CommandResult> {
+function runShell(command: string, cwd: string, envOverrides?: Record<string, string>): Promise<CommandResult> {
   return new Promise((resolve) => {
     const child = spawn(command, {
       cwd,
       shell: true,
-      env: process.env
+      env: {
+        ...process.env,
+        ...(envOverrides ?? {})
+      }
     });
 
     let stdout = "";
@@ -90,6 +100,27 @@ function runShell(command: string, cwd: string): Promise<CommandResult> {
       });
     });
   });
+}
+
+function resolveGitIdentity(): GitIdentity | undefined {
+  const botName = process.env.AGENT_FACTORY_BOT_NAME?.trim();
+  const botEmail = process.env.AGENT_FACTORY_BOT_EMAIL?.trim();
+
+  const authorName = process.env.AGENT_FACTORY_BOT_AUTHOR_NAME?.trim() || botName;
+  const authorEmail = process.env.AGENT_FACTORY_BOT_AUTHOR_EMAIL?.trim() || botEmail;
+  const committerName = process.env.AGENT_FACTORY_BOT_COMMITTER_NAME?.trim() || botName;
+  const committerEmail = process.env.AGENT_FACTORY_BOT_COMMITTER_EMAIL?.trim() || botEmail;
+
+  if (!authorName || !authorEmail || !committerName || !committerEmail) {
+    return undefined;
+  }
+
+  return {
+    authorName,
+    authorEmail,
+    committerName,
+    committerEmail
+  };
 }
 
 async function ensureCleanRepo(repoPath: string): Promise<void> {
@@ -126,7 +157,13 @@ async function syncWorkspaceToRepo(run: AgentRun, app: AgentApp, repoPath: strin
   });
 }
 
-async function stageAndCommit(repoPath: string, appWorkdir: string, branch: string, message: string): Promise<boolean> {
+async function stageAndCommit(
+  repoPath: string,
+  appWorkdir: string,
+  branch: string,
+  message: string,
+  identity?: GitIdentity
+): Promise<boolean> {
   const checkout = await runShell(`git checkout -B ${branch}`, repoPath);
   if (checkout.exitCode !== 0) {
     throw new Error(`failed to checkout branch '${branch}': ${checkout.stderr || checkout.stdout}`);
@@ -146,7 +183,16 @@ async function stageAndCommit(repoPath: string, appWorkdir: string, branch: stri
     return false;
   }
 
-  const commit = await runShell(`git commit -m "${message.replace(/"/g, '\\"')}"`, repoPath);
+  const commitEnv = identity
+    ? {
+        GIT_AUTHOR_NAME: identity.authorName,
+        GIT_AUTHOR_EMAIL: identity.authorEmail,
+        GIT_COMMITTER_NAME: identity.committerName,
+        GIT_COMMITTER_EMAIL: identity.committerEmail
+      }
+    : undefined;
+
+  const commit = await runShell(`git commit -m "${message.replace(/"/g, '\\"')}"`, repoPath, commitEnv);
   if (commit.exitCode !== 0) {
     throw new Error(`failed to create commit: ${commit.stderr || commit.stdout}`);
   }
@@ -260,7 +306,7 @@ async function main(): Promise<void> {
 
   const branch = options.branch ?? run.spec.workspace.branch ?? `agent/${run.metadata.name}`;
   const commitMessage = `fix: ${run.spec.issue.title}`;
-  const committed = await stageAndCommit(repoPath, app.spec.repo.workdir, branch, commitMessage);
+  const committed = await stageAndCommit(repoPath, app.spec.repo.workdir, branch, commitMessage, resolveGitIdentity());
 
   if (!committed) {
     console.log(
