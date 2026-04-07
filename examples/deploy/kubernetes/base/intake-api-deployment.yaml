@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
         - name: intake-api
-          image: ghcr.io/speedscale/agent-factory:latest
+          image: ghcr.io/speedscale/agent-factory
           imagePullPolicy: IfNotPresent
           command: ["node", "dist/bin/intake-api.js"]
           ports:

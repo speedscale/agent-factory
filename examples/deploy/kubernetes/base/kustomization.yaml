@@ -7,3 +7,6 @@ resources:
   - intake-api-service.yaml
   - intake-api-deployment.yaml
   - worker-deployment.yaml
+images:
+  - name: ghcr.io/speedscale/agent-factory
+    newTag: v0.1.0

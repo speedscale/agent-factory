@@ -21,6 +21,7 @@ The current repo contains the initial design docs and onboarding contract for th
 - [Architecture](docs/architecture.md)
 - [Plan](docs/plan.md)
 - [Implementation History](docs/history.md)
+- [Release Checklist](docs/release.md)
 - [Golden Path Demo](docs/demo.md)
 - [Local and Server Runbook](docs/server.md)
 - [Kubernetes Deployment Guide](docs/kubernetes.md)
@@ -104,6 +105,12 @@ See `docs/server.md` for full setup and verification steps.
 
 ```bash
 docker compose -f docker-compose.server.yml up --build
+```
+
+Pinned image release mode:
+
+```bash
+AGENT_FACTORY_IMAGE=ghcr.io/speedscale/agent-factory:v0.1.0 docker compose -f docker-compose.server.yml up -d
 ```
 
 ## Run On Kubernetes

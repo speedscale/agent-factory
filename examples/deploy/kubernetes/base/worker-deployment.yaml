@@ -14,7 +14,7 @@ spec:
     spec:
       initContainers:
         - name: create-demo-fixture
-          image: ghcr.io/speedscale/agent-factory:latest
+          image: ghcr.io/speedscale/agent-factory
           imagePullPolicy: IfNotPresent
           command: ["node", "dist/bin/create-demo-fixture.js"]
           volumeMounts:
@@ -26,7 +26,7 @@ spec:
               subPath: work
       containers:
         - name: worker
-          image: ghcr.io/speedscale/agent-factory:latest
+          image: ghcr.io/speedscale/agent-factory
           imagePullPolicy: IfNotPresent
           command:
             - /bin/sh

@@ -35,7 +35,7 @@ Priority gaps:
 
 ### Phase A: Packaging and Release Hardening
 
-Status: in progress
+Status: complete
 
 Objective:
 
@@ -54,7 +54,7 @@ Exit criteria:
 
 ### Phase B: Real Ticket Autonomy (MVP)
 
-Status: pending
+Status: in progress
 
 Objective:
 
@@ -111,9 +111,9 @@ Exit criteria:
 
 ## Immediate Next Actions
 
-1. finish Phase A in the next PR (pinned versions + release checklist)
-2. pick the first real issue/repo pair for Phase B execution
-3. define the pass/fail rubric for autonomous ticket completion
+1. pick the first real issue/repo pair for Phase B execution
+2. define the pass/fail rubric for autonomous ticket completion
+3. run one autonomous ticket through intake -> result with operator review
 
 ## Notes
 
