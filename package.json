@@ -14,7 +14,8 @@
     "demo": "tsx src/bin/demo.ts",
     "planner": "tsx src/bin/planner.ts",
     "runner": "tsx src/bin/runner.ts",
-    "validator": "tsx src/bin/validator.ts"
+    "validator": "tsx src/bin/validator.ts",
+    "run-to-pr": "tsx src/bin/run-to-pr.ts"
   },
   "engines": {
     "node": ">=20"

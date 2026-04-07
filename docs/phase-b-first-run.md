@@ -41,6 +41,7 @@ This is the concrete execution plan for the first real-ticket autonomous run.
 - build command: `make test` (exit `0`)
 - validation command: `make proxymock-replay` (exit `0`)
 - result: replay validation completed successfully with runtime dependency + service bootstrap flow
+- automated PR output: `https://github.com/speedscale/microsvc/pull/65`
 
 Observed validation error excerpt:
 
@@ -59,6 +60,8 @@ Validation succeeded: make proxymock-replay
 ## Next remediation for Phase B
 
 Phase B infrastructure path for first live run is now working. Next gap is autonomous ticket quality (triage/patch intent), not runtime orchestration.
+
+End-to-end proof (ticket -> run -> validate -> PR) is now demonstrated for the selected microsvc issue path.
 
 1. run-to-PR automation from successful run artifacts
 2. complete operator decision record against full autonomy rubric
