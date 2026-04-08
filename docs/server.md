@@ -49,6 +49,17 @@ Queue backend selection:
 - `RUN_QUEUE_BACKEND=filesystem` (default, implemented)
 - `RUN_QUEUE_BACKEND=redis` (implemented)
 
+GitHub issue webhook intake (optional):
+
+- endpoint: `POST /webhooks/github/issues`
+- event type: `issues`
+- supported actions: `opened`, `reopened`, `labeled`
+- `GITHUB_WEBHOOK_SECRET` (optional but recommended)
+- `INTAKE_ALLOWED_REPOS` (comma-separated `owner/repo` allowlist)
+- `INTAKE_REPO_APP_MAP_JSON` (JSON map of repo to manifest path)
+- `INTAKE_COMMENT_ON_SKIPPED_ISSUE=true` to post bot fallback comments when issue is skipped
+- `GITHUB_BOT_TOKEN` or `GH_TOKEN` required for fallback issue comments
+
 Redis configuration:
 
 - `REDIS_URL` (example: `redis://127.0.0.1:6379`)
@@ -78,6 +89,17 @@ Optional secure mode (token auth):
 
 ```bash
 INTAKE_API_TOKEN=change-me npm run intake-api
+```
+
+Example with webhook repo mapping:
+
+```bash
+INTAKE_ALLOWED_REPOS=speedscale/microsvc,speedscale/demo,kenahrens/crm-demo,kenahrens/newboots \
+INTAKE_REPO_APP_MAP_JSON='{"speedscale/microsvc":"examples/apps/microsvc-user-service/agentapp.yaml"}' \
+INTAKE_COMMENT_ON_SKIPPED_ISSUE=true \
+GITHUB_WEBHOOK_SECRET=change-me \
+GITHUB_BOT_TOKEN=<bot-token> \
+npm run intake-api
 ```
 
 In secure mode, include either header on run/metrics requests:
