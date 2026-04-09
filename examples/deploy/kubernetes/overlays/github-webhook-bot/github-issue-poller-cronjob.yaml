@@ -16,7 +16,7 @@ spec:
           restartPolicy: Never
           containers:
             - name: poller
-              image: ghcr.io/speedscale/agent-factory:v0.1.5
+              image: ghcr.io/speedscale/agent-factory:v0.1.7
               imagePullPolicy: IfNotPresent
               command:
                 - node

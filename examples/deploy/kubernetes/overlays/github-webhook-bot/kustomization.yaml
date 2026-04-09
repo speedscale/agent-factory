@@ -6,7 +6,7 @@ resources:
   - github-issue-poller-cronjob.yaml
 images:
   - name: ghcr.io/speedscale/agent-factory
-    newTag: v0.1.5
+    newTag: v0.1.7
 generatorOptions:
   disableNameSuffixHash: true
 configMapGenerator:
