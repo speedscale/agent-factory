@@ -6,6 +6,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import type { AgentRunPhase } from "../contracts/index.js";
 import type { AgentApp } from "../contracts/index.js";
 import type { IntakeRequest } from "../lib/run-store.js";
+import { createGitHubAuthProviderFromEnv } from "../lib/github-auth.js";
 import { listRuns, loadRun } from "../lib/run-admin.js";
 import { createRunQueueFromEnv } from "../lib/run-queue.js";
 import { createRunFromIssue } from "../lib/run-store.js";
@@ -14,7 +15,6 @@ import { parse as parseYaml } from "yaml";
 
 const apiToken = process.env.INTAKE_API_TOKEN;
 const githubWebhookSecret = process.env.GITHUB_WEBHOOK_SECRET;
-const githubBotToken = process.env.GITHUB_BOT_TOKEN ?? process.env.GH_TOKEN;
 const githubApiBase = process.env.GITHUB_API_BASE_URL ?? "https://api.github.com";
 const allowUnknownRepos = process.env.INTAKE_ALLOW_UNKNOWN_REPOS === "true";
 const commentOnSkippedIssue = process.env.INTAKE_COMMENT_ON_SKIPPED_ISSUE === "true";
@@ -44,6 +44,7 @@ function parseRepoAppMapFromJson(raw: string): Map<string, string> {
 }
 const repoAppMap = new Map<string, string>();
 const appCache = new Map<string, AgentApp>();
+const githubAuth = createGitHubAuthProviderFromEnv({ githubApiBase });
 const evidenceDiscoverySources = new Set(["logs", "speedscale-capture", "both", "unknown"]);
 const trivialCommands = new Set(["true", ":", "exit 0", "/bin/true"]);
 
@@ -249,14 +250,16 @@ function issueHasRequiredLabels(app: AgentApp, labels: string[]): boolean {
 }
 
 async function createIssueComment(repoFullName: string, issueNumber: number, body: string): Promise<void> {
-  if (!githubBotToken || githubBotToken.trim().length === 0) {
+  if (!githubAuth) {
     return;
   }
+
+  const token = await githubAuth.getTokenForRepo(repoFullName);
 
   const response = await fetch(`${githubApiBase}/repos/${repoFullName}/issues/${issueNumber}/comments`, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${githubBotToken}`,
+      Authorization: `Bearer ${token}`,
       Accept: "application/vnd.github+json",
       "Content-Type": "application/json",
       "User-Agent": "agent-factory-intake"

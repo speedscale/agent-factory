@@ -59,7 +59,9 @@ GitHub issue webhook intake (optional):
 - `INTAKE_REPO_APP_MAP_JSON` (JSON map of repo to manifest path)
 - `INTAKE_REPO_APP_MAP_FILE` (path to JSON mapping file; merged with env map)
 - `INTAKE_COMMENT_ON_SKIPPED_ISSUE=true` to post bot fallback comments when issue is skipped
-- `GITHUB_BOT_TOKEN` or `GH_TOKEN` required for fallback issue comments
+- auth options for GitHub API calls:
+  - preferred: `GITHUB_APP_ID` + `GITHUB_APP_PRIVATE_KEY`
+  - fallback: `GITHUB_BOT_TOKEN` or `GH_TOKEN`
 
 GitHub issue polling mode (optional):
 
@@ -68,6 +70,7 @@ GitHub issue polling mode (optional):
 - loads repo manifests from `INTAKE_REPO_APP_MAP_FILE` or `INTAKE_REPO_APP_MAP_JSON`
 - queues runs for issues that satisfy required labels
 - posts one bot comment for missing-label or missing-manifest issues
+- GitHub auth uses same precedence as webhook intake (App first, token fallback)
 
 Redis configuration:
 

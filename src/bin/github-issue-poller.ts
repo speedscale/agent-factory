@@ -3,6 +3,7 @@ import path from "node:path";
 import { createClient } from "redis";
 import { parse as parseYaml } from "yaml";
 import type { AgentApp } from "../contracts/index.js";
+import { createGitHubAuthProviderFromEnv } from "../lib/github-auth.js";
 import { resolveFromRepo } from "../lib/io.js";
 import { createRunFromIssue, type IntakeRequest } from "../lib/run-store.js";
 
@@ -15,13 +16,21 @@ interface GitHubIssue {
   pull_request?: unknown;
 }
 
-const githubToken = process.env.GITHUB_BOT_TOKEN ?? process.env.GH_TOKEN;
 const githubApiBase = process.env.GITHUB_API_BASE_URL ?? "https://api.github.com";
 const repoMapFile = process.env.INTAKE_REPO_APP_MAP_FILE;
 const repoMapJson = process.env.INTAKE_REPO_APP_MAP_JSON;
 const redisUrl = process.env.POLLER_STATE_REDIS_URL ?? process.env.REDIS_URL ?? "redis://127.0.0.1:6379";
 const statePrefix = process.env.POLLER_STATE_KEY_PREFIX ?? "agent-factory:poller";
 const maxIssuesPerRepo = Number(process.env.POLLER_MAX_ISSUES_PER_REPO ?? "20");
+const githubAuth = createGitHubAuthProviderFromEnv({ requireProvider: true, githubApiBase });
+
+function requiredGitHubAuth() {
+  if (!githubAuth) {
+    throw new Error("GitHub auth provider was not configured");
+  }
+
+  return githubAuth;
+}
 
 const repos = (process.env.INTAKE_ALLOWED_REPOS ?? "")
   .split(",")
@@ -68,15 +77,13 @@ async function loadAgentApp(appPath: string): Promise<AgentApp> {
   return parseYaml(raw) as AgentApp;
 }
 
-async function githubRequest<T>(pathSuffix: string, init?: RequestInit): Promise<T> {
-  if (!githubToken || githubToken.trim().length === 0) {
-    throw new Error("GITHUB_BOT_TOKEN or GH_TOKEN is required for poller");
-  }
+async function githubRequest<T>(repoFullName: string, pathSuffix: string, init?: RequestInit): Promise<T> {
+  const token = await requiredGitHubAuth().getTokenForRepo(repoFullName);
 
   const response = await fetch(`${githubApiBase}${pathSuffix}`, {
     ...init,
     headers: {
-      Authorization: `Bearer ${githubToken}`,
+      Authorization: `Bearer ${token}`,
       Accept: "application/vnd.github+json",
       "Content-Type": "application/json",
       "User-Agent": "agent-factory-issue-poller",
@@ -93,7 +100,7 @@ async function githubRequest<T>(pathSuffix: string, init?: RequestInit): Promise
 }
 
 async function createIssueComment(repoFullName: string, issueNumber: number, body: string): Promise<void> {
-  await githubRequest(`/repos/${repoFullName}/issues/${issueNumber}/comments`, {
+  await githubRequest(repoFullName, `/repos/${repoFullName}/issues/${issueNumber}/comments`, {
     method: "POST",
     body: JSON.stringify({ body })
   });
@@ -133,7 +140,7 @@ async function isProcessed(redis: PollerRedisClient, repo: string, issueNumber: 
 
 async function fetchOpenIssues(repo: string): Promise<GitHubIssue[]> {
   const pathSuffix = `/repos/${repo}/issues?state=open&per_page=${maxIssuesPerRepo}&sort=updated&direction=desc`;
-  const issues = await githubRequest<GitHubIssue[]>(pathSuffix);
+  const issues = await githubRequest<GitHubIssue[]>(repo, pathSuffix);
   return issues.filter((issue) => typeof issue.pull_request === "undefined");
 }
 

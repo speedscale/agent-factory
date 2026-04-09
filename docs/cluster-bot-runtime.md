@@ -41,7 +41,8 @@ For polling-first rollout, the same overlay includes `github-issue-poller` (Cron
 
 Use dedicated bot credentials for repository mutations:
 
-- GitHub App token or PAT scoped to bot account
+- preferred: GitHub App (`GITHUB_APP_ID` + `GITHUB_APP_PRIVATE_KEY`)
+- fallback: PAT scoped to bot account (`GH_TOKEN`/`GITHUB_BOT_TOKEN`)
 - export `GH_TOKEN` for `gh` commands
 - set commit identity env vars for `run-to-pr`:
   - `AGENT_FACTORY_BOT_NAME`

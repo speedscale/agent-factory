@@ -16,7 +16,14 @@ It also includes a `github-issue-poller` CronJob so you can start in polling mod
 Update `github-webhook-secrets.env`:
 
 - `webhookSecret`: shared secret configured in GitHub webhook settings
-- `botToken`: token for posting fallback issue comments
+- `botToken`: token for posting comments and polling (temporary PAT-style auth)
+- `appId`: GitHub App id (preferred)
+- `appPrivateKey`: GitHub App private key PEM (multiline or `\\n` escaped)
+
+Auth precedence in runtime:
+
+1. GitHub App (`appId` + `appPrivateKey`)
+2. static token (`botToken`)
 
 ## Deploy
 
