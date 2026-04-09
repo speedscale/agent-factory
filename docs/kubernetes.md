@@ -58,6 +58,8 @@ This profile extends `job-runtime` and adds intake webhook wiring:
 Before apply in non-demo environments, update:
 
 - `examples/deploy/kubernetes/overlays/github-webhook-bot/github-webhook-secrets.env`
+  - preferred auth: `appId` + `appPrivateKey`
+  - fallback auth: `botToken`
 
 ### Auth-token profile
 
