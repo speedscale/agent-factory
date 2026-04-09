@@ -7,6 +7,8 @@ import type { AgentRunPhase } from "../contracts/index.js";
 import type { AgentApp } from "../contracts/index.js";
 import type { IntakeRequest } from "../lib/run-store.js";
 import { createGitHubAuthProviderFromEnv } from "../lib/github-auth.js";
+import { parsePollerIntervalMs, startIssuePollerLoop } from "../lib/issue-poller.js";
+import { triggerWorkerJobForRun } from "../lib/k8s-worker-job.js";
 import { listRuns, loadRun } from "../lib/run-admin.js";
 import { createRunQueueFromEnv } from "../lib/run-queue.js";
 import { createRunFromIssue } from "../lib/run-store.js";
@@ -45,6 +47,7 @@ function parseRepoAppMapFromJson(raw: string): Map<string, string> {
 const repoAppMap = new Map<string, string>();
 const appCache = new Map<string, AgentApp>();
 const githubAuth = createGitHubAuthProviderFromEnv({ githubApiBase });
+const embeddedPollerEnabled = process.env.INTAKE_ENABLE_EMBEDDED_POLLER === "true";
 const evidenceDiscoverySources = new Set(["logs", "speedscale-capture", "both", "unknown"]);
 const trivialCommands = new Set(["true", ":", "exit 0", "/bin/true"]);
 
@@ -542,13 +545,26 @@ async function githubIssueWebhookHandler(req: IncomingMessage, res: ServerRespon
     }
   };
 
-  const run = await createRunFromIssue(intake);
+  const run = await queueRunAndTriggerWorker(intake);
   sendJson(res, 201, {
     message: "queued run from github issue webhook",
     repository: repoFullName,
     action: payload.action,
     run
   });
+}
+
+async function queueRunAndTriggerWorker(intake: IntakeRequest) {
+  const run = await createRunFromIssue(intake);
+
+  try {
+    await triggerWorkerJobForRun(run.metadata.name);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`failed to trigger worker job for ${run.metadata.name}: ${message}`);
+  }
+
+  return run;
 }
 
 async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -611,7 +627,7 @@ async function handler(req: IncomingMessage, res: ServerResponse): Promise<void>
         return;
       }
 
-      const run = await createRunFromIssue(body);
+      const run = await queueRunAndTriggerWorker(body);
 
       sendJson(res, 201, {
         message: "intake created a queued run",
@@ -641,6 +657,12 @@ const port = Number(process.env.PORT ?? "8080");
 
 async function main(): Promise<void> {
   await initializeRepoAppMap();
+
+  if (embeddedPollerEnabled) {
+    const intervalMs = parsePollerIntervalMs(process.env.POLLER_INTERVAL_MS);
+    startIssuePollerLoop(intervalMs);
+    console.log(`embedded issue poller enabled (intervalMs=${intervalMs})`);
+  }
 
   createServer((req, res) => {
     void handler(req, res).catch((error: unknown) => {

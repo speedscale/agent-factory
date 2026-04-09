@@ -154,7 +154,7 @@ kubectl -n agent-factory exec deploy/worker -- cat /app/artifacts/<run-name>/res
 - Redis profile is single-Redis-instance for reference architecture (no HA)
 - webhook relay and Slack command adapter are expected as external intake adapters that call `POST /runs`
 
-The `github-webhook-bot` overlay can run in polling mode first via `github-issue-poller` CronJob, then later add inbound webhooks to the same intake service.
+The `github-webhook-bot` overlay runs polling mode inside `intake-api` (no separate poller CronJob), and intake triggers one worker Job when runs are queued.
 
 This is sufficient to prove service-mode architecture on cluster, including Redis-backed multi-worker queue consumption.
 

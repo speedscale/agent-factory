@@ -16,6 +16,16 @@ spec:
               value: /app/config/repo-app-map.json
             - name: INTAKE_COMMENT_ON_SKIPPED_ISSUE
               value: "true"
+            - name: INTAKE_ENABLE_EMBEDDED_POLLER
+              value: "true"
+            - name: POLLER_INTERVAL_MS
+              value: "120000"
+            - name: INTAKE_TRIGGER_WORKER_JOB
+              value: "true"
+            - name: INTAKE_WORKER_JOB_IMAGE
+              value: ghcr.io/speedscale/agent-factory:v0.1.9
+            - name: INTAKE_WORKER_JOB_PVC
+              value: agent-factory-data
             - name: GITHUB_WEBHOOK_SECRET
               valueFrom:
                 secretKeyRef:

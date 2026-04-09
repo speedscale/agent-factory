@@ -3,10 +3,10 @@ kind: Kustomization
 namespace: agent-factory
 resources:
   - ../job-runtime
-  - github-issue-poller-cronjob.yaml
+  - intake-job-trigger-rbac.yaml
 images:
   - name: ghcr.io/speedscale/agent-factory
-    newTag: v0.1.7
+    newTag: v0.1.9
 generatorOptions:
   disableNameSuffixHash: true
 configMapGenerator:
@@ -23,3 +23,4 @@ secretGenerator:
       - github-webhook-secrets.env
 patches:
   - path: intake-api-github-webhook.patch.yaml
+  - path: worker-queue-drain-suspend.patch.yaml

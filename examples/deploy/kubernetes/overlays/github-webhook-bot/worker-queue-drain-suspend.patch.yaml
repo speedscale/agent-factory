@@ -1,0 +1,6 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: worker-queue-drain
+spec:
+  suspend: true
