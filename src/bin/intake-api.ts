@@ -18,14 +18,14 @@ const githubBotToken = process.env.GITHUB_BOT_TOKEN ?? process.env.GH_TOKEN;
 const githubApiBase = process.env.GITHUB_API_BASE_URL ?? "https://api.github.com";
 const allowUnknownRepos = process.env.INTAKE_ALLOW_UNKNOWN_REPOS === "true";
 const commentOnSkippedIssue = process.env.INTAKE_COMMENT_ON_SKIPPED_ISSUE === "true";
+const repoAppMapFile = process.env.INTAKE_REPO_APP_MAP_FILE;
 const allowedRepos = new Set(
   (process.env.INTAKE_ALLOWED_REPOS ?? "")
     .split(",")
     .map((entry) => entry.trim().toLowerCase())
     .filter((entry) => entry.length > 0)
 );
-function parseRepoAppMapFromEnv(): Map<string, string> {
-  const raw = process.env.INTAKE_REPO_APP_MAP_JSON ?? "{}";
+function parseRepoAppMapFromJson(raw: string): Map<string, string> {
 
   let parsed: unknown;
   try {
@@ -42,8 +42,7 @@ function parseRepoAppMapFromEnv(): Map<string, string> {
     Object.entries(parsed).map(([repo, appPath]) => [repo.trim().toLowerCase(), String(appPath)])
   );
 }
-
-const repoAppMap = parseRepoAppMapFromEnv();
+const repoAppMap = new Map<string, string>();
 const appCache = new Map<string, AgentApp>();
 const evidenceDiscoverySources = new Set(["logs", "speedscale-capture", "both", "unknown"]);
 const trivialCommands = new Set(["true", ":", "exit 0", "/bin/true"]);
@@ -218,6 +217,25 @@ async function loadAgentAppFromMapping(repoFullName: string): Promise<AgentApp |
 
   appCache.set(key, parsed);
   return parsed;
+}
+
+async function initializeRepoAppMap(): Promise<void> {
+  const envJson = process.env.INTAKE_REPO_APP_MAP_JSON;
+  if (envJson && envJson.trim().length > 0) {
+    for (const [repo, appPath] of parseRepoAppMapFromJson(envJson)) {
+      repoAppMap.set(repo, appPath);
+    }
+  }
+
+  if (!repoAppMapFile || repoAppMapFile.trim().length === 0) {
+    return;
+  }
+
+  const filePath = path.isAbsolute(repoAppMapFile) ? repoAppMapFile : resolveFromRepo(repoAppMapFile);
+  const raw = await readFile(filePath, "utf8");
+  for (const [repo, appPath] of parseRepoAppMapFromJson(raw)) {
+    repoAppMap.set(repo, appPath);
+  }
 }
 
 function issueHasRequiredLabels(app: AgentApp, labels: string[]): boolean {
@@ -618,11 +636,21 @@ async function handler(req: IncomingMessage, res: ServerResponse): Promise<void>
 
 const port = Number(process.env.PORT ?? "8080");
 
-createServer((req, res) => {
-  void handler(req, res).catch((error: unknown) => {
-    const message = error instanceof Error ? error.message : "unexpected server error";
-    sendJson(res, 500, { error: message });
+async function main(): Promise<void> {
+  await initializeRepoAppMap();
+
+  createServer((req, res) => {
+    void handler(req, res).catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : "unexpected server error";
+      sendJson(res, 500, { error: message });
+    });
+  }).listen(port, () => {
+    console.log(`intake-api listening on http://localhost:${port}`);
   });
-}).listen(port, () => {
-  console.log(`intake-api listening on http://localhost:${port}`);
+}
+
+void main().catch((error: unknown) => {
+  const message = error instanceof Error ? error.message : "failed to start intake-api";
+  console.error(message);
+  process.exitCode = 1;
 });

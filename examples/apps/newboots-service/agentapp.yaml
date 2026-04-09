@@ -1,0 +1,28 @@
+apiVersion: agents.speedscale.io/v1alpha1
+kind: AgentApp
+metadata:
+  name: newboots-service
+spec:
+  repo:
+    provider: github
+    url: https://github.com/kenahrens/newboots
+    defaultBranch: main
+    workdir: .
+  issue:
+    labels:
+      include:
+        - agent
+        - bug
+  build:
+    install: mvn -q -DskipTests dependency:go-offline
+    test: make test
+    start: make run
+  validate:
+    proxymock:
+      dataset: newboots-default
+      mode: replay-with-mocks
+      command: ./run_with_proxymock.sh
+  policy:
+    autoBranch: true
+    autoMr: false
+    autoMerge: false
