@@ -106,7 +106,7 @@ INTAKE_API_TOKEN=change-me npm run intake-api
 Example with webhook repo mapping:
 
 ```bash
-INTAKE_ALLOWED_REPOS=speedscale/microsvc,speedscale/demo,kenahrens/crm-demo,kenahrens/newboots \
+INTAKE_ALLOWED_REPOS=speedscale/microsvc,speedscale/demo \
 INTAKE_REPO_APP_MAP_FILE=examples/apps/repo-app-map.json \
 INTAKE_COMMENT_ON_SKIPPED_ISSUE=true \
 GITHUB_WEBHOOK_SECRET=change-me \

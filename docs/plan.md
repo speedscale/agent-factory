@@ -12,6 +12,9 @@ across these repositories:
 
 - `speedscale/microsvc`
 - `speedscale/demo`
+
+Deferred scope (re-enable later after app installation expansion):
+
 - `kenahrens/crm-demo`
 - `kenahrens/newboots`
 
@@ -61,7 +64,7 @@ Deliverables:
 
 Exit criteria:
 
-- all four repos run baseline + validation from manifest-only configuration
+- in-scope repos run baseline + validation from manifest-only configuration
 
 ### Phase 3: Triage Decision Engine
 
@@ -128,7 +131,7 @@ Exit criteria:
 ## Immediate Iteration Backlog
 
 1. complete bot identity setup and verify bot-authored comment on each target repo
-2. enable webhook issue intake for all four repos with allowlist enforcement
+2. enable webhook or polling intake for in-scope repos with allowlist enforcement
 3. add or finalize repo manifests for `speedscale/microsvc` and `speedscale/demo`
 4. implement fallback comment path for non-fixable issues
 5. run one real `microsvc` issue through full loop and record artifacts

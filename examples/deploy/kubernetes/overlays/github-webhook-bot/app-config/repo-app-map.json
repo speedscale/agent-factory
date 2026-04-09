@@ -1,6 +1,4 @@
 {
   "speedscale/microsvc": "./config/microsvc-user-service-agentapp.yaml",
-  "speedscale/demo": "./config/demo-node-agentapp.yaml",
-  "kenahrens/crm-demo": "./config/crm-demo-core-service-agentapp.yaml",
-  "kenahrens/newboots": "./config/newboots-service-agentapp.yaml"
+  "speedscale/demo": "./config/demo-node-agentapp.yaml"
 }

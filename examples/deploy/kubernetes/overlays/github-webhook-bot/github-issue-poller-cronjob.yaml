@@ -42,7 +42,7 @@ spec:
                       key: appPrivateKey
                       optional: true
                 - name: INTAKE_ALLOWED_REPOS
-                  value: speedscale/microsvc,speedscale/demo,kenahrens/crm-demo,kenahrens/newboots
+                  value: speedscale/microsvc,speedscale/demo
                 - name: INTAKE_REPO_APP_MAP_FILE
                   value: /app/config/repo-app-map.json
                 - name: RUN_QUEUE_BACKEND
