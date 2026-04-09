@@ -1,0 +1,6 @@
+{
+  "speedscale/microsvc": "examples/apps/microsvc-user-service/agentapp.yaml",
+  "speedscale/demo": "examples/apps/demo-node/agentapp.yaml",
+  "kenahrens/crm-demo": "examples/apps/crm-demo-core-service/agentapp.yaml",
+  "kenahrens/newboots": "examples/apps/newboots-service/agentapp.yaml"
+}

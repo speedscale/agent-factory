@@ -57,6 +57,7 @@ GitHub issue webhook intake (optional):
 - `GITHUB_WEBHOOK_SECRET` (optional but recommended)
 - `INTAKE_ALLOWED_REPOS` (comma-separated `owner/repo` allowlist)
 - `INTAKE_REPO_APP_MAP_JSON` (JSON map of repo to manifest path)
+- `INTAKE_REPO_APP_MAP_FILE` (path to JSON mapping file; merged with env map)
 - `INTAKE_COMMENT_ON_SKIPPED_ISSUE=true` to post bot fallback comments when issue is skipped
 - `GITHUB_BOT_TOKEN` or `GH_TOKEN` required for fallback issue comments
 
@@ -95,12 +96,14 @@ Example with webhook repo mapping:
 
 ```bash
 INTAKE_ALLOWED_REPOS=speedscale/microsvc,speedscale/demo,kenahrens/crm-demo,kenahrens/newboots \
-INTAKE_REPO_APP_MAP_JSON='{"speedscale/microsvc":"examples/apps/microsvc-user-service/agentapp.yaml"}' \
+INTAKE_REPO_APP_MAP_FILE=examples/apps/repo-app-map.json \
 INTAKE_COMMENT_ON_SKIPPED_ISSUE=true \
 GITHUB_WEBHOOK_SECRET=change-me \
 GITHUB_BOT_TOKEN=<bot-token> \
 npm run intake-api
 ```
+
+Reference multi-repo mapping file: `examples/apps/repo-app-map.json`.
 
 In secure mode, include either header on run/metrics requests:
 
