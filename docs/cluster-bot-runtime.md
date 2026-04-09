@@ -30,6 +30,11 @@ Use a small relay service (or workflow tool) that:
 
 This keeps source-specific auth logic out of core planner/runner behavior.
 
+For direct GitHub issue webhook mode in Kubernetes, use:
+
+- `examples/deploy/kubernetes/overlays/github-webhook-bot`
+- `scripts/configure-github-issue-webhooks.sh` to create/update issue webhooks for all target repos
+
 ### 2) Bot Identity Contract
 
 Use dedicated bot credentials for repository mutations:
@@ -82,3 +87,19 @@ Do not move planning/build/validation logic into that controller.
 3. Wire GitHub webhook relay to `POST /runs` using app manifest mapping.
 4. Wire Slack command relay to same canonical intake path.
 5. Verify one full run produces bot-authored branch, PR, and issue comment.
+
+## Webhook Bootstrap Commands
+
+Deploy webhook profile:
+
+```bash
+kubectl apply -k examples/deploy/kubernetes/overlays/github-webhook-bot
+```
+
+Configure GitHub issue webhooks:
+
+```bash
+WEBHOOK_URL=https://<intake-host>/webhooks/github/issues \
+WEBHOOK_SECRET=<same-as-GITHUB_WEBHOOK_SECRET> \
+scripts/configure-github-issue-webhooks.sh
+```

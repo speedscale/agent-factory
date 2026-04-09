@@ -1,0 +1,36 @@
+apiVersion: agents.speedscale.io/v1alpha1
+kind: AgentApp
+metadata:
+  name: microsvc-user-service
+spec:
+  repo:
+    provider: github
+    url: https://github.com/speedscale/microsvc
+    defaultBranch: master
+    workdir: backend/user-service
+  issue:
+    labels:
+      include:
+        - agent
+        - bug
+  build:
+    install: make build
+    test: make test
+    start: make run
+  validate:
+    proxymock:
+      dataset: microsvc-user-service-404
+      mode: replay-with-mocks
+      command: make proxymock-replay
+      service:
+        command: SERVER_PORT=8081 DB_HOST=localhost DB_PORT=55432 DB_NAME=banking_app DB_USERNAME=postgres DB_PASSWORD=password DB_SCHEMA=user_service ./mvnw spring-boot:run
+        host: localhost
+        port: 8081
+        startupTimeoutSeconds: 90
+      dependencies:
+        setupCommand: docker rm -f af-microsvc-pg >/dev/null 2>&1 || true; docker run -d --name af-microsvc-pg -e POSTGRES_DB=banking_app -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=password -p 55432:5432 postgres:15 >/dev/null; for i in $(seq 1 30); do docker exec af-microsvc-pg pg_isready -U postgres >/dev/null 2>&1 && exit 0; sleep 1; done; exit 1
+        teardownCommand: docker rm -f af-microsvc-pg >/dev/null 2>&1 || true
+  policy:
+    autoBranch: true
+    autoMr: false
+    autoMerge: false

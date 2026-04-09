@@ -1,0 +1,28 @@
+apiVersion: agents.speedscale.io/v1alpha1
+kind: AgentApp
+metadata:
+  name: crm-demo-core-service
+spec:
+  repo:
+    provider: github
+    url: https://github.com/kenahrens/crm-demo
+    defaultBranch: main
+    workdir: core-service
+  issue:
+    labels:
+      include:
+        - agent
+        - bug
+  build:
+    install: go mod download
+    test: make test
+    start: make run
+  validate:
+    proxymock:
+      dataset: crm-core-default
+      mode: replay-with-mocks
+      command: make integration-test
+  policy:
+    autoBranch: true
+    autoMr: false
+    autoMerge: false
