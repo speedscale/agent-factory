@@ -4,165 +4,132 @@ Audience: Agent Factory developers/contributors.
 
 ## Goal
 
-Operate Agent Factory as an autonomous software factory that can reliably run:
+Operate a bot-first, multi-repo issue factory that runs:
 
-`issue -> triage -> patch -> validate -> report`
+`issue -> triage -> baseline -> patch -> Speedscale validate -> PR/comment`
 
-against real repositories in local and Kubernetes environments.
+across these repositories:
 
-## Where We Are
+- `speedscale/microsvc`
+- `speedscale/demo`
+- `kenahrens/crm-demo`
+- `kenahrens/newboots`
 
-The platform is runnable now and has strong infrastructure fundamentals:
+## Current Focus
 
-- intake + worker service model
-- queue backends (filesystem + Redis)
-- artifact model including terminal `result.json`
-- status and metrics endpoints
-- local/compose/k8s deployment paths
-- optional token auth for intake APIs
+This plan is intentionally forward-looking only.
 
-## Gap To Full Autonomous Factory
-
-The biggest remaining gap is not infrastructure, it is autonomous issue-to-fix execution quality.
-
-Priority gaps:
-
-1. deterministic packaging/release process (pinned deploy versions)
-2. first real autonomous ticket loop on a real target repo
-3. stronger failure classification and retry policy
-4. policy and safety controls for automated change proposals
-5. operational confidence gates for scaling and incident response
+- Architecture details live in `docs/architecture.md`.
+- Policy/instruction requirements live in `AGENTS.md`.
+- This file tracks active execution phases and acceptance criteria.
 
 ## Active Roadmap
 
-### Phase A: Packaging and Release Hardening
-
-Status: complete
-
-Objective:
-
-- make deployments repeatable, versioned, and easy to roll back
-
-Deliverables:
-
-- pinned image tags in compose and Kubernetes examples
-- release checklist (`build`, smoke, docs sync, branch hygiene)
-- versioning guidance for manifests and runtime images
-
-Exit criteria:
-
-- no `:latest` requirement for standard deployment path
-- operators can deploy a known version by tag/digest
-
-### Phase B: Real Ticket Autonomy (MVP)
+### Phase 1: Bot Identity and Event Intake
 
 Status: in progress
 
 Objective:
 
-- run one end-to-end real issue from intake through validated result on a real app
+- receive issue events and act as a dedicated bot identity, not an operator user
 
 Deliverables:
 
-- issue selection contract (labels/template)
-- triage output shape with root-cause hypothesis
-- patch proposal flow with reproducible validation evidence
-- operator pass/fail rubric and first-live-run checklist
+- GitHub App (or bot token) configured across all target repos
+- webhook receiver for issue events with repo allowlist
+- canonical intake mapping to `schemas/ticket-intake.schema.yaml`
+- bot-authored issue comment smoke test in each repo
 
 Exit criteria:
 
-- one ticket can be completed autonomously with operator review and merge
-- evidence is sufficient to decide accept/reject without manual log spelunking
+- opening an issue in any target repo creates intake artifacts
+- first automated response in each repo is authored by bot identity
 
-### Phase C: Reliability and Recovery
+### Phase 2: Repo Onboarding Contracts
 
 Status: pending
 
 Objective:
 
-- make long-running operation resilient under failures and restarts
+- remove repo-specific logic from workers by onboarding each repo via manifests
 
 Deliverables:
 
-- explicit failure taxonomy (`queue`, `build`, `validate`, `policy`, `infra`)
-- retry/backoff policy per failure class
-- stale run recovery behavior and idempotent replay guardrails
+- one `AgentApp` manifest per target repo
+- per-repo install/build/test/start/validate commands
+- Speedscale/proxymock dataset and validation command mapping per repo
 
 Exit criteria:
 
-- repeated transient failures recover automatically
-- operators can identify failure class from API and result artifacts directly
+- all four repos run baseline + validation from manifest-only configuration
 
-### Phase D: Policy and Safety Controls
+### Phase 3: Triage Decision Engine
 
 Status: pending
 
 Objective:
 
-- enforce safe automation boundaries before broader rollout
+- make deterministic fix/no-fix decisions with explicit operator-readable rationale
 
 Deliverables:
 
-- policy profile for allowed repos/branches/commands
-- approval gates for high-risk actions
-- immutable audit trail for run decisions
+- triage states: `fixable`, `needs-more-info`, `out-of-scope-or-unsafe`
+- confidence and policy gates before patch execution
+- structured fallback comment template for non-fixable issues
 
 Exit criteria:
 
-- unauthorized or unsafe actions are blocked by policy
-- every automated decision has traceable evidence
+- every processed issue lands in one triage state with a recorded reason
 
-## Immediate Next Actions
+### Phase 4: Autonomous Fix Pipeline
 
-1. execute one microsvc ticket with logs/capture/repro evidence populated in `evidence.json`
-2. require endpoint-level performance evidence from Speedscale snapshot/capture before posting benchmark claims
-3. run replay in the intended target environment (local vs staging cluster must be explicit in artifacts and issue comments)
-4. deploy the queue-drain Job runtime profile (`examples/deploy/kubernetes/overlays/job-runtime`) and verify run completion with TTL cleanup
-5. wire GitHub + Slack intake relays to canonical ticket intake shape (`schemas/ticket-intake.schema.yaml`)
-6. record operator decision against full autonomy rubric in `docs/phase-b-first-run.md`, including explicit next action
+Status: pending
 
-## Performance Research Standard (Within Reason)
+Objective:
 
-When a ticket is performance-oriented (CPU/latency/load), treat completion as research + evidence, not just command success.
+- complete fixable issues end-to-end with verifiable before/after behavior
 
-Minimum evidence package:
+Deliverables:
 
-- source of traffic data: Speedscale snapshot/dataset id (or explicitly marked local fixture)
-- environment scope: local workstation vs cluster namespace/context
-- endpoint-level latency table (p50/p95/p99, request count, mismatch/failure rate)
-- service resource view at test time (CPU/memory sample, pod/deployment identity)
-- assumptions/limits section (what was not measured)
-- concrete next step with owner/action/target metric
+- baseline behavior artifact before patch
+- patch/build/test execution
+- Speedscale validation report tied to run artifacts
+- bot-authored PR and linked issue comment
 
-Guardrail:
+Exit criteria:
 
-- do not present local fixture replay as staging or production-equivalent benchmark.
+- at least one successful autonomous PR loop in `speedscale/microsvc`
+- at least one successful autonomous PR loop in one additional target repo
 
-Execution checklist for performance tickets:
+### Phase 5: Demo Reliability and Throughput
 
-1. Establish baseline from local replay (endpoint table + command log + assumptions).
-2. Establish environment baseline from staging replay against the intended namespace/workload.
-3. Compare local vs staging endpoint latency and failure/mismatch rates in one side-by-side table.
-4. Attach Speedscale snapshot context (dataset id, capture window, and endpoint hit distribution) before proposing fixes.
-5. Name the top 1-3 hotspot endpoints and propose a specific optimization experiment per endpoint.
-6. Define next validation run with explicit target (for example: reduce p95 on endpoint X by N% under same replay profile).
+Status: pending
 
-## Context Reset Handoff
+Objective:
 
-Use this checkpoint after context reset:
+- make the demo path consistently runnable under repeated issue intake
 
-1. confirm PR `#20` is merged and `main` is synced
-2. select one microsvc issue with observable log signal
-3. populate run `evidence.json` with:
-   - discovery notes from logs
-   - Speedscale/proxymock capture dataset details
-   - reproducible local steps and expected vs observed behavior
-4. execute run, verify replay result, then run `run-to-pr`
-5. evaluate generated PR with `docs/autonomy-mvp.md` rubric and record decision in `docs/phase-b-first-run.md`
+Deliverables:
 
-## Notes
+- stable staging runtime profile (queue, worker, retries, timeouts)
+- failure classification surfaced in run artifacts
+- operational checks for stuck runs and backlog growth
 
-- Historical completed work is tracked in `docs/history.md`.
-- `docs/architecture.md` remains the source of truth for system shape.
-- Phase B execution details and rubric are tracked in `docs/autonomy-mvp.md`.
-- first live run target and decision template are tracked in `docs/phase-b-first-run.md`.
+Exit criteria:
+
+- ten consecutive issue events complete without infrastructure-level manual recovery
+
+## Operational Rules For This Phase
+
+- If issue is fixable: baseline, patch, validate with Speedscale, open PR, comment with evidence.
+- If issue is not fixable: post bot comment explaining why and exactly what data is needed.
+- Do not post personal-user-authored automation output in target repos.
+
+## Immediate Iteration Backlog
+
+1. complete bot identity setup and verify bot-authored comment on each target repo
+2. enable webhook issue intake for all four repos with allowlist enforcement
+3. add or finalize repo manifests for `speedscale/microsvc` and `speedscale/demo`
+4. implement fallback comment path for non-fixable issues
+5. run one real `microsvc` issue through full loop and record artifacts
+6. run one real issue from a second target repo through full loop
