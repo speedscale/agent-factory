@@ -9,6 +9,7 @@
     "check": "tsc --noEmit -p tsconfig.json",
     "intake-api": "tsx src/bin/intake-api.ts",
     "worker": "tsx src/bin/worker.ts",
+    "issue-poller": "tsx src/bin/github-issue-poller.ts",
     "runs": "tsx src/bin/runs.ts",
     "create-demo-fixture": "tsx src/bin/create-demo-fixture.ts",
     "demo": "tsx src/bin/demo.ts",

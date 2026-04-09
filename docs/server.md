@@ -61,6 +61,14 @@ GitHub issue webhook intake (optional):
 - `INTAKE_COMMENT_ON_SKIPPED_ISSUE=true` to post bot fallback comments when issue is skipped
 - `GITHUB_BOT_TOKEN` or `GH_TOKEN` required for fallback issue comments
 
+GitHub issue polling mode (optional):
+
+- command: `npm run issue-poller -- --once`
+- polls open issues in `INTAKE_ALLOWED_REPOS`
+- loads repo manifests from `INTAKE_REPO_APP_MAP_FILE` or `INTAKE_REPO_APP_MAP_JSON`
+- queues runs for issues that satisfy required labels
+- posts one bot comment for missing-label or missing-manifest issues
+
 Redis configuration:
 
 - `REDIS_URL` (example: `redis://127.0.0.1:6379`)
