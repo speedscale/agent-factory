@@ -2,14 +2,16 @@
 
 This overlay extends `job-runtime` and configures intake for direct GitHub issue webhooks.
 
-It also includes a `github-issue-poller` CronJob so you can start in polling mode before enabling inbound webhooks.
+Polling is embedded inside `intake-api` so there is no separate poller workload.
 
 ## What it adds
 
 - intake env for repo allowlist and webhook-mode behavior
+- embedded issue polling loop inside intake (`INTAKE_ENABLE_EMBEDDED_POLLER=true`)
+- per-run worker Job trigger from intake (`INTAKE_TRIGGER_WORKER_JOB=true`)
 - mounted repo->app mapping and manifests at `/app/config`
 - secret-backed webhook signature + bot token env vars
-- `github-issue-poller` CronJob (`*/2 * * * *`) that polls open issues and queues eligible runs
+- namespace-scoped RBAC so intake can create worker Jobs
 
 ## Required edits before deploy
 

@@ -35,7 +35,7 @@ For direct GitHub issue webhook mode in Kubernetes, use:
 - `examples/deploy/kubernetes/overlays/github-webhook-bot`
 - `scripts/configure-github-issue-webhooks.sh` to create/update issue webhooks for all target repos
 
-For polling-first rollout, the same overlay includes `github-issue-poller` (CronJob) to discover open issues without inbound webhooks.
+For polling-first rollout, the same overlay enables polling inside `intake-api` (no separate poller workload) to discover open issues without inbound webhooks.
 
 ### 2) Bot Identity Contract
 

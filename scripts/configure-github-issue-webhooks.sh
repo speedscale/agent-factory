@@ -8,7 +8,7 @@ fi
 
 WEBHOOK_URL="${WEBHOOK_URL:-}"
 WEBHOOK_SECRET="${WEBHOOK_SECRET:-}"
-REPOS_CSV="${REPOS_CSV:-speedscale/microsvc,speedscale/demo,kenahrens/crm-demo,kenahrens/newboots}"
+REPOS_CSV="${REPOS_CSV:-speedscale/microsvc,speedscale/demo}"
 
 if [[ -z "$WEBHOOK_URL" ]]; then
   echo "Set WEBHOOK_URL (for example https://agent-factory.example.com/webhooks/github/issues)" >&2

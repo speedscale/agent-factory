@@ -65,12 +65,19 @@ GitHub issue webhook intake (optional):
 
 GitHub issue polling mode (optional):
 
-- command: `npm run issue-poller -- --once`
+- standalone command: `npm run issue-poller -- --once`
+- embedded in intake: set `INTAKE_ENABLE_EMBEDDED_POLLER=true`
+- interval: `POLLER_INTERVAL_MS` (default `120000`)
 - polls open issues in `INTAKE_ALLOWED_REPOS`
 - loads repo manifests from `INTAKE_REPO_APP_MAP_FILE` or `INTAKE_REPO_APP_MAP_JSON`
 - queues runs for issues that satisfy required labels
 - posts one bot comment for missing-label or missing-manifest issues
 - GitHub auth uses same precedence as webhook intake (App first, token fallback)
+
+Worker trigger mode (optional):
+
+- set `INTAKE_TRIGGER_WORKER_JOB=true` to create one Kubernetes Job when a run is queued
+- requires `INTAKE_WORKER_JOB_IMAGE` and in-cluster service account permissions for creating Jobs
 
 Redis configuration:
 
@@ -106,7 +113,7 @@ INTAKE_API_TOKEN=change-me npm run intake-api
 Example with webhook repo mapping:
 
 ```bash
-INTAKE_ALLOWED_REPOS=speedscale/microsvc,speedscale/demo,kenahrens/crm-demo,kenahrens/newboots \
+INTAKE_ALLOWED_REPOS=speedscale/microsvc,speedscale/demo \
 INTAKE_REPO_APP_MAP_FILE=examples/apps/repo-app-map.json \
 INTAKE_COMMENT_ON_SKIPPED_ISSUE=true \
 GITHUB_WEBHOOK_SECRET=change-me \
