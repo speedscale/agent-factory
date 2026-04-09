@@ -3,6 +3,7 @@ kind: Kustomization
 namespace: agent-factory
 resources:
   - ../job-runtime
+  - github-issue-poller-cronjob.yaml
 images:
   - name: ghcr.io/speedscale/agent-factory
     newTag: v0.1.5
