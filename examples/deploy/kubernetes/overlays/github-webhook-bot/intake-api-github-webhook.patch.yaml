@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: intake-api
+spec:
+  strategy:
+    type: Recreate
+  template:
+    spec:
+      containers:
+        - name: intake-api
+          env:
+            - name: INTAKE_ALLOWED_REPOS
+              value: speedscale/microsvc,speedscale/demo,kenahrens/crm-demo,kenahrens/newboots
+            - name: INTAKE_REPO_APP_MAP_FILE
+              value: /app/config/repo-app-map.json
+            - name: INTAKE_COMMENT_ON_SKIPPED_ISSUE
+              value: "true"
+            - name: GITHUB_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: github-webhook-secrets
+                  key: webhookSecret
+            - name: GITHUB_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: github-webhook-secrets
+                  key: botToken
+          volumeMounts:
+            - name: intake-repo-app-config
+              mountPath: /app/config
+              readOnly: true
+      volumes:
+        - name: intake-repo-app-config
+          configMap:
+            name: intake-repo-app-config

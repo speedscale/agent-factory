@@ -1,0 +1,24 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: agent-factory
+resources:
+  - ../job-runtime
+images:
+  - name: ghcr.io/speedscale/agent-factory
+    newTag: v0.1.5
+generatorOptions:
+  disableNameSuffixHash: true
+configMapGenerator:
+  - name: intake-repo-app-config
+    files:
+      - repo-app-map.json=app-config/repo-app-map.json
+      - microsvc-user-service-agentapp.yaml=app-config/microsvc-user-service-agentapp.yaml
+      - demo-node-agentapp.yaml=app-config/demo-node-agentapp.yaml
+      - crm-demo-core-service-agentapp.yaml=app-config/crm-demo-core-service-agentapp.yaml
+      - newboots-service-agentapp.yaml=app-config/newboots-service-agentapp.yaml
+secretGenerator:
+  - name: github-webhook-secrets
+    envs:
+      - github-webhook-secrets.env
+patches:
+  - path: intake-api-github-webhook.patch.yaml

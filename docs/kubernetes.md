@@ -42,6 +42,23 @@ kubectl apply -k examples/deploy/kubernetes/overlays/redis
 kubectl apply -k examples/deploy/kubernetes/overlays/job-runtime
 ```
 
+### GitHub webhook bot profile
+
+```bash
+kubectl apply -k examples/deploy/kubernetes/overlays/github-webhook-bot
+```
+
+This profile extends `job-runtime` and adds intake webhook wiring:
+
+- repo allowlist for target repositories
+- repo-to-manifest mapping mounted into intake container
+- `GITHUB_WEBHOOK_SECRET` + `GITHUB_BOT_TOKEN` env from Kubernetes secret
+- fallback issue comments for skipped/non-onboarded issues
+
+Before apply in non-demo environments, update:
+
+- `examples/deploy/kubernetes/overlays/github-webhook-bot/github-webhook-secrets.env`
+
 ### Auth-token profile
 
 ```bash
