@@ -1,18 +1,19 @@
 $schema: https://json-schema.org/draft/2020-12/schema
-title: TicketIntakeEvent
-description: Legacy issue-based intake payload (superseded by qa-intake for quality-agent flow).
+title: QaIntakeEvent
+description: Canonical quality validation intake payload for PR and manual requests.
 type: object
 required:
   - source
   - repository
-  - issue
   - appRef
+  - request
 properties:
   source:
     type: string
     enum:
       - github-webhook
-      - slack-command
+      - ai-agent
+      - developer
       - manual
   repository:
     type: object
@@ -31,37 +32,52 @@ properties:
       name:
         type: string
         minLength: 1
-  issue:
-    type: object
-    required:
-      - id
-      - title
-      - body
-      - url
-    properties:
-      id:
-        type: string
-        minLength: 1
-      title:
-        type: string
-        minLength: 1
-      body:
-        type: string
-      url:
-        type: string
-        format: uri
+    additionalProperties: false
   appRef:
     type: object
-    description: Reference to onboarded app manifest known by intake.
     required:
       - name
     properties:
       name:
         type: string
         minLength: 1
+      qualityTarget:
+        type: string
+        description: Optional override when app has multiple baseline targets.
+    additionalProperties: false
+  request:
+    type: object
+    required:
+      - mode
+    properties:
+      mode:
+        type: string
+        enum:
+          - comparison
+          - baseline
+      pullRequest:
+        type: object
+        required:
+          - number
+          - url
+        properties:
+          number:
+            type: number
+          url:
+            type: string
+            format: uri
+          headSha:
+            type: string
+          baseSha:
+            type: string
+        additionalProperties: false
+      branch:
+        type: string
+      commitSha:
+        type: string
+    additionalProperties: false
   requestedBy:
     type: object
-    description: Identity of the human or system that requested handling.
     properties:
       type:
         type: string
@@ -73,11 +89,7 @@ properties:
         type: string
       channel:
         type: string
-        description: Slack channel id or GitHub installation slug.
-  labels:
-    type: array
-    items:
-      type: string
+    additionalProperties: false
   metadata:
     type: object
     additionalProperties:

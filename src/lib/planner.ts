@@ -11,8 +11,12 @@ export interface PlannerRunContext {
 function summarizeIssue(title: string, body: string): string {
   const text = `${title} ${body}`.toLowerCase();
 
+  if (text.includes("pr #")) {
+    return "Run configured quality checks for this PR and compare results against baseline.";
+  }
+
   if (text.includes("404") && text.includes("500")) {
-    return "Preserve upstream 404 behavior instead of converting it to 500.";
+    return "Validate upstream 404 behavior remains stable compared to baseline.";
   }
 
   if (text.includes("timeout")) {
@@ -24,6 +28,10 @@ function summarizeIssue(title: string, body: string): string {
 
 function inferHypothesis(issue: AgentRun["spec"]["issue"]): string {
   const text = `${issue.title} ${issue.body}`.toLowerCase();
+
+  if (text.includes("pr #")) {
+    return "Changes in this PR may alter behavior, tests, or replay outcomes versus baseline expectations.";
+  }
 
   if (text.includes("404") || text.includes("status code")) {
     return "The error mapping in the request path is collapsing known upstream status codes into a generic internal error.";
@@ -50,6 +58,10 @@ function inferConfidence(issue: AgentRun["spec"]["issue"]): AgentTriage["spec"][
 
   if (text.includes("404") && text.includes("500")) {
     return "high";
+  }
+
+  if (text.includes("pr #")) {
+    return "medium";
   }
 
   if (text.includes("timeout") || text.includes("retry") || text.includes("connection")) {
@@ -82,31 +94,31 @@ function buildPlanFromContext(context: PlannerRunContext): AgentPlan {
         {
           id: `inspect-${issueId}`,
           action: "inspect",
-          description: "Review the app code path and the configured build/test commands.",
-          targetPaths
-        },
-        {
-          id: `edit-${issueId}`,
-          action: "edit",
-          description: "Make the smallest code change that preserves the expected client behavior.",
+          description: "Review quality target scope and configured build/validation commands.",
           targetPaths
         },
         {
           id: `build-${issueId}`,
           action: "build",
-          description: "Run the app's configured test command.",
+          description: "Run the app's configured quality build/test command.",
           command: context.app.spec.build.test
         },
         {
           id: `validate-${issueId}`,
           action: "validate",
-          description: "Replay the captured traffic set against the patched app.",
+          description: "Run replay validation and collect quality evidence.",
           command: validationCommand
+        },
+        {
+          id: `report-${issueId}`,
+          action: "inspect",
+          description: "Compare outputs against baseline and emit a quality report.",
+          targetPaths
         }
       ],
       validation: {
         command: validationCommand,
-        successCriteria: `The proxymock replay for ${context.app.metadata.name} no longer reproduces the reported issue.`
+        successCriteria: `The quality report for ${context.app.metadata.name} shows no regression versus baseline.`
       }
     }
   };

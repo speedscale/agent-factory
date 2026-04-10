@@ -1,0 +1,253 @@
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
+import type { AgentApp, AgentRun } from "../contracts/index.js";
+import { readJsonFile, resolveFromRepo, writeJsonFile } from "./io.js";
+
+interface CommandSnapshot {
+  command: string;
+  exitCode: number;
+}
+
+interface BaselineDocument {
+  apiVersion: "agents.speedscale.io/v1alpha1";
+  kind: "QualityBaseline";
+  metadata: {
+    name: string;
+    generatedAt: string;
+  };
+  spec: {
+    appRef: {
+      name: string;
+    };
+    target: {
+      name: string;
+      workdir: string;
+      baselineRef?: string;
+    };
+    commands: {
+      build: CommandSnapshot;
+      validation?: CommandSnapshot;
+    };
+  };
+}
+
+interface QualityReportDocument {
+  apiVersion: "agents.speedscale.io/v1alpha1";
+  kind: "QualityReport";
+  metadata: {
+    name: string;
+    generatedAt: string;
+  };
+  spec: {
+    runRef: {
+      name: string;
+    };
+    appRef: {
+      name: string;
+    };
+    target: {
+      name: string;
+      workdir: string;
+      baselineStorePath: string;
+    };
+    mode: "comparison" | "baseline";
+    outcome: "pass" | "warning" | "regression";
+    summary: string;
+    comparedCommands: {
+      build: {
+        baselineExitCode?: number;
+        currentExitCode: number;
+      };
+      validation?: {
+        baselineExitCode?: number;
+        currentExitCode: number;
+      };
+    };
+  };
+}
+
+interface WriteQualityArtifactsInput {
+  run: AgentRun;
+  app: AgentApp;
+  build: CommandSnapshot;
+  validation?: CommandSnapshot;
+}
+
+interface QualityTarget {
+  name: string;
+  workdir: string;
+  baselineRef?: string;
+}
+
+export interface QualityReportOutcome {
+  outcome: "pass" | "warning" | "regression";
+  summary: string;
+}
+
+function toSafeSegment(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .replace(/-{2,}/g, "-");
+}
+
+function resolveQualityTarget(run: AgentRun, app: AgentApp): QualityTarget {
+  if (run.spec.qualityTarget) {
+    return run.spec.qualityTarget;
+  }
+
+  const configured = app.spec.quality?.baseline?.targets?.[0];
+  if (configured) {
+    return {
+      name: configured.name,
+      workdir: configured.workdir,
+      baselineRef: configured.baselineRef
+    };
+  }
+
+  return {
+    name: app.metadata.name,
+    workdir: app.spec.repo.workdir
+  };
+}
+
+function resolveBaselineStorePath(app: AgentApp, target: QualityTarget): string {
+  const ref = target.baselineRef ?? `${app.metadata.name}/${target.name}`;
+  return path.posix.join("artifacts", "baselines", `${ref.replace(/^\/+/, "")}.json`);
+}
+
+function resolveReportPaths(run: AgentRun): { baseline: string; json: string; markdown: string } {
+  const base = path.posix.join("artifacts", run.metadata.name);
+  return {
+    baseline: run.status.artifacts.baseline ?? path.posix.join(base, "baseline.json"),
+    json: run.status.artifacts.qualityReportJson ?? path.posix.join(base, "quality-report.json"),
+    markdown: run.status.artifacts.qualityReportMarkdown ?? path.posix.join(base, "quality-report.md")
+  };
+}
+
+function toMarkdown(report: QualityReportDocument): string {
+  const validationSection = report.spec.comparedCommands.validation
+    ? `- validation baseline/current: ${String(report.spec.comparedCommands.validation.baselineExitCode ?? "n/a")} -> ${report.spec.comparedCommands.validation.currentExitCode}`
+    : "- validation baseline/current: n/a";
+
+  return [
+    "# Quality Report",
+    "",
+    `- run: ${report.spec.runRef.name}`,
+    `- app: ${report.spec.appRef.name}`,
+    `- target: ${report.spec.target.name} (${report.spec.target.workdir})`,
+    `- mode: ${report.spec.mode}`,
+    `- outcome: ${report.spec.outcome}`,
+    `- summary: ${report.spec.summary}`,
+    `- build baseline/current: ${String(report.spec.comparedCommands.build.baselineExitCode ?? "n/a")} -> ${report.spec.comparedCommands.build.currentExitCode}`,
+    validationSection,
+    `- baseline store: ${report.spec.target.baselineStorePath}`,
+    ""
+  ].join("\n");
+}
+
+export async function writeQualityArtifacts(input: WriteQualityArtifactsInput): Promise<QualityReportOutcome> {
+  const { run, app, build, validation } = input;
+  const target = resolveQualityTarget(run, app);
+  const mode = run.spec.request?.mode ?? "comparison";
+  const baselineStorePath = resolveBaselineStorePath(app, target);
+  const reportPaths = resolveReportPaths(run);
+  const now = new Date().toISOString();
+
+  const baselineDoc: BaselineDocument = {
+    apiVersion: "agents.speedscale.io/v1alpha1",
+    kind: "QualityBaseline",
+    metadata: {
+      name: `baseline-${toSafeSegment(app.metadata.name)}-${toSafeSegment(target.name)}`,
+      generatedAt: now
+    },
+    spec: {
+      appRef: {
+        name: app.metadata.name
+      },
+      target,
+      commands: {
+        build,
+        validation
+      }
+    }
+  };
+
+  await mkdir(path.dirname(resolveFromRepo(baselineStorePath)), { recursive: true });
+
+  let outcome: QualityReportDocument["spec"]["outcome"] = "pass";
+  let summary = "Current run matches baseline expectations.";
+  let baselineForCompare: BaselineDocument | undefined;
+
+  if (mode === "baseline") {
+    await writeJsonFile(resolveFromRepo(baselineStorePath), baselineDoc);
+    summary = "Baseline updated from current run outputs.";
+  } else {
+    try {
+      baselineForCompare = await readJsonFile<BaselineDocument>(resolveFromRepo(baselineStorePath));
+    } catch {
+      outcome = "warning";
+      summary = "No baseline found for this target. Run baseline mode during onboarding before enforcing comparison results.";
+    }
+
+    if (baselineForCompare) {
+      const buildChanged = baselineForCompare.spec.commands.build.exitCode !== build.exitCode;
+      const validationChanged =
+        typeof validation !== "undefined" &&
+        typeof baselineForCompare.spec.commands.validation !== "undefined" &&
+        baselineForCompare.spec.commands.validation.exitCode !== validation.exitCode;
+
+      if (buildChanged || validationChanged) {
+        outcome = "regression";
+        summary = "Current run differs from baseline command outcomes.";
+      }
+    }
+  }
+
+  const report: QualityReportDocument = {
+    apiVersion: "agents.speedscale.io/v1alpha1",
+    kind: "QualityReport",
+    metadata: {
+      name: `quality-${run.metadata.name}`,
+      generatedAt: now
+    },
+    spec: {
+      runRef: {
+        name: run.metadata.name
+      },
+      appRef: {
+        name: app.metadata.name
+      },
+      target: {
+        name: target.name,
+        workdir: target.workdir,
+        baselineStorePath
+      },
+      mode,
+      outcome,
+      summary,
+      comparedCommands: {
+        build: {
+          baselineExitCode: baselineForCompare?.spec.commands.build.exitCode,
+          currentExitCode: build.exitCode
+        },
+        validation:
+          typeof validation !== "undefined"
+            ? {
+                baselineExitCode: baselineForCompare?.spec.commands.validation?.exitCode,
+                currentExitCode: validation.exitCode
+              }
+            : undefined
+      }
+    }
+  };
+
+  await Promise.all([
+    writeJsonFile(resolveFromRepo(reportPaths.baseline), baselineForCompare ?? baselineDoc),
+    writeJsonFile(resolveFromRepo(reportPaths.json), report),
+    writeFile(resolveFromRepo(reportPaths.markdown), toMarkdown(report), "utf8")
+  ]);
+
+  return { outcome, summary };
+}

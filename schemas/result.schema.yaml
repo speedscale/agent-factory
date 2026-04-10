@@ -118,9 +118,15 @@ properties:
             type: string
           patch:
             type: string
+          baseline:
+            type: string
           buildLog:
             type: string
           validationReport:
+            type: string
+          qualityReportJson:
+            type: string
+          qualityReportMarkdown:
             type: string
           result:
             type: string

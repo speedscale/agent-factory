@@ -4,9 +4,9 @@ Audience: Agent Factory developers/contributors.
 
 ## Overview
 
-Agent Factory is designed around one autonomous inner loop:
+Agent Factory is designed around one quality-first inner loop:
 
-`discover -> capture -> reproduce -> triage -> patch -> validate -> report`
+`request -> select scope -> run checks -> compare baseline -> report`
 
 The control plane must stay app-agnostic by reading a declarative `AgentApp` manifest instead of embedding repository-specific logic.
 
@@ -27,13 +27,13 @@ The app plane should not contain orchestration logic for the agent itself.
 
 The agent plane owns:
 
-- issue intake
+- validation request intake (PR/manual/agent)
 - run queueing and state transitions
-- triage/planning
+- scope selection and baseline targeting
 - isolated workspace execution
 - artifact persistence and status reporting
 
-The agent decides what to attempt, but it does not define correctness.
+The agent does not fix code; it evaluates quality and reports regressions.
 
 ### Validation Plane
 
@@ -87,12 +87,12 @@ See `docs/cluster-bot-runtime.md` for deployment profile and identity contract.
 
 ## Control Flow
 
-1. Intake receives an issue and app manifest, then writes `run.json` in `queued` phase.
-2. Evidence artifact captures discovery source, capture dataset details, and repro notes.
-3. Worker picks queued runs and creates `triage.json` + `plan.yaml`.
-4. Worker prepares isolated workspace and runs configured build/test command.
-5. Worker executes configured proxymock replay validation command.
-6. Worker updates run phase to `succeeded` or `failed` with summary.
+1. Intake receives a validation request and app manifest, then writes `run.json` in `queued` phase.
+2. Worker resolves the baseline target(s) for the repository/workdir scope.
+3. Worker prepares isolated workspace and runs configured quality checks.
+4. Worker executes configured validation commands (for example proxymock replay).
+5. Worker compares current outputs to baseline artifacts.
+6. Worker writes structured quality report artifacts and updates run phase.
 7. Artifacts remain available for audit and reproducibility.
 
 ## Component Contracts
@@ -102,17 +102,18 @@ See `docs/cluster-bot-runtime.md` for deployment profile and identity contract.
 Each app manifest declares:
 
 - repository location and default branch
-- app working directory
+- one or more project working directories for quality scope
 - install/test/start commands
-- proxymock dataset/mode/command
-- policy flags (auto branch/MR/merge behavior)
+- validation commands and baseline target contract
+- reporting policy (fail on regression, output formats)
 
 ### `AgentRun`
 
 Each run captures:
 
-- issue id/title/body/url
+- request source and trigger context (PR/manual/agent)
 - workspace root and branch intent
+- baseline target(s)
 - lifecycle phase (`queued`, `planned`, `building`, `validating`, `succeeded`, `failed`)
 - artifact pointers
 
@@ -120,15 +121,15 @@ Each run captures:
 
 Each run should emit:
 
-- `issue.json`
+- `request.json`
 - `app.json`
 - `run.json`
 - `evidence.json`
-- `triage.json`
-- `plan.yaml`
-- `patch.diff`
+- `baseline.json`
 - `build.log`
 - `validation.log`
+- `quality-report.json`
+- `quality-report.md`
 - `result.json`
 
 ## Reliability and Safety Guardrails
@@ -136,7 +137,7 @@ Each run should emit:
 - **Deterministic workers**: execute one run at a time per worker process.
 - **Isolated workspace**: run commands under `.work/<run-name>`.
 - **Run claiming**: workers create a per-run claim file before processing to avoid double execution.
-- **Idempotent intake**: run identity is derived from app name + issue id.
+- **Idempotent intake**: run identity is derived from app name + request scope + source id.
 - **Evidence-first completion**: do not mark success without validation command exit `0`.
 - **App-agnostic control plane**: onboarding data lives in app manifest, not worker code.
 

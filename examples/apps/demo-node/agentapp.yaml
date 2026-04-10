@@ -13,6 +13,23 @@ spec:
       include:
         - agent
         - bug
+  quality:
+    trigger:
+      pullRequest: true
+      manualRequest: true
+      prePrRequest: true
+    baseline:
+      strategy: multi-project
+      targets:
+        - name: demo-node
+          workdir: node
+          baselineRef: baseline/demo/node
+          command: npm test
+    reporting:
+      formats:
+        - json
+        - markdown
+      failOnRegression: true
   build:
     install: npm ci
     test: npm test

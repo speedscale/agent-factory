@@ -6,11 +6,11 @@ This guide is for operators and integrators who run Agent Factory.
 
 Agent Factory executes a repeatable run loop:
 
-1. intake issue + app manifest
-2. triage and plan
-3. build patch in isolated workspace
-4. validate with replay evidence
-5. emit artifacts for operator decision
+1. intake validation request (PR/manual/agent) + app manifest
+2. resolve baseline scope for the repo/workdir target
+3. run build/test/validation checks in isolated workspace
+4. compare outputs against baseline
+5. emit quality reports for operator/developer decision
 
 ## Choose a Runtime Mode
 
@@ -63,12 +63,13 @@ curl -sS "http://127.0.0.1:8080/metrics"
 
 ## Required Evidence Quality
 
-For real tickets, treat successful command execution as necessary but not sufficient.
+For real PR requests, treat successful command execution as necessary but not sufficient.
 
-- include logs/capture/repro context in intake `evidence`
+- include request context (PR URL/sha or manual request metadata)
 - keep environment scope explicit (local vs staging/cluster)
 - provide endpoint-level replay outcomes when performance is in scope
 - keep `build.test` and `validate.proxymock.command` meaningful (no no-op placeholders)
+- ensure baseline artifacts are current for each onboarded quality target
 
 ## Operational Baselines
 

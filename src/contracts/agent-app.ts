@@ -17,6 +17,26 @@ export interface AgentApp {
         include?: string[];
       };
     };
+    quality?: {
+      trigger?: {
+        pullRequest?: boolean;
+        manualRequest?: boolean;
+        prePrRequest?: boolean;
+      };
+      baseline?: {
+        strategy?: "single" | "multi-project";
+        targets: Array<{
+          name: string;
+          workdir: string;
+          baselineRef?: string;
+          command?: string;
+        }>;
+      };
+      reporting?: {
+        formats?: Array<"json" | "markdown">;
+        failOnRegression?: boolean;
+      };
+    };
     build: {
       install: string;
       test: string;

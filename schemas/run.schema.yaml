@@ -38,6 +38,43 @@ properties:
           name:
             type: string
         additionalProperties: false
+      request:
+        type: object
+        required:
+          - source
+          - mode
+        properties:
+          source:
+            type: string
+            enum:
+              - pull_request
+              - manual
+              - agent
+              - developer
+          mode:
+            type: string
+            enum:
+              - comparison
+              - baseline
+          url:
+            type: string
+            format: uri
+          pullRequest:
+            type: object
+            required:
+              - repository
+              - number
+            properties:
+              repository:
+                type: string
+              number:
+                type: number
+              headSha:
+                type: string
+              baseSha:
+                type: string
+            additionalProperties: false
+        additionalProperties: false
       issue:
         type: object
         required:
@@ -52,6 +89,19 @@ properties:
           body:
             type: string
           url:
+            type: string
+        additionalProperties: false
+      qualityTarget:
+        type: object
+        required:
+          - name
+          - workdir
+        properties:
+          name:
+            type: string
+          workdir:
+            type: string
+          baselineRef:
             type: string
         additionalProperties: false
       workspace:
@@ -93,9 +143,15 @@ properties:
             type: string
           patch:
             type: string
+          baseline:
+            type: string
           buildLog:
             type: string
           validationReport:
+            type: string
+          qualityReportJson:
+            type: string
+          qualityReportMarkdown:
             type: string
           result:
             type: string

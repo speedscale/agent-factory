@@ -1,0 +1,28 @@
+{
+  "source": "github-webhook",
+  "repository": {
+    "provider": "github",
+    "owner": "speedscale",
+    "name": "demo"
+  },
+  "appRef": {
+    "name": "demo-node",
+    "qualityTarget": "demo-node"
+  },
+  "request": {
+    "mode": "comparison",
+    "pullRequest": {
+      "number": 123,
+      "url": "https://github.com/speedscale/demo/pull/123",
+      "headSha": "abc123",
+      "baseSha": "def456"
+    }
+  },
+  "requestedBy": {
+    "type": "bot",
+    "login": "agent-factory[bot]"
+  },
+  "metadata": {
+    "reason": "pr-opened"
+  }
+}

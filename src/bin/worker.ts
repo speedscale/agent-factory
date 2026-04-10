@@ -8,6 +8,7 @@ import { readJsonFile, resolveFromRepo, writeJsonFile } from "../lib/io.js";
 import { createRunQueueFromEnv, type RunQueue } from "../lib/run-queue.js";
 import { RUN_CLAIM_FILENAME } from "../lib/run-admin.js";
 import { writeRunResultArtifact } from "../lib/run-result.js";
+import { writeQualityArtifacts } from "../lib/quality-report.js";
 import type { AgentRun } from "../contracts/index.js";
 
 interface WorkerOptions {
@@ -87,12 +88,84 @@ async function processRun(runName: string, sourceDir?: string): Promise<void> {
   const buildResult = await runBuildStage(runnerContext);
 
   if (buildResult.run.status.phase !== "validating") {
+    const qualityOutcome = await writeQualityArtifacts({
+      run: buildResult.run,
+      app: runnerContext.app,
+      build: {
+        command: buildResult.result.command,
+        exitCode: buildResult.result.exitCode
+      }
+    });
+
+    const nextRun: AgentRun = {
+      ...buildResult.run,
+      status: {
+        ...buildResult.run.status,
+        summary: `${buildResult.run.status.summary ?? "Build failed."} Quality report: ${qualityOutcome.summary}`
+      }
+    };
+
+    await Promise.all([
+      writeJsonFile(resolveRunJsonPath(runName), nextRun),
+      writeRunResultArtifact(nextRun, {
+        build: {
+          command: buildResult.result.command,
+          exitCode: buildResult.result.exitCode
+        }
+      })
+    ]);
     return;
   }
 
   const validatorContext = await loadValidatorContext(runName);
   await updateRun(runName, "validating", "Running proxymock validation command.");
-  await runValidationStage(validatorContext);
+  const validationResult = await runValidationStage(validatorContext);
+
+  const qualityOutcome = await writeQualityArtifacts({
+    run: validationResult.run,
+    app: runnerContext.app,
+    build: {
+      command: buildResult.result.command,
+      exitCode: buildResult.result.exitCode
+    },
+    validation: {
+      command: validationResult.result.command,
+      exitCode: validationResult.result.exitCode
+    }
+  });
+
+  const failOnRegression = runnerContext.app.spec.quality?.reporting?.failOnRegression === true;
+  const shouldFailRun = qualityOutcome.outcome === "regression" && failOnRegression;
+  const finalRun: AgentRun = shouldFailRun
+    ? {
+        ...validationResult.run,
+        status: {
+          ...validationResult.run.status,
+          phase: "failed",
+          summary: `Quality regression detected: ${qualityOutcome.summary}`
+        }
+      }
+    : {
+        ...validationResult.run,
+        status: {
+          ...validationResult.run.status,
+          summary: `${validationResult.run.status.summary ?? "Validation completed."} Quality report: ${qualityOutcome.summary}`
+        }
+      };
+
+  await Promise.all([
+    writeJsonFile(resolveRunJsonPath(runName), finalRun),
+    writeRunResultArtifact(finalRun, {
+      build: {
+        command: buildResult.result.command,
+        exitCode: buildResult.result.exitCode
+      },
+      validation: {
+        command: validationResult.result.command,
+        exitCode: validationResult.result.exitCode
+      }
+    })
+  ]);
 }
 
 async function tryClaimRun(runName: string, claimTtlMs: number): Promise<boolean> {

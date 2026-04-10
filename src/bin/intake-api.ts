@@ -65,6 +65,52 @@ interface GitHubIssueEvent {
   };
 }
 
+interface GitHubPullRequestEvent {
+  action: string;
+  pull_request: {
+    number: number;
+    title: string;
+    body: string | null;
+    html_url: string;
+    labels: Array<{ name: string }>;
+    head: {
+      sha: string;
+      ref: string;
+    };
+    base: {
+      sha: string;
+      ref: string;
+    };
+  };
+  repository: {
+    full_name: string;
+  };
+}
+
+interface QaIntakeEvent {
+  source: "github-webhook" | "ai-agent" | "developer" | "manual";
+  repository: {
+    provider: "github";
+    owner: string;
+    name: string;
+  };
+  appRef: {
+    name: string;
+    qualityTarget?: string;
+  };
+  request: {
+    mode: "comparison" | "baseline";
+    pullRequest?: {
+      number: number;
+      url: string;
+      headSha?: string;
+      baseSha?: string;
+    };
+    branch?: string;
+    commitSha?: string;
+  };
+}
+
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === "string");
 }
@@ -201,6 +247,138 @@ function isGitHubIssueEvent(value: unknown): value is GitHubIssueEvent {
     repository !== null &&
     typeof repository.full_name === "string"
   );
+}
+
+function isGitHubPullRequestEvent(value: unknown): value is GitHubPullRequestEvent {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const payload = value as Record<string, unknown>;
+  const pullRequest = payload.pull_request as Record<string, unknown> | undefined;
+  const repository = payload.repository as Record<string, unknown> | undefined;
+
+  const head = pullRequest?.head as Record<string, unknown> | undefined;
+  const base = pullRequest?.base as Record<string, unknown> | undefined;
+
+  return (
+    typeof payload.action === "string" &&
+    typeof pullRequest === "object" &&
+    pullRequest !== null &&
+    typeof pullRequest.number === "number" &&
+    typeof pullRequest.title === "string" &&
+    (typeof pullRequest.body === "string" || pullRequest.body === null) &&
+    typeof pullRequest.html_url === "string" &&
+    Array.isArray(pullRequest.labels) &&
+    pullRequest.labels.every(
+      (label) => typeof label === "object" && label !== null && typeof (label as { name?: unknown }).name === "string"
+    ) &&
+    typeof head === "object" &&
+    head !== null &&
+    typeof head.sha === "string" &&
+    typeof head.ref === "string" &&
+    typeof base === "object" &&
+    base !== null &&
+    typeof base.sha === "string" &&
+    typeof base.ref === "string" &&
+    typeof repository === "object" &&
+    repository !== null &&
+    typeof repository.full_name === "string"
+  );
+}
+
+function isQaIntakeEvent(value: unknown): value is QaIntakeEvent {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const candidate = value as Record<string, unknown>;
+  const repository = candidate.repository as Record<string, unknown> | undefined;
+  const appRef = candidate.appRef as Record<string, unknown> | undefined;
+  const request = candidate.request as Record<string, unknown> | undefined;
+  const pullRequest = request?.pullRequest as Record<string, unknown> | undefined;
+
+  return (
+    (candidate.source === "github-webhook" ||
+      candidate.source === "ai-agent" ||
+      candidate.source === "developer" ||
+      candidate.source === "manual") &&
+    typeof repository === "object" &&
+    repository !== null &&
+    repository.provider === "github" &&
+    typeof repository.owner === "string" &&
+    typeof repository.name === "string" &&
+    typeof appRef === "object" &&
+    appRef !== null &&
+    typeof appRef.name === "string" &&
+    (typeof appRef.qualityTarget === "undefined" || typeof appRef.qualityTarget === "string") &&
+    typeof request === "object" &&
+    request !== null &&
+    (request.mode === "comparison" || request.mode === "baseline") &&
+    (typeof pullRequest === "undefined" ||
+      (typeof pullRequest.number === "number" &&
+        typeof pullRequest.url === "string" &&
+        (typeof pullRequest.headSha === "undefined" || typeof pullRequest.headSha === "string") &&
+        (typeof pullRequest.baseSha === "undefined" || typeof pullRequest.baseSha === "string")))
+  );
+}
+
+function resolveQualityTarget(app: AgentApp, requestedTargetName: string | undefined): IntakeRequest["qualityTarget"] {
+  const targets = app.spec.quality?.baseline?.targets ?? [];
+  const selected =
+    typeof requestedTargetName === "string"
+      ? targets.find((target) => target.name.toLowerCase() === requestedTargetName.toLowerCase())
+      : targets[0];
+
+  if (selected) {
+    return {
+      name: selected.name,
+      workdir: selected.workdir,
+      baselineRef: selected.baselineRef
+    };
+  }
+
+  return {
+    name: app.metadata.name,
+    workdir: app.spec.repo.workdir
+  };
+}
+
+function buildIntakeFromQaEvent(app: AgentApp, qaEvent: QaIntakeEvent): IntakeRequest {
+  const repositoryFullName = `${qaEvent.repository.owner}/${qaEvent.repository.name}`;
+  const pullRequestNumber = qaEvent.request.pullRequest?.number;
+  const syntheticIssueId =
+    typeof pullRequestNumber === "number"
+      ? `pr-${pullRequestNumber}`
+      : `${qaEvent.request.mode}-manual-${Date.now()}`;
+  const syntheticIssueTitle =
+    typeof pullRequestNumber === "number"
+      ? `Quality validation for PR #${pullRequestNumber}`
+      : `Quality validation request (${qaEvent.request.mode})`;
+
+  return {
+    app,
+    issue: {
+      id: syntheticIssueId,
+      title: syntheticIssueTitle,
+      body: qaEvent.request.pullRequest?.url ?? "Manual quality validation request",
+      url: qaEvent.request.pullRequest?.url
+    },
+    request: {
+      source: qaEvent.request.pullRequest ? "pull_request" : qaEvent.source === "manual" ? "manual" : "agent",
+      mode: qaEvent.request.mode,
+      url: qaEvent.request.pullRequest?.url,
+      pullRequest: qaEvent.request.pullRequest
+        ? {
+            repository: repositoryFullName,
+            number: qaEvent.request.pullRequest.number,
+            headSha: qaEvent.request.pullRequest.headSha,
+            baseSha: qaEvent.request.pullRequest.baseSha
+          }
+        : undefined
+    },
+    qualityTarget: resolveQualityTarget(app, qaEvent.appRef.qualityTarget)
+  };
 }
 
 async function loadAgentAppFromMapping(repoFullName: string): Promise<AgentApp | undefined> {
@@ -407,6 +585,7 @@ async function listRunsHandler(req: IncomingMessage, res: ServerResponse): Promi
     runs: page.map((run) => ({
       name: run.metadata.name,
       app: run.spec.appRef.name,
+      request: run.spec.request,
       issue: {
         id: run.spec.issue.id,
         title: run.spec.issue.title
@@ -554,6 +733,120 @@ async function githubIssueWebhookHandler(req: IncomingMessage, res: ServerRespon
   });
 }
 
+async function githubPullRequestWebhookHandler(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const eventName = req.headers["x-github-event"];
+  if (eventName !== "pull_request") {
+    sendJson(res, 202, { message: "ignored github event", event: eventName ?? "unknown" });
+    return;
+  }
+
+  const rawBody = await readRawBody(req);
+  if (!verifyGitHubSignature(req, rawBody)) {
+    sendJson(res, 401, { error: "invalid webhook signature" });
+    return;
+  }
+
+  const payload = JSON.parse(rawBody || "{}") as unknown;
+  if (!isGitHubPullRequestEvent(payload)) {
+    sendJson(res, 400, { error: "invalid github pull_request webhook payload" });
+    return;
+  }
+
+  if (payload.action !== "opened" && payload.action !== "reopened" && payload.action !== "synchronize") {
+    sendJson(res, 202, { message: "ignored pull_request action", action: payload.action });
+    return;
+  }
+
+  const repoFullName = payload.repository.full_name.toLowerCase();
+  if (!allowUnknownRepos && allowedRepos.size > 0 && !allowedRepos.has(repoFullName)) {
+    sendJson(res, 403, { error: `repository not allowlisted: ${repoFullName}` });
+    return;
+  }
+
+  const app = await loadAgentAppFromMapping(repoFullName);
+  if (!app) {
+    sendJson(res, 202, { message: "no app manifest mapping for repository", repository: repoFullName });
+    return;
+  }
+
+  const labels = payload.pull_request.labels.map((label) => label.name);
+  if (!issueHasRequiredLabels(app, labels)) {
+    sendJson(res, 202, {
+      message: "pull request does not match required labels",
+      repository: repoFullName,
+      requiredLabels: app.spec.issue?.labels?.include ?? []
+    });
+    return;
+  }
+
+  const [owner, name] = repoFullName.split("/");
+  const qaIntake: QaIntakeEvent = {
+    source: "github-webhook",
+    repository: {
+      provider: "github",
+      owner,
+      name
+    },
+    appRef: {
+      name: app.metadata.name
+    },
+    request: {
+      mode: "comparison",
+      pullRequest: {
+        number: payload.pull_request.number,
+        url: payload.pull_request.html_url,
+        headSha: payload.pull_request.head.sha,
+        baseSha: payload.pull_request.base.sha
+      }
+    }
+  };
+
+  const run = await queueRunAndTriggerWorker(buildIntakeFromQaEvent(app, qaIntake));
+  sendJson(res, 201, {
+    message: "queued run from github pull_request webhook",
+    repository: repoFullName,
+    action: payload.action,
+    run
+  });
+}
+
+async function qaRunsHandler(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const body = await readJsonBody(req);
+  if (!isQaIntakeEvent(body)) {
+    sendJson(res, 400, {
+      error: "request must match schemas/qa-intake.schema.yaml"
+    });
+    return;
+  }
+
+  const repoFullName = `${body.repository.owner}/${body.repository.name}`.toLowerCase();
+  if (!allowUnknownRepos && allowedRepos.size > 0 && !allowedRepos.has(repoFullName)) {
+    sendJson(res, 403, { error: `repository not allowlisted: ${repoFullName}` });
+    return;
+  }
+
+  const app = await loadAgentAppFromMapping(repoFullName);
+  if (!app) {
+    sendJson(res, 404, { error: `no app manifest mapping for repository: ${repoFullName}` });
+    return;
+  }
+
+  if (app.metadata.name !== body.appRef.name) {
+    sendJson(res, 400, {
+      error: `appRef.name mismatch for ${repoFullName}: expected ${app.metadata.name}`
+    });
+    return;
+  }
+
+  const intake = buildIntakeFromQaEvent(app, body);
+  const run = await queueRunAndTriggerWorker(intake);
+
+  sendJson(res, 201, {
+    message: "quality intake created a queued run",
+    run
+  });
+}
+
 async function queueRunAndTriggerWorker(intake: IntakeRequest) {
   const run = await createRunFromIssue(intake);
 
@@ -640,9 +933,34 @@ async function handler(req: IncomingMessage, res: ServerResponse): Promise<void>
     return;
   }
 
+  if (req.method === "POST" && parsedUrl.pathname === "/qa/runs") {
+    if (!isAuthorized(req)) {
+      sendUnauthorized(res);
+      return;
+    }
+
+    try {
+      await qaRunsHandler(req, res);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "invalid request body";
+      sendJson(res, 400, { error: message });
+    }
+    return;
+  }
+
   if (req.method === "POST" && parsedUrl.pathname === "/webhooks/github/issues") {
     try {
       await githubIssueWebhookHandler(req, res);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "failed to process github webhook";
+      sendJson(res, 400, { error: message });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && parsedUrl.pathname === "/webhooks/github/pulls") {
+    try {
+      await githubPullRequestWebhookHandler(req, res);
     } catch (error) {
       const message = error instanceof Error ? error.message : "failed to process github webhook";
       sendJson(res, 400, { error: message });

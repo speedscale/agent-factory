@@ -50,11 +50,15 @@ export async function writeRunResultArtifact(
       commands,
       artifacts: {
         run: runPath,
+        evidence: run.status.artifacts.evidence,
         triage: run.status.artifacts.triage,
         plan: run.status.artifacts.plan,
         patch: run.status.artifacts.patch,
+        baseline: run.status.artifacts.baseline,
         buildLog: run.status.artifacts.buildLog,
         validationReport: run.status.artifacts.validationReport,
+        qualityReportJson: run.status.artifacts.qualityReportJson,
+        qualityReportMarkdown: run.status.artifacts.qualityReportMarkdown,
         result: resultPath
       }
     }

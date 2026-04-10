@@ -16,6 +16,22 @@ interface GitHubIssue {
   pull_request?: unknown;
 }
 
+interface GitHubPullRequest {
+  number: number;
+  title: string;
+  body: string | null;
+  html_url: string;
+  labels: Array<{ name: string }>;
+  head: {
+    sha: string;
+    ref: string;
+  };
+  base: {
+    sha: string;
+    ref: string;
+  };
+}
+
 type PollerRedisClient = ReturnType<typeof createClient>;
 
 interface PollerConfig {
@@ -26,6 +42,7 @@ interface PollerConfig {
   statePrefix: string;
   maxIssuesPerRepo: number;
   repos: string[];
+  eventKind: "issues" | "pulls" | "both";
 }
 
 function loadPollerConfigFromEnv(): PollerConfig {
@@ -36,10 +53,27 @@ function loadPollerConfigFromEnv(): PollerConfig {
     redisUrl: process.env.POLLER_STATE_REDIS_URL ?? process.env.REDIS_URL ?? "redis://127.0.0.1:6379",
     statePrefix: process.env.POLLER_STATE_KEY_PREFIX ?? "agent-factory:poller",
     maxIssuesPerRepo: Number(process.env.POLLER_MAX_ISSUES_PER_REPO ?? "20"),
+    eventKind: (process.env.POLLER_EVENT_KIND ?? "pulls") as PollerConfig["eventKind"],
     repos: (process.env.INTAKE_ALLOWED_REPOS ?? "")
       .split(",")
       .map((entry) => entry.trim().toLowerCase())
       .filter((entry) => entry.length > 0)
+  };
+}
+
+function resolveQualityTarget(app: AgentApp): IntakeRequest["qualityTarget"] {
+  const target = app.spec.quality?.baseline?.targets?.[0];
+  if (target) {
+    return {
+      name: target.name,
+      workdir: target.workdir,
+      baselineRef: target.baselineRef
+    };
+  }
+
+  return {
+    name: app.metadata.name,
+    workdir: app.spec.repo.workdir
   };
 }
 
@@ -161,6 +195,30 @@ async function fetchOpenIssues(githubApiBase: string, token: string, repo: strin
   return issues.filter((issue) => typeof issue.pull_request === "undefined");
 }
 
+async function fetchOpenPullRequests(
+  githubApiBase: string,
+  token: string,
+  repo: string,
+  maxPerRepo: number
+): Promise<GitHubPullRequest[]> {
+  const pathSuffix = `/repos/${repo}/pulls?state=open&per_page=${maxPerRepo}&sort=updated&direction=desc`;
+  const response = await fetch(`${githubApiBase}${pathSuffix}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github+json",
+      "Content-Type": "application/json",
+      "User-Agent": "agent-factory-issue-poller"
+    }
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`GitHub API request failed (${response.status}) ${pathSuffix}: ${body}`);
+  }
+
+  return (await response.json()) as GitHubPullRequest[];
+}
+
 async function handleIssue(
   redis: PollerRedisClient,
   config: PollerConfig,
@@ -218,6 +276,75 @@ async function handleIssue(
   console.log(`queued run for ${repo}#${issue.number}`);
 }
 
+async function handlePullRequest(
+  redis: PollerRedisClient,
+  config: PollerConfig,
+  appMap: Map<string, string>,
+  repo: string,
+  pullRequest: GitHubPullRequest,
+  token: string
+): Promise<void> {
+  if (await isProcessed(redis, config.statePrefix, repo, pullRequest.number)) {
+    return;
+  }
+
+  const mappedAppPath = appMap.get(repo);
+  if (!mappedAppPath) {
+    if (await setIfAbsent(redis, commentKey(config.statePrefix, repo, pullRequest.number, "no-manifest"))) {
+      await createIssueComment(
+        config.githubApiBase,
+        token,
+        repo,
+        pullRequest.number,
+        "Thanks for opening this PR. Agent Factory does not have an onboarding manifest for this repository yet, so quality validation cannot run."
+      );
+    }
+    return;
+  }
+
+  const app = await loadAgentApp(mappedAppPath);
+  const labels = pullRequest.labels.map((label) => label.name);
+  if (!hasRequiredLabels(app, labels)) {
+    if (await setIfAbsent(redis, commentKey(config.statePrefix, repo, pullRequest.number, "labels"))) {
+      const required = app.spec.issue?.labels?.include ?? [];
+      await createIssueComment(
+        config.githubApiBase,
+        token,
+        repo,
+        pullRequest.number,
+        `Agent Factory is watching this repository. To queue quality validation, add these labels: ${required.join(", ") || "<none>"}.`
+      );
+    }
+    return;
+  }
+
+  const intake: IntakeRequest = {
+    app,
+    issue: {
+      id: `pr-${String(pullRequest.number)}`,
+      title: `Quality validation for PR #${String(pullRequest.number)}`,
+      body: pullRequest.body ?? "",
+      url: pullRequest.html_url
+    },
+    request: {
+      source: "pull_request",
+      mode: "comparison",
+      url: pullRequest.html_url,
+      pullRequest: {
+        repository: repo,
+        number: pullRequest.number,
+        headSha: pullRequest.head.sha,
+        baseSha: pullRequest.base.sha
+      }
+    },
+    qualityTarget: resolveQualityTarget(app)
+  };
+
+  await createRunFromIssue(intake);
+  await markProcessed(redis, config.statePrefix, repo, pullRequest.number);
+  console.log(`queued run for ${repo}#${pullRequest.number}`);
+}
+
 export async function runIssuePollerOnce(): Promise<void> {
   const config = loadPollerConfigFromEnv();
   if (config.repos.length === 0) {
@@ -236,9 +363,18 @@ export async function runIssuePollerOnce(): Promise<void> {
   try {
     for (const repo of config.repos) {
       const token = await githubAuth.getTokenForRepo(repo);
-      const issues = await fetchOpenIssues(config.githubApiBase, token, repo, config.maxIssuesPerRepo);
-      for (const issue of issues) {
-        await handleIssue(redis, config, appMap, repo, issue, token);
+      if (config.eventKind === "issues" || config.eventKind === "both") {
+        const issues = await fetchOpenIssues(config.githubApiBase, token, repo, config.maxIssuesPerRepo);
+        for (const issue of issues) {
+          await handleIssue(redis, config, appMap, repo, issue, token);
+        }
+      }
+
+      if (config.eventKind === "pulls" || config.eventKind === "both") {
+        const pullRequests = await fetchOpenPullRequests(config.githubApiBase, token, repo, config.maxIssuesPerRepo);
+        for (const pullRequest of pullRequests) {
+          await handlePullRequest(redis, config, appMap, repo, pullRequest, token);
+        }
       }
     }
   } finally {
