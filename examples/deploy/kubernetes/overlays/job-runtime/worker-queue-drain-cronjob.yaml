@@ -27,13 +27,29 @@ spec:
                   mountPath: /app/.work
                   subPath: work
           containers:
+            - name: postgres
+              image: postgres:15
+              imagePullPolicy: IfNotPresent
+              args:
+                - -c
+                - port=55432
+              env:
+                - name: POSTGRES_DB
+                  value: banking_app
+                - name: POSTGRES_USER
+                  value: postgres
+                - name: POSTGRES_PASSWORD
+                  value: password
+              ports:
+                - containerPort: 55432
+                  name: postgres
             - name: worker
               image: ghcr.io/speedscale/agent-factory
               imagePullPolicy: IfNotPresent
               command:
                 - /bin/sh
                 - -lc
-                - PATH="/app/.work/demo-fixture/bin:$PATH" node dist/bin/worker.js --source /app/.work/demo-fixture --once --poll-ms 2000 --claim-ttl-ms 900000
+                - PATH="/app/.work/demo-fixture/bin:$PATH" node dist/bin/worker.js --once --poll-ms 2000 --claim-ttl-ms 900000
               env:
                 - name: RUN_QUEUE_BACKEND
                   value: redis
@@ -43,6 +59,24 @@ spec:
                   value: agent-factory:runs:queued
                 - name: RUN_QUEUE_BATCH_SIZE
                   value: "20"
+                - name: GITHUB_BOT_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: github-webhook-secrets
+                      key: botToken
+                      optional: true
+                - name: GITHUB_APP_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: github-webhook-secrets
+                      key: appId
+                      optional: true
+                - name: GITHUB_APP_PRIVATE_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: github-webhook-secrets
+                      key: appPrivateKey
+                      optional: true
               resources:
                 requests:
                   cpu: 100m

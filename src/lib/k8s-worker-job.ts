@@ -3,7 +3,14 @@ import { request } from "node:https";
 
 interface EnvVar {
   name: string;
-  value: string;
+  value?: string;
+  valueFrom?: {
+    secretKeyRef: {
+      name: string;
+      key: string;
+      optional?: boolean;
+    };
+  };
 }
 
 interface JobSpecConfig {
@@ -42,12 +49,51 @@ function buildJobName(runName: string): string {
 }
 
 function runQueueEnv(config: JobSpecConfig): EnvVar[] {
-  return [
+  const env: EnvVar[] = [
     { name: "RUN_QUEUE_BACKEND", value: "redis" },
     { name: "REDIS_URL", value: config.redisUrl },
     { name: "REDIS_QUEUE_KEY", value: config.redisQueueKey },
     { name: "RUN_QUEUE_BATCH_SIZE", value: config.batchSize }
   ];
+
+  if (process.env.GITHUB_API_BASE_URL?.trim()) {
+    env.push({ name: "GITHUB_API_BASE_URL", value: process.env.GITHUB_API_BASE_URL.trim() });
+  }
+
+  env.push(
+    {
+      name: "GITHUB_BOT_TOKEN",
+      valueFrom: {
+        secretKeyRef: {
+          name: "github-webhook-secrets",
+          key: "botToken",
+          optional: true
+        }
+      }
+    },
+    {
+      name: "GITHUB_APP_ID",
+      valueFrom: {
+        secretKeyRef: {
+          name: "github-webhook-secrets",
+          key: "appId",
+          optional: true
+        }
+      }
+    },
+    {
+      name: "GITHUB_APP_PRIVATE_KEY",
+      valueFrom: {
+        secretKeyRef: {
+          name: "github-webhook-secrets",
+          key: "appPrivateKey",
+          optional: true
+        }
+      }
+    }
+  );
+
+  return env;
 }
 
 function buildJobManifest(runName: string, config: JobSpecConfig): Record<string, unknown> {
@@ -88,13 +134,25 @@ function buildJobManifest(runName: string, config: JobSpecConfig): Record<string
           ],
           containers: [
             {
+              name: "postgres",
+              image: "postgres:15",
+              imagePullPolicy: "IfNotPresent",
+              args: ["-c", "port=55432"],
+              env: [
+                { name: "POSTGRES_DB", value: "banking_app" },
+                { name: "POSTGRES_USER", value: "postgres" },
+                { name: "POSTGRES_PASSWORD", value: "password" }
+              ],
+              ports: [{ containerPort: 55432, name: "postgres" }]
+            },
+            {
               name: "worker",
               image: config.image,
               imagePullPolicy: "IfNotPresent",
               command: [
                 "/bin/sh",
                 "-lc",
-                "PATH=\"/app/.work/demo-fixture/bin:$PATH\" node dist/bin/worker.js --source /app/.work/demo-fixture --once --poll-ms 2000 --claim-ttl-ms 900000"
+                "PATH=\"/app/.work/demo-fixture/bin:$PATH\" node dist/bin/worker.js --once --poll-ms 2000 --claim-ttl-ms 900000"
               ],
               env: runQueueEnv(config),
               volumeMounts: [

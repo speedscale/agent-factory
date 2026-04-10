@@ -27,9 +27,6 @@ spec:
         host: localhost
         port: 8081
         startupTimeoutSeconds: 90
-      dependencies:
-        setupCommand: docker rm -f af-microsvc-pg >/dev/null 2>&1 || true; docker run -d --name af-microsvc-pg -e POSTGRES_DB=banking_app -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=password -p 55432:5432 postgres:15 >/dev/null; for i in $(seq 1 30); do docker exec af-microsvc-pg pg_isready -U postgres >/dev/null 2>&1 && exit 0; sleep 1; done; exit 1
-        teardownCommand: docker rm -f af-microsvc-pg >/dev/null 2>&1 || true
   policy:
     autoBranch: true
     autoMr: false
