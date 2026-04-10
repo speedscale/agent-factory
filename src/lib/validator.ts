@@ -1,4 +1,4 @@
-import { writeFile } from "node:fs/promises";
+import { stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 import * as net from "node:net";
@@ -24,6 +24,7 @@ export interface CommandResult {
 
 function runShellCommand(command: string, cwd: string): Promise<CommandResult> {
   return new Promise<CommandResult>((resolve) => {
+    let settled = false;
     const child = spawn(command, {
       cwd,
       shell: true,
@@ -41,7 +42,26 @@ function runShellCommand(command: string, cwd: string): Promise<CommandResult> {
       stderr += chunk.toString("utf8");
     });
 
+    child.on("error", (error) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      resolve({
+        command,
+        exitCode: 1,
+        stdout,
+        stderr: [stderr.trimEnd(), `spawn error: ${error.message}`].filter((line) => line.length > 0).join("\n")
+      });
+    });
+
     child.on("close", (exitCode) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
       resolve({
         command,
         exitCode: exitCode ?? 1,
@@ -81,12 +101,30 @@ function waitForTcp(host: string, port: number, timeoutMs: number): Promise<bool
 }
 
 function spawnService(command: string, cwd: string): ChildProcess {
-  return spawn(command, {
+  const child = spawn(command, {
     cwd,
     shell: true,
     env: process.env,
     stdio: ["ignore", "pipe", "pipe"]
   });
+
+  child.on("error", () => {
+    // handled by timeout and command output flow in runValidationStage
+  });
+
+  return child;
+}
+
+async function ensureWorkdirExists(workspaceCwd: string): Promise<void> {
+  try {
+    const details = await stat(workspaceCwd);
+    if (!details.isDirectory()) {
+      throw new Error("path exists but is not a directory");
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`app workdir not found in workspace (${workspaceCwd}): ${message}`);
+  }
 }
 
 async function stopService(process: ChildProcess | undefined): Promise<void> {
@@ -168,6 +206,7 @@ export async function loadValidatorContext(runInput: string): Promise<ValidatorC
 export async function runValidationStage(context: ValidatorContext): Promise<{ result: CommandResult; run: AgentRun }> {
   const command = context.app.spec.validate.proxymock.command;
   const workspaceCwd = path.join(context.workspaceDir, context.app.spec.repo.workdir);
+  await ensureWorkdirExists(workspaceCwd);
   const dependencies = context.app.spec.validate.proxymock.dependencies;
   const service = context.app.spec.validate.proxymock.service;
   const validationLogPath = resolveFromRepo(

@@ -1,7 +1,8 @@
-import { cp, mkdir, writeFile } from "node:fs/promises";
+import { cp, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import type { AgentApp, AgentRun } from "../contracts/index.js";
+import { createGitHubAuthProviderFromEnv } from "./github-auth.js";
 import { readJsonFile, resolveFromRepo, writeJsonFile } from "./io.js";
 import { loadPlannerContext } from "./planner.js";
 import { writeRunResultArtifact } from "./run-result.js";
@@ -29,6 +30,7 @@ function resolveRunJsonPath(runInput: string): string {
 
 async function runShellCommand(command: string, cwd: string): Promise<CommandResult> {
   return await new Promise<CommandResult>((resolve) => {
+    let settled = false;
     const child = spawn(command, {
       cwd,
       shell: true,
@@ -46,7 +48,26 @@ async function runShellCommand(command: string, cwd: string): Promise<CommandRes
       stderr += chunk.toString("utf8");
     });
 
+    child.on("error", (error) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      resolve({
+        command,
+        exitCode: 1,
+        stdout,
+        stderr: [stderr.trimEnd(), `spawn error: ${error.message}`].filter((line) => line.length > 0).join("\n")
+      });
+    });
+
     child.on("close", (exitCode) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
       resolve({
         command,
         exitCode: exitCode ?? 1,
@@ -57,10 +78,77 @@ async function runShellCommand(command: string, cwd: string): Promise<CommandRes
   });
 }
 
-async function prepareWorkspace(context: RunnerContext): Promise<void> {
-  await mkdir(context.workspaceDir, { recursive: true });
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'"'"'`)}'`;
+}
 
+function parseGitHubRepoFullName(repoUrl: string): string | undefined {
+  const httpsMatch = repoUrl.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/i);
+  if (httpsMatch) {
+    return `${httpsMatch[1]}/${httpsMatch[2]}`;
+  }
+
+  const sshMatch = repoUrl.match(/^git@github\.com:([^/]+)\/([^/]+?)(?:\.git)?$/i);
+  if (sshMatch) {
+    return `${sshMatch[1]}/${sshMatch[2]}`;
+  }
+
+  return undefined;
+}
+
+function buildAuthenticatedGitUrl(repoUrl: string, token: string): string {
+  const trimmed = repoUrl.trim();
+  const normalized = trimmed.startsWith("git@github.com:")
+    ? `https://github.com/${trimmed.slice("git@github.com:".length)}`
+    : trimmed;
+
+  if (!normalized.startsWith("https://github.com/")) {
+    return normalized;
+  }
+
+  return normalized.replace("https://", `https://x-access-token:${encodeURIComponent(token)}@`);
+}
+
+async function cloneRepoIntoWorkspace(context: RunnerContext): Promise<void> {
+  const repoUrl = context.app.spec.repo.url.trim();
+  const defaultBranch = context.app.spec.repo.defaultBranch.trim() || "main";
+  const repoFullName = parseGitHubRepoFullName(repoUrl);
+  const githubAuth = createGitHubAuthProviderFromEnv();
+
+  let cloneUrl = repoUrl;
+  if (repoFullName && githubAuth) {
+    const token = await githubAuth.getTokenForRepo(repoFullName);
+    cloneUrl = buildAuthenticatedGitUrl(repoUrl, token);
+  }
+
+  await rm(context.workspaceDir, { recursive: true, force: true });
+  await mkdir(path.dirname(context.workspaceDir), { recursive: true });
+
+  const cloneResult = await runShellCommand(
+    `git clone --depth 1 --branch ${shellQuote(defaultBranch)} ${shellQuote(cloneUrl)} ${shellQuote(context.workspaceDir)}`,
+    resolveFromRepo(".")
+  );
+
+  if (cloneResult.exitCode !== 0) {
+    throw new Error(`repository checkout failed: ${cloneResult.stderr || cloneResult.stdout || "git clone failed"}`);
+  }
+}
+
+async function ensureWorkdirExists(workspaceCwd: string): Promise<void> {
+  try {
+    const details = await stat(workspaceCwd);
+    if (!details.isDirectory()) {
+      throw new Error("path exists but is not a directory");
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`app workdir not found in workspace (${workspaceCwd}): ${message}`);
+  }
+}
+
+async function prepareWorkspace(context: RunnerContext): Promise<void> {
   if (context.sourceDir) {
+    await mkdir(context.workspaceDir, { recursive: true });
     const excludedSegments = new Set([".git", "node_modules", "artifacts", ".work"]);
 
     await cp(context.sourceDir, context.workspaceDir, {
@@ -76,7 +164,11 @@ async function prepareWorkspace(context: RunnerContext): Promise<void> {
         return !segments.some((segment) => excludedSegments.has(segment));
       }
     });
+
+    return;
   }
+
+  await cloneRepoIntoWorkspace(context);
 }
 
 async function writeCommandLog(logPath: string, result: CommandResult): Promise<void> {
@@ -96,14 +188,17 @@ async function capturePatchArtifact(context: RunnerContext, buildCommand: string
   const patchPath = resolveFromRepo(context.run.status.artifacts.patch ?? path.posix.join("artifacts", context.run.metadata.name, "patch.diff"));
 
   if (!context.sourceDir) {
+    const workspaceDiff = await runShellCommand(`git -C ${shellQuote(context.workspaceDir)} diff`, resolveFromRepo("."));
+    if (workspaceDiff.exitCode === 0 && workspaceDiff.stdout.trim().length > 0) {
+      await writeFile(patchPath, workspaceDiff.stdout, "utf8");
+      return;
+    }
+
     await writeFile(
       patchPath,
       [
-        "--- a/sandbox",
-        "+++ b/sandbox",
-        "@@",
-        "+ runner executed the configured build command in an isolated workspace",
-        `+ command: ${buildCommand}`
+        "# no source changes detected in workspace",
+        `# build command executed: ${buildCommand}`
       ].join("\n") + "\n",
       "utf8"
     );
@@ -166,9 +261,8 @@ export async function loadRunnerContext(runInput: string, sourceDir?: string): P
 export async function runBuildStage(context: RunnerContext): Promise<{ result: CommandResult; run: AgentRun }> {
   await prepareWorkspace(context);
 
-  const workspaceCwd = context.sourceDir
-    ? path.join(context.workspaceDir, context.app.spec.repo.workdir)
-    : context.workspaceDir;
+  const workspaceCwd = path.join(context.workspaceDir, context.app.spec.repo.workdir);
+  await ensureWorkdirExists(workspaceCwd);
   const command = context.app.spec.build.test;
   const result = await runShellCommand(command, workspaceCwd);
 
