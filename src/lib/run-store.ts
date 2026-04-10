@@ -34,6 +34,22 @@ export interface IntakeRequest {
   app: AgentApp;
   issue: RunIssueInput;
   evidence?: IntakeEvidenceInput;
+  request?: {
+    source: "pull_request" | "manual" | "agent" | "developer";
+    mode: "comparison" | "baseline";
+    url?: string;
+    pullRequest?: {
+      repository: string;
+      number: number;
+      headSha?: string;
+      baseSha?: string;
+    };
+  };
+  qualityTarget?: {
+    name: string;
+    workdir: string;
+    baselineRef?: string;
+  };
 }
 
 function slugify(value: string): string {
@@ -87,8 +103,11 @@ async function initializeArtifactFiles(artifactRoot: string): Promise<void> {
     writeFile(path.join(artifactRoot, "triage.json"), "", "utf8"),
     writeFile(path.join(artifactRoot, "plan.yaml"), "", "utf8"),
     writeFile(path.join(artifactRoot, "patch.diff"), "", "utf8"),
+    writeFile(path.join(artifactRoot, "baseline.json"), "", "utf8"),
     writeFile(path.join(artifactRoot, "build.log"), "", "utf8"),
     writeFile(path.join(artifactRoot, "validation.log"), "", "utf8"),
+    writeFile(path.join(artifactRoot, "quality-report.json"), "", "utf8"),
+    writeFile(path.join(artifactRoot, "quality-report.md"), "", "utf8"),
     writeFile(path.join(artifactRoot, "result.json"), "", "utf8")
   ]);
 }
@@ -115,12 +134,14 @@ export async function createRunFromIssue(input: IntakeRequest): Promise<AgentRun
       appRef: {
         name: input.app.metadata.name
       },
+      request: input.request,
       issue: {
         id: input.issue.id,
         title: input.issue.title,
         body: input.issue.body,
         url: input.issue.url
       },
+      qualityTarget: input.qualityTarget,
       workspace: {
         root: workspaceRoot,
         branch: `agent/${runName}`
@@ -133,8 +154,11 @@ export async function createRunFromIssue(input: IntakeRequest): Promise<AgentRun
         triage: ensureRelativePath(artifactRoot, "triage.json"),
         plan: ensureRelativePath(artifactRoot, "plan.yaml"),
         patch: ensureRelativePath(artifactRoot, "patch.diff"),
+        baseline: ensureRelativePath(artifactRoot, "baseline.json"),
         buildLog: ensureRelativePath(artifactRoot, "build.log"),
         validationReport: ensureRelativePath(artifactRoot, "validation.log"),
+        qualityReportJson: ensureRelativePath(artifactRoot, "quality-report.json"),
+        qualityReportMarkdown: ensureRelativePath(artifactRoot, "quality-report.md"),
         result: ensureRelativePath(artifactRoot, "result.json")
       }
     }
@@ -144,6 +168,7 @@ export async function createRunFromIssue(input: IntakeRequest): Promise<AgentRun
     writeJsonFile(resolveFromRepo(artifactRoot, "run.json"), run),
     writeJsonFile(resolveFromRepo(artifactRoot, "app.json"), input.app),
     writeJsonFile(resolveFromRepo(artifactRoot, "issue.json"), input.issue),
+    writeJsonFile(resolveFromRepo(artifactRoot, "request.json"), input.request ?? { source: "manual", mode: "comparison" }),
     initializeArtifactFiles(absoluteArtifactRoot)
   ]);
 

@@ -37,8 +37,11 @@ export interface AgentRunResult {
       triage?: string;
       plan?: string;
       patch?: string;
+      baseline?: string;
       buildLog?: string;
       validationReport?: string;
+      qualityReportJson?: string;
+      qualityReportMarkdown?: string;
       result: string;
     };
   };

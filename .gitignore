@@ -34,3 +34,7 @@ vendor/
 .work/
 artifacts/
 reports/
+
+# secrets
+.env
+secrets/

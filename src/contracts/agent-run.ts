@@ -17,11 +17,27 @@ export interface AgentRun {
     appRef: {
       name: string;
     };
+    request?: {
+      source: "pull_request" | "manual" | "agent" | "developer";
+      mode: "comparison" | "baseline";
+      url?: string;
+      pullRequest?: {
+        repository: string;
+        number: number;
+        headSha?: string;
+        baseSha?: string;
+      };
+    };
     issue: {
       id: string;
       title: string;
       body: string;
       url?: string;
+    };
+    qualityTarget?: {
+      name: string;
+      workdir: string;
+      baselineRef?: string;
     };
     workspace: {
       root: string;
@@ -36,8 +52,11 @@ export interface AgentRun {
       triage?: string;
       plan?: string;
       patch?: string;
+      baseline?: string;
       buildLog?: string;
       validationReport?: string;
+      qualityReportJson?: string;
+      qualityReportMarkdown?: string;
       result?: string;
     };
   };

@@ -1,10 +1,10 @@
 # Agent Factory
 
-Agent Factory is a reference architecture for an autonomous inner loop:
+Agent Factory is a reference architecture for a quality validation loop:
 
-`issue -> plan -> build -> validate`
+`onboard -> baseline -> compare -> report`
 
-It takes an intake payload, creates a run workspace, attempts a fix, validates with replay evidence, and emits artifacts for operator review.
+It takes a validation request (usually from a pull request), runs reproducible quality checks, compares results to baseline, and emits artifacts for operator review.
 
 ## Start Here
 
@@ -24,7 +24,7 @@ npm install
 npm run demo
 ```
 
-Artifacts land in `artifacts/<run-name>/`, including terminal summary `result.json`.
+Artifacts land in `artifacts/<run-name>/`, including terminal summary `result.json` and quality report outputs.
 
 ## Quick Run (Always-On Compose)
 
@@ -46,10 +46,10 @@ Submit runs through intake API `POST /runs` using payloads in `examples/runs/`.
 ## Core Artifacts Per Run
 
 - `run.json`
-- `triage.json`
-- `plan.yaml`
-- `patch.diff`
+- `baseline.json`
 - `build.log`
 - `validation.log`
+- `quality-report.json`
+- `quality-report.md`
 - `evidence.json`
 - `result.json`

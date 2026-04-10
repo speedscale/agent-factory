@@ -21,6 +21,7 @@ Use this index to find the right docs by audience.
 - `docs/developers.md` - primary developer guide (architecture, contracts, roadmap, release)
 - `docs/architecture.md` - detailed system architecture
 - `docs/plan.md` - execution roadmap and current priorities
+- `schemas/qa-intake.schema.yaml` - canonical PR/manual validation intake contract
 - `docs/autonomy-mvp.md` - real-ticket autonomy contract and rubric
 - `docs/phase-b-first-run.md` - first-live-run record and operator decisions
 - `docs/history.md` - implementation history snapshot

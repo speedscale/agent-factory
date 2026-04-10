@@ -7,7 +7,7 @@ This guide is for contributors who change Agent Factory itself.
 Keep these planes explicit:
 
 - **app plane:** target repository and workload behavior
-- **agent plane:** triage, planning, patching, orchestration
+- **agent plane:** request handling, scope selection, quality orchestration
 - **validation plane:** replay/capture evidence and pass/fail signal
 
 The goal is trustworthy autonomy, not hidden magic.
@@ -23,9 +23,9 @@ The goal is trustworthy autonomy, not hidden magic.
 
 ## Core Contracts to Preserve
 
-- `AgentApp`: app + repo + build + validate policy
-- `AgentRun`: lifecycle state, artifacts, timestamps, ownership
-- artifact set per run: `triage.json`, `plan.yaml`, `patch.diff`, `build.log`, `validation.log`, `evidence.json`, `result.json`
+- `AgentApp`: app + repo + baseline target scope + quality policy
+- `AgentRun`: lifecycle state, request trigger context, baseline target, artifacts
+- artifact set per run: `baseline.json`, `quality-report.json`, `quality-report.md`, `build.log`, `validation.log`, `evidence.json`, `result.json`
 
 ## Development Workflow
 

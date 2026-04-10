@@ -7,6 +7,7 @@ import { loadRunnerContext, runBuildStage } from "../lib/runner.js";
 import { loadValidatorContext, runValidationStage } from "../lib/validator.js";
 import { readJsonFile, resolveFromRepo, writeJsonFile } from "../lib/io.js";
 import { sampleApp, sampleIssue } from "../lib/sample-data.js";
+import { writeQualityArtifacts } from "../lib/quality-report.js";
 
 async function createDemoSource(): Promise<{ sourceDir: string; proxymockDir: string }> {
   const root = await mkdtemp(path.join(os.tmpdir(), "agent-factory-demo-"));
@@ -93,6 +94,18 @@ async function main(): Promise<void> {
 
     await writeJsonFile(path.join(validatorContext.runDir, "run.json"), startedValidateRun);
     const validationResult = await runValidationStage({ ...validatorContext, run: startedValidateRun });
+    await writeQualityArtifacts({
+      run: validationResult.run,
+      app: sampleApp,
+      build: {
+        command: buildResult.result.command,
+        exitCode: buildResult.result.exitCode
+      },
+      validation: {
+        command: validationResult.result.command,
+        exitCode: validationResult.result.exitCode
+      }
+    });
 
     console.log(
       JSON.stringify(

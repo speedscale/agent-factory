@@ -13,6 +13,23 @@ spec:
       include:
         - agent
         - bug
+  quality:
+    trigger:
+      pullRequest: true
+      manualRequest: true
+      prePrRequest: false
+    baseline:
+      strategy: single
+      targets:
+        - name: user-service
+          workdir: backend/user-service
+          baselineRef: baseline/microsvc/user-service
+          command: make test
+    reporting:
+      formats:
+        - json
+        - markdown
+      failOnRegression: true
   build:
     install: make build
     test: make test

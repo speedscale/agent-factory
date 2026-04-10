@@ -61,6 +61,62 @@ properties:
                   type: string
             additionalProperties: false
         additionalProperties: false
+      quality:
+        type: object
+        properties:
+          trigger:
+            type: object
+            properties:
+              pullRequest:
+                type: boolean
+              manualRequest:
+                type: boolean
+              prePrRequest:
+                type: boolean
+            additionalProperties: false
+          baseline:
+            type: object
+            required:
+              - targets
+            properties:
+              strategy:
+                type: string
+                enum:
+                  - single
+                  - multi-project
+              targets:
+                type: array
+                minItems: 1
+                items:
+                  type: object
+                  required:
+                    - name
+                    - workdir
+                  properties:
+                    name:
+                      type: string
+                    workdir:
+                      type: string
+                    baselineRef:
+                      type: string
+                    command:
+                      type: string
+                  additionalProperties: false
+            additionalProperties: false
+          reporting:
+            type: object
+            properties:
+              formats:
+                type: array
+                items:
+                  type: string
+                  enum:
+                    - json
+                    - markdown
+              failOnRegression:
+                type: boolean
+            additionalProperties: false
+        additionalProperties: false
       build:
         type: object
         required:
