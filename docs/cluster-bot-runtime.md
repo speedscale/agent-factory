@@ -8,11 +8,11 @@ Run Agent Factory as a bot-first service in Kubernetes with event-driven intake,
 
 ## Target Shape
 
-`GitHub webhook + Slack command -> intake relay -> queued run -> worker Job -> artifacts + PR + issue comment`
+`GitHub webhook + Slack command -> intake relay -> queued run -> worker Job -> baseline compare + quality report`
 
 ## Required Capabilities
 
-- **Webhook notifications**: accept GitHub issue and label events as intake triggers.
+- **Webhook notifications**: accept GitHub PR events as intake triggers.
 - **Slack reachability**: accept slash commands or workflow actions that dispatch a ticket.
 - **Bot identity**: PRs/comments are authored by bot credentials, not operator personal identity.
 - **Job-per-run execution**: each run executes in an isolated Kubernetes `Job`.
@@ -25,17 +25,17 @@ Run Agent Factory as a bot-first service in Kubernetes with event-driven intake,
 Use a small relay service (or workflow tool) that:
 
 - validates GitHub webhook signatures and Slack request signatures
-- maps incoming events to `TicketIntakeEvent` (`schemas/ticket-intake.schema.yaml`)
-- posts canonical intake payload to Agent Factory `POST /runs`
+- maps incoming events to `QaIntakeEvent` (`schemas/qa-intake.schema.yaml`)
+- posts canonical intake payload to Agent Factory `POST /qa/runs`
 
 This keeps source-specific auth logic out of core planner/runner behavior.
 
-For direct GitHub issue webhook mode in Kubernetes, use:
+For direct GitHub PR webhook mode in Kubernetes, use:
 
 - `examples/deploy/kubernetes/overlays/github-webhook-bot`
-- `scripts/configure-github-issue-webhooks.sh` to create/update issue webhooks for all target repos
+- `scripts/configure-github-quality-webhooks.sh` to create/update PR webhooks for all target repos
 
-For polling-first rollout, the same overlay enables polling inside `intake-api` (no separate poller workload) to discover open issues without inbound webhooks.
+For polling-first rollout, the same overlay enables polling inside `intake-api` (no separate poller workload) to discover open PRs without inbound webhooks.
 
 ### 2) Bot Identity Contract
 
@@ -89,7 +89,7 @@ Do not move planning/build/validation logic into that controller.
 2. Deploy job-runtime overlay with queue-drain CronJob.
 3. Wire GitHub webhook relay to `POST /runs` using app manifest mapping.
 4. Wire Slack command relay to same canonical intake path.
-5. Verify one full run produces bot-authored branch, PR, and issue comment.
+5. Verify one full run produces baseline comparison artifacts and a bot-authored PR quality comment.
 
 ## Webhook Bootstrap Commands
 
@@ -99,10 +99,10 @@ Deploy webhook profile:
 kubectl apply -k examples/deploy/kubernetes/overlays/github-webhook-bot
 ```
 
-Configure GitHub issue webhooks:
+Configure GitHub PR webhooks:
 
 ```bash
-WEBHOOK_URL=https://<intake-host>/webhooks/github/issues \
+WEBHOOK_URL=https://<intake-host>/webhooks/github/pulls \
 WEBHOOK_SECRET=<same-as-GITHUB_WEBHOOK_SECRET> \
-scripts/configure-github-issue-webhooks.sh
+scripts/configure-github-quality-webhooks.sh
 ```

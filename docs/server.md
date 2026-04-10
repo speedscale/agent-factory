@@ -49,29 +49,31 @@ Queue backend selection:
 - `RUN_QUEUE_BACKEND=filesystem` (default, implemented)
 - `RUN_QUEUE_BACKEND=redis` (implemented)
 
-GitHub issue webhook intake (optional):
+GitHub PR webhook intake (optional):
 
-- endpoint: `POST /webhooks/github/issues`
-- event type: `issues`
-- supported actions: `opened`, `reopened`, `labeled`
+- endpoint: `POST /webhooks/github/pulls`
+- event type: `pull_request`
+- supported actions: `opened`, `reopened`, `synchronize`
 - `GITHUB_WEBHOOK_SECRET` (optional but recommended)
 - `INTAKE_ALLOWED_REPOS` (comma-separated `owner/repo` allowlist)
 - `INTAKE_REPO_APP_MAP_JSON` (JSON map of repo to manifest path)
 - `INTAKE_REPO_APP_MAP_FILE` (path to JSON mapping file; merged with env map)
-- `INTAKE_COMMENT_ON_SKIPPED_ISSUE=true` to post bot fallback comments when issue is skipped
+- `INTAKE_COMMENT_ON_SKIPPED_ISSUE=true` to post bot fallback comments when label-gated events are skipped
 - auth options for GitHub API calls:
   - preferred: `GITHUB_APP_ID` + `GITHUB_APP_PRIVATE_KEY`
   - fallback: `GITHUB_BOT_TOKEN` or `GH_TOKEN`
 
-GitHub issue polling mode (optional):
+GitHub poller mode (optional):
 
 - standalone command: `npm run issue-poller -- --once`
+- PR-focused command: `npm run pr-poller -- --once`
 - embedded in intake: set `INTAKE_ENABLE_EMBEDDED_POLLER=true`
 - interval: `POLLER_INTERVAL_MS` (default `120000`)
-- polls open issues in `INTAKE_ALLOWED_REPOS`
+- poll selector: `POLLER_EVENT_KIND=issues|pulls|both` (default `pulls`)
+- polls open issues/PRs in `INTAKE_ALLOWED_REPOS`
 - loads repo manifests from `INTAKE_REPO_APP_MAP_FILE` or `INTAKE_REPO_APP_MAP_JSON`
-- queues runs for issues that satisfy required labels
-- posts one bot comment for missing-label or missing-manifest issues
+- queues runs for events that satisfy required labels
+- posts one bot comment for missing-label or missing-manifest cases
 - GitHub auth uses same precedence as webhook intake (App first, token fallback)
 
 Worker trigger mode (optional):
@@ -218,6 +220,14 @@ Then submit intake requests from another terminal:
 curl -sS -X POST http://127.0.0.1:8080/runs \
   -H "content-type: application/json" \
   --data-binary @examples/runs/demo-node-intake.json
+```
+
+QA-mode intake example:
+
+```bash
+curl -sS -X POST http://127.0.0.1:8080/qa/runs \
+  -H "content-type: application/json" \
+  --data-binary @examples/runs/demo-node-pr-quality-intake.json
 ```
 
 Stop services:

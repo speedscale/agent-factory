@@ -1,13 +1,13 @@
 # GitHub Webhook Bot Overlay
 
-This overlay extends `job-runtime` and configures intake for direct GitHub issue webhooks.
+This overlay extends `job-runtime` and configures intake for direct GitHub PR webhooks.
 
 Polling is embedded inside `intake-api` so there is no separate poller workload.
 
 ## What it adds
 
 - intake env for repo allowlist and webhook-mode behavior
-- embedded issue polling loop inside intake (`INTAKE_ENABLE_EMBEDDED_POLLER=true`)
+- embedded polling loop inside intake (`INTAKE_ENABLE_EMBEDDED_POLLER=true`)
 - per-run worker Job trigger from intake (`INTAKE_TRIGGER_WORKER_JOB=true`)
 - mounted repo->app mapping and manifests at `/app/config`
 - secret-backed webhook signature + bot token env vars
@@ -36,9 +36,9 @@ kubectl apply -k examples/deploy/kubernetes/overlays/github-webhook-bot
 ## Configure webhooks
 
 ```bash
-WEBHOOK_URL=https://<intake-host>/webhooks/github/issues \
+WEBHOOK_URL=https://<intake-host>/webhooks/github/pulls \
 WEBHOOK_SECRET=<same-secret> \
-scripts/configure-github-issue-webhooks.sh
+scripts/configure-github-quality-webhooks.sh
 ```
 
 If you only want polling mode initially, deploy this overlay and skip webhook setup.
