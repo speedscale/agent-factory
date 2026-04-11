@@ -1,0 +1,23 @@
+{
+  "source": "developer",
+  "repository": {
+    "provider": "github",
+    "owner": "speedscale",
+    "name": "demo"
+  },
+  "appRef": {
+    "name": "demo-node",
+    "qualityTarget": "demo-node"
+  },
+  "request": {
+    "mode": "baseline",
+    "branch": "main"
+  },
+  "requestedBy": {
+    "type": "user",
+    "login": "developer"
+  },
+  "metadata": {
+    "reason": "initial-onboarding-baseline"
+  }
+}

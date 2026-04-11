@@ -93,7 +93,9 @@ async function processRun(runName: string, sourceDir?: string): Promise<void> {
       app: runnerContext.app,
       build: {
         command: buildResult.result.command,
-        exitCode: buildResult.result.exitCode
+        exitCode: buildResult.result.exitCode,
+        stdout: buildResult.result.stdout,
+        stderr: buildResult.result.stderr
       }
     });
 
@@ -126,11 +128,15 @@ async function processRun(runName: string, sourceDir?: string): Promise<void> {
     app: runnerContext.app,
     build: {
       command: buildResult.result.command,
-      exitCode: buildResult.result.exitCode
+      exitCode: buildResult.result.exitCode,
+      stdout: buildResult.result.stdout,
+      stderr: buildResult.result.stderr
     },
     validation: {
       command: validationResult.result.command,
-      exitCode: validationResult.result.exitCode
+      exitCode: validationResult.result.exitCode,
+      stdout: validationResult.result.stdout,
+      stderr: validationResult.result.stderr
     }
   });
 

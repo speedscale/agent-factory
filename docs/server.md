@@ -230,6 +230,14 @@ curl -sS -X POST http://127.0.0.1:8080/qa/runs \
   --data-binary @examples/runs/demo-node-pr-quality-intake.json
 ```
 
+Onboarding baseline capture example:
+
+```bash
+curl -sS -X POST http://127.0.0.1:8080/qa/runs \
+  -H "content-type: application/json" \
+  --data-binary @examples/runs/demo-node-baseline-intake.json
+```
+
 Stop services:
 
 ```bash

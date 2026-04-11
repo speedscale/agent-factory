@@ -63,10 +63,16 @@ properties:
             required:
               - command
               - exitCode
+              - stdoutLines
+              - stderrLines
             properties:
               command:
                 type: string
               exitCode:
+                type: number
+              stdoutLines:
+                type: number
+              stderrLines:
                 type: number
             additionalProperties: false
           validation:
@@ -74,10 +80,16 @@ properties:
             required:
               - command
               - exitCode
+              - stdoutLines
+              - stderrLines
             properties:
               command:
                 type: string
               exitCode:
+                type: number
+              stdoutLines:
+                type: number
+              stderrLines:
                 type: number
             additionalProperties: false
         additionalProperties: false

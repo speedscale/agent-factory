@@ -24,11 +24,20 @@ export interface QualityReport {
       build: {
         baselineExitCode?: number;
         currentExitCode: number;
+        baselineStdoutLines?: number;
+        currentStdoutLines: number;
+        baselineStderrLines?: number;
+        currentStderrLines: number;
       };
       validation?: {
         baselineExitCode?: number;
         currentExitCode: number;
+        baselineStdoutLines?: number;
+        currentStdoutLines: number;
+        baselineStderrLines?: number;
+        currentStderrLines: number;
       };
     };
+    highlights: string[];
   };
 }

@@ -35,6 +35,7 @@ properties:
       - outcome
       - summary
       - comparedCommands
+      - highlights
     properties:
       runRef:
         type: object
@@ -88,22 +89,46 @@ properties:
             type: object
             required:
               - currentExitCode
+              - currentStdoutLines
+              - currentStderrLines
             properties:
               baselineExitCode:
                 type: number
               currentExitCode:
+                type: number
+              baselineStdoutLines:
+                type: number
+              currentStdoutLines:
+                type: number
+              baselineStderrLines:
+                type: number
+              currentStderrLines:
                 type: number
             additionalProperties: false
           validation:
             type: object
             required:
               - currentExitCode
+              - currentStdoutLines
+              - currentStderrLines
             properties:
               baselineExitCode:
                 type: number
               currentExitCode:
                 type: number
+              baselineStdoutLines:
+                type: number
+              currentStdoutLines:
+                type: number
+              baselineStderrLines:
+                type: number
+              currentStderrLines:
+                type: number
             additionalProperties: false
         additionalProperties: false
+      highlights:
+        type: array
+        items:
+          type: string
     additionalProperties: false
 additionalProperties: false

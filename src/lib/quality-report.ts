@@ -7,6 +7,8 @@ import { readJsonFile, resolveFromRepo, writeJsonFile } from "./io.js";
 interface CommandSnapshot {
   command: string;
   exitCode: number;
+  stdout: string;
+  stderr: string;
 }
 
 interface WriteQualityArtifactsInput {
@@ -84,10 +86,31 @@ function toMarkdown(report: QualityReport): string {
     `- outcome: ${report.spec.outcome}`,
     `- summary: ${report.spec.summary}`,
     `- build baseline/current: ${String(report.spec.comparedCommands.build.baselineExitCode ?? "n/a")} -> ${report.spec.comparedCommands.build.currentExitCode}`,
+    `- build stderr lines baseline/current: ${String(report.spec.comparedCommands.build.baselineStderrLines ?? "n/a")} -> ${report.spec.comparedCommands.build.currentStderrLines}`,
     validationSection,
     `- baseline store: ${report.spec.target.baselineStorePath}`,
+    report.spec.highlights.length > 0 ? "- highlights:" : "- highlights: none",
+    ...report.spec.highlights.map((entry) => `  - ${entry}`),
     ""
   ].join("\n");
+}
+
+function countLines(text: string): number {
+  const normalized = text.trim();
+  if (normalized.length === 0) {
+    return 0;
+  }
+
+  return normalized.split(/\r?\n/).length;
+}
+
+function firstUsefulLine(text: string): string | undefined {
+  const line = text
+    .split(/\r?\n/)
+    .map((entry) => entry.trim())
+    .find((entry) => entry.length > 0);
+
+  return line;
 }
 
 export async function writeQualityArtifacts(input: WriteQualityArtifactsInput): Promise<QualityReportOutcome> {
@@ -111,8 +134,21 @@ export async function writeQualityArtifacts(input: WriteQualityArtifactsInput): 
       },
       target,
       commands: {
-        build,
-        validation
+        build: {
+          command: build.command,
+          exitCode: build.exitCode,
+          stdoutLines: countLines(build.stdout),
+          stderrLines: countLines(build.stderr)
+        },
+        validation:
+          typeof validation !== "undefined"
+            ? {
+                command: validation.command,
+                exitCode: validation.exitCode,
+                stdoutLines: countLines(validation.stdout),
+                stderrLines: countLines(validation.stderr)
+              }
+            : undefined
       }
     }
   };
@@ -173,16 +209,30 @@ export async function writeQualityArtifacts(input: WriteQualityArtifactsInput): 
       comparedCommands: {
         build: {
           baselineExitCode: baselineForCompare?.spec.commands.build.exitCode,
-          currentExitCode: build.exitCode
+          currentExitCode: build.exitCode,
+          baselineStdoutLines: baselineForCompare?.spec.commands.build.stdoutLines,
+          currentStdoutLines: countLines(build.stdout),
+          baselineStderrLines: baselineForCompare?.spec.commands.build.stderrLines,
+          currentStderrLines: countLines(build.stderr)
         },
         validation:
           typeof validation !== "undefined"
             ? {
                 baselineExitCode: baselineForCompare?.spec.commands.validation?.exitCode,
-                currentExitCode: validation.exitCode
+                currentExitCode: validation.exitCode,
+                baselineStdoutLines: baselineForCompare?.spec.commands.validation?.stdoutLines,
+                currentStdoutLines: countLines(validation.stdout),
+                baselineStderrLines: baselineForCompare?.spec.commands.validation?.stderrLines,
+                currentStderrLines: countLines(validation.stderr)
               }
             : undefined
-      }
+      },
+      highlights: [
+        firstUsefulLine(build.stderr) ? `build stderr: ${firstUsefulLine(build.stderr)}` : undefined,
+        typeof validation !== "undefined" && firstUsefulLine(validation.stderr)
+          ? `validation stderr: ${firstUsefulLine(validation.stderr)}`
+          : undefined
+      ].filter((entry): entry is string => typeof entry === "string")
     }
   };
 
