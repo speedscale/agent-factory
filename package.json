@@ -1,6 +1,6 @@
 {
   "name": "@speedscale/agent-factory",
-  "version": "0.1.17",
+  "version": "0.1.18",
   "private": true,
   "description": "Reference architecture for a quality agent baseline -> compare -> report loop.",
   "type": "module",
