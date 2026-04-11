@@ -18,10 +18,14 @@ export interface QualityBaseline {
       build: {
         command: string;
         exitCode: number;
+        stdoutLines: number;
+        stderrLines: number;
       };
       validation?: {
         command: string;
         exitCode: number;
+        stdoutLines: number;
+        stderrLines: number;
       };
     };
   };
