@@ -298,20 +298,24 @@ For every run, verify these files exist under `artifacts/<run-name>/`:
 - `app.json`
 - `issue.json`
 - `run.json`
+- `request.json`
 - `evidence.json`
 - `triage.json`
 - `plan.yaml`
 - `patch.diff`
+- `baseline.json`
 - `build.log`
 - `validation.log`
+- `quality-report.json`
+- `quality-report.md`
 - `result.json`
 
-This artifact set is the minimum proof contract for `issue -> plan -> build -> validate`.
+This artifact set is the minimum proof contract for `request -> build -> compare -> report`.
 
 `result.json` is the terminal summary artifact for operators and automation. It includes run identity, final phase, summary, command outcomes, and artifact pointers.
 
 `evidence.json` captures the incident investigation chain (logs/capture summary, repro steps, and replay outcome) and should be reflected in PR summaries.
 
-If the `POST /runs` intake payload includes an `evidence` object (see `examples/runs/real-ticket-intake.template.json`), intake seeds that content directly into `evidence.json` at run creation time.
+If a QA intake payload includes additional context/evidence, intake seeds that content into `evidence.json` at run creation time.
 
 Intake rejects no-op build/validation commands; `build.test` and `validate.proxymock.command` must be meaningful commands (for example, `true` and `:` are rejected).

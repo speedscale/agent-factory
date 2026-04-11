@@ -62,7 +62,7 @@ Use local mode for rapid iteration and deterministic demos:
 
 Use server mode for continuous, API-driven automation:
 
-- `intake-api` accepts run requests (`POST /runs`)
+- `intake-api` accepts quality run requests (`POST /qa/runs`)
 - `intake-api` exposes run status queries (`GET /runs`, `GET /runs/{name}`)
 - `intake-api` exposes queue/run metrics (`GET /metrics`)
 - `intake-api` supports optional token auth for run and metrics endpoints (`INTAKE_API_TOKEN`)

@@ -25,6 +25,7 @@ The goal is trustworthy autonomy, not hidden magic.
 
 - `AgentApp`: app + repo + baseline target scope + quality policy
 - `AgentRun`: lifecycle state, request trigger context, baseline target, artifacts
+- `QualityBaseline` + `QualityReport`: baseline and comparison artifact contracts in `schemas/`
 - artifact set per run: `baseline.json`, `quality-report.json`, `quality-report.md`, `build.log`, `validation.log`, `evidence.json`, `result.json`
 
 ## Development Workflow

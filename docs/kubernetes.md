@@ -152,7 +152,7 @@ kubectl -n agent-factory exec deploy/worker -- cat /app/artifacts/<run-name>/res
 - worker is wired to the local demo fixture source (`/app/.work/demo-fixture`)
 - shared PVC still backs artifacts/workspace state
 - Redis profile is single-Redis-instance for reference architecture (no HA)
-- webhook relay and Slack command adapter are expected as external intake adapters that call `POST /runs`
+- webhook relay and Slack command adapter are expected as external intake adapters that call `POST /qa/runs`
 
 The `github-webhook-bot` overlay runs polling mode inside `intake-api` (no separate poller CronJob), and intake triggers one worker Job when runs are queued.
 

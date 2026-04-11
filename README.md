@@ -41,7 +41,7 @@ kubectl apply -k examples/deploy/kubernetes/base
 kubectl apply -k examples/deploy/kubernetes/overlays/redis
 ```
 
-Submit runs through intake API `POST /runs` using payloads in `examples/runs/`.
+Submit quality runs through intake API `POST /qa/runs` using payloads in `examples/runs/`.
 
 ## Core Artifacts Per Run
 

@@ -22,6 +22,8 @@ Use this index to find the right docs by audience.
 - `docs/architecture.md` - detailed system architecture
 - `docs/plan.md` - execution roadmap and current priorities
 - `schemas/qa-intake.schema.yaml` - canonical PR/manual validation intake contract
+- `schemas/quality-baseline.schema.yaml` - baseline artifact schema
+- `schemas/quality-report.schema.yaml` - quality comparison report schema
 - `docs/autonomy-mvp.md` - real-ticket autonomy contract and rubric
 - `docs/phase-b-first-run.md` - first-live-run record and operator decisions
 - `docs/history.md` - implementation history snapshot

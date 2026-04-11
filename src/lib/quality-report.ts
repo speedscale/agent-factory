@@ -1,69 +1,12 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { AgentApp, AgentRun } from "../contracts/index.js";
+import type { QualityBaseline, QualityReport } from "../contracts/index.js";
 import { readJsonFile, resolveFromRepo, writeJsonFile } from "./io.js";
 
 interface CommandSnapshot {
   command: string;
   exitCode: number;
-}
-
-interface BaselineDocument {
-  apiVersion: "agents.speedscale.io/v1alpha1";
-  kind: "QualityBaseline";
-  metadata: {
-    name: string;
-    generatedAt: string;
-  };
-  spec: {
-    appRef: {
-      name: string;
-    };
-    target: {
-      name: string;
-      workdir: string;
-      baselineRef?: string;
-    };
-    commands: {
-      build: CommandSnapshot;
-      validation?: CommandSnapshot;
-    };
-  };
-}
-
-interface QualityReportDocument {
-  apiVersion: "agents.speedscale.io/v1alpha1";
-  kind: "QualityReport";
-  metadata: {
-    name: string;
-    generatedAt: string;
-  };
-  spec: {
-    runRef: {
-      name: string;
-    };
-    appRef: {
-      name: string;
-    };
-    target: {
-      name: string;
-      workdir: string;
-      baselineStorePath: string;
-    };
-    mode: "comparison" | "baseline";
-    outcome: "pass" | "warning" | "regression";
-    summary: string;
-    comparedCommands: {
-      build: {
-        baselineExitCode?: number;
-        currentExitCode: number;
-      };
-      validation?: {
-        baselineExitCode?: number;
-        currentExitCode: number;
-      };
-    };
-  };
 }
 
 interface WriteQualityArtifactsInput {
@@ -126,7 +69,7 @@ function resolveReportPaths(run: AgentRun): { baseline: string; json: string; ma
   };
 }
 
-function toMarkdown(report: QualityReportDocument): string {
+function toMarkdown(report: QualityReport): string {
   const validationSection = report.spec.comparedCommands.validation
     ? `- validation baseline/current: ${String(report.spec.comparedCommands.validation.baselineExitCode ?? "n/a")} -> ${report.spec.comparedCommands.validation.currentExitCode}`
     : "- validation baseline/current: n/a";
@@ -155,7 +98,7 @@ export async function writeQualityArtifacts(input: WriteQualityArtifactsInput): 
   const reportPaths = resolveReportPaths(run);
   const now = new Date().toISOString();
 
-  const baselineDoc: BaselineDocument = {
+  const baselineDoc: QualityBaseline = {
     apiVersion: "agents.speedscale.io/v1alpha1",
     kind: "QualityBaseline",
     metadata: {
@@ -176,16 +119,16 @@ export async function writeQualityArtifacts(input: WriteQualityArtifactsInput): 
 
   await mkdir(path.dirname(resolveFromRepo(baselineStorePath)), { recursive: true });
 
-  let outcome: QualityReportDocument["spec"]["outcome"] = "pass";
+  let outcome: QualityReport["spec"]["outcome"] = "pass";
   let summary = "Current run matches baseline expectations.";
-  let baselineForCompare: BaselineDocument | undefined;
+  let baselineForCompare: QualityBaseline | undefined;
 
   if (mode === "baseline") {
     await writeJsonFile(resolveFromRepo(baselineStorePath), baselineDoc);
     summary = "Baseline updated from current run outputs.";
   } else {
     try {
-      baselineForCompare = await readJsonFile<BaselineDocument>(resolveFromRepo(baselineStorePath));
+      baselineForCompare = await readJsonFile<QualityBaseline>(resolveFromRepo(baselineStorePath));
     } catch {
       outcome = "warning";
       summary = "No baseline found for this target. Run baseline mode during onboarding before enforcing comparison results.";
@@ -205,7 +148,7 @@ export async function writeQualityArtifacts(input: WriteQualityArtifactsInput): 
     }
   }
 
-  const report: QualityReportDocument = {
+  const report: QualityReport = {
     apiVersion: "agents.speedscale.io/v1alpha1",
     kind: "QualityReport",
     metadata: {
