@@ -11,7 +11,7 @@ import { parsePollerIntervalMs, startIssuePollerLoop } from "../lib/issue-poller
 import { triggerWorkerJobForRun } from "../lib/k8s-worker-job.js";
 import { listRuns, loadRun } from "../lib/run-admin.js";
 import { createRunQueueFromEnv } from "../lib/run-queue.js";
-import { createRunFromIssue } from "../lib/run-store.js";
+import { createRunFromRequest } from "../lib/run-store.js";
 import { resolveFromRepo } from "../lib/io.js";
 import { parse as parseYaml } from "yaml";
 
@@ -323,44 +323,73 @@ function isQaIntakeEvent(value: unknown): value is QaIntakeEvent {
   );
 }
 
-function resolveQualityTarget(app: AgentApp, requestedTargetName: string | undefined): IntakeRequest["qualityTarget"] {
+function resolveQualityTargets(app: AgentApp, requestedTargetName: string | undefined): Array<NonNullable<IntakeRequest["qualityTarget"]>> {
   const targets = app.spec.quality?.baseline?.targets ?? [];
-  const selected =
-    typeof requestedTargetName === "string"
-      ? targets.find((target) => target.name.toLowerCase() === requestedTargetName.toLowerCase())
-      : targets[0];
 
-  if (selected) {
-    return {
-      name: selected.name,
-      workdir: selected.workdir,
-      baselineRef: selected.baselineRef
-    };
+  if (typeof requestedTargetName === "string") {
+    const selected = targets.find((target) => target.name.toLowerCase() === requestedTargetName.toLowerCase());
+    if (!selected) {
+      throw new Error(`quality target '${requestedTargetName}' not found for app ${app.metadata.name}`);
+    }
+
+    return [
+      {
+        name: selected.name,
+        workdir: selected.workdir,
+        baselineRef: selected.baselineRef
+      }
+    ];
   }
 
-  return {
-    name: app.metadata.name,
-    workdir: app.spec.repo.workdir
-  };
+  if (targets.length > 0) {
+    return targets.map((target) => ({
+      name: target.name,
+      workdir: target.workdir,
+      baselineRef: target.baselineRef
+    }));
+  }
+
+  return [
+    {
+      name: app.metadata.name,
+      workdir: app.spec.repo.workdir
+    }
+  ];
 }
 
-function buildIntakeFromQaEvent(app: AgentApp, qaEvent: QaIntakeEvent): IntakeRequest {
+function toIssueId(baseId: string, targetName: string, totalTargets: number): string {
+  if (totalTargets <= 1) {
+    return baseId;
+  }
+
+  const suffix = targetName
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return `${baseId}-${suffix}`;
+}
+
+function buildIntakesFromQaEvent(app: AgentApp, qaEvent: QaIntakeEvent): IntakeRequest[] {
   const repositoryFullName = `${qaEvent.repository.owner}/${qaEvent.repository.name}`;
   const pullRequestNumber = qaEvent.request.pullRequest?.number;
-  const syntheticIssueId =
+  const baseIssueId =
     typeof pullRequestNumber === "number"
       ? `pr-${pullRequestNumber}`
       : `${qaEvent.request.mode}-manual-${Date.now()}`;
-  const syntheticIssueTitle =
+  const baseIssueTitle =
     typeof pullRequestNumber === "number"
       ? `Quality validation for PR #${pullRequestNumber}`
       : `Quality validation request (${qaEvent.request.mode})`;
+  const qualityTargets = resolveQualityTargets(app, qaEvent.appRef.qualityTarget);
 
-  return {
+  return qualityTargets.map((qualityTarget) => ({
     app,
     issue: {
-      id: syntheticIssueId,
-      title: syntheticIssueTitle,
+      id: toIssueId(baseIssueId, qualityTarget.name, qualityTargets.length),
+      title:
+        qualityTargets.length > 1
+          ? `${baseIssueTitle} [target: ${qualityTarget.name}]`
+          : baseIssueTitle,
       body: qaEvent.request.pullRequest?.url ?? "Manual quality validation request",
       url: qaEvent.request.pullRequest?.url
     },
@@ -377,8 +406,8 @@ function buildIntakeFromQaEvent(app: AgentApp, qaEvent: QaIntakeEvent): IntakeRe
           }
         : undefined
     },
-    qualityTarget: resolveQualityTarget(app, qaEvent.appRef.qualityTarget)
-  };
+    qualityTarget
+  }));
 }
 
 async function loadAgentAppFromMapping(repoFullName: string): Promise<AgentApp | undefined> {
@@ -801,12 +830,12 @@ async function githubPullRequestWebhookHandler(req: IncomingMessage, res: Server
     }
   };
 
-  const run = await queueRunAndTriggerWorker(buildIntakeFromQaEvent(app, qaIntake));
+  const queuedRuns = await Promise.all(buildIntakesFromQaEvent(app, qaIntake).map((intake) => queueRunAndTriggerWorker(intake)));
   sendJson(res, 201, {
-    message: "queued run from github pull_request webhook",
+    message: "queued run(s) from github pull_request webhook",
     repository: repoFullName,
     action: payload.action,
-    run
+    runs: queuedRuns
   });
 }
 
@@ -838,17 +867,16 @@ async function qaRunsHandler(req: IncomingMessage, res: ServerResponse): Promise
     return;
   }
 
-  const intake = buildIntakeFromQaEvent(app, body);
-  const run = await queueRunAndTriggerWorker(intake);
+  const runs = await Promise.all(buildIntakesFromQaEvent(app, body).map((intake) => queueRunAndTriggerWorker(intake)));
 
   sendJson(res, 201, {
-    message: "quality intake created a queued run",
-    run
+    message: "quality intake created queued run(s)",
+    runs
   });
 }
 
 async function queueRunAndTriggerWorker(intake: IntakeRequest) {
-  const run = await createRunFromIssue(intake);
+  const run = await createRunFromRequest(intake);
 
   try {
     await triggerWorkerJobForRun(run.metadata.name);
@@ -904,32 +932,9 @@ async function handler(req: IncomingMessage, res: ServerResponse): Promise<void>
   }
 
   if (req.method === "POST" && parsedUrl.pathname === "/runs") {
-    if (!isAuthorized(req)) {
-      sendUnauthorized(res);
-      return;
-    }
-
-    try {
-      const body = await readJsonBody(req);
-
-      if (!isIntakeRequest(body)) {
-        sendJson(res, 400, {
-          error:
-            "request must include app.metadata.name and issue.id/title/body, and build.test + validate.proxymock.command must be non-trivial commands"
-        });
-        return;
-      }
-
-      const run = await queueRunAndTriggerWorker(body);
-
-      sendJson(res, 201, {
-        message: "intake created a queued run",
-        run
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "invalid request body";
-      sendJson(res, 400, { error: message });
-    }
+    sendJson(res, 410, {
+      error: "legacy endpoint removed for quality-agent mode; use POST /qa/runs"
+    });
     return;
   }
 
@@ -949,12 +954,9 @@ async function handler(req: IncomingMessage, res: ServerResponse): Promise<void>
   }
 
   if (req.method === "POST" && parsedUrl.pathname === "/webhooks/github/issues") {
-    try {
-      await githubIssueWebhookHandler(req, res);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "failed to process github webhook";
-      sendJson(res, 400, { error: message });
-    }
+    sendJson(res, 410, {
+      error: "legacy webhook removed for quality-agent mode; use POST /webhooks/github/pulls"
+    });
     return;
   }
 
@@ -979,7 +981,7 @@ async function main(): Promise<void> {
   if (embeddedPollerEnabled) {
     const intervalMs = parsePollerIntervalMs(process.env.POLLER_INTERVAL_MS);
     startIssuePollerLoop(intervalMs);
-    console.log(`embedded issue poller enabled (intervalMs=${intervalMs})`);
+    console.log(`embedded quality poller enabled (intervalMs=${intervalMs})`);
   }
 
   createServer((req, res) => {

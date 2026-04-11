@@ -26,12 +26,12 @@ npm run worker -- --source /Users/kahrens/go/src/github.com/speedscale/microsvc
 
 ## 3. Submit the run
 
-POST `examples/runs/microsvc-user-service-intake.json` to `/runs`:
+POST `examples/runs/microsvc-user-service-pr-quality-intake.json` to `/qa/runs`:
 
 ```bash
-curl -s -X POST http://127.0.0.1:8080/runs \
+curl -s -X POST http://127.0.0.1:8080/qa/runs \
   -H 'content-type: application/json' \
-  --data @examples/runs/microsvc-user-service-intake.json
+  --data @examples/runs/microsvc-user-service-pr-quality-intake.json
 ```
 
 Capture the returned run name, then use it in the next steps.
@@ -55,9 +55,9 @@ ls artifacts/<run-name>
 ```bash
 npm run intake-api
 npm run worker -- --source /Users/kahrens/go/src/github.com/speedscale/microsvc
-curl -sS -X POST http://127.0.0.1:8080/runs \
+curl -sS -X POST http://127.0.0.1:8080/qa/runs \
   -H 'content-type: application/json' \
-  --data-binary @examples/runs/microsvc-user-service-intake.json
+  --data-binary @examples/runs/microsvc-user-service-pr-quality-intake.json
 curl -sS "http://127.0.0.1:8080/runs/<run-name>"
 ```
 

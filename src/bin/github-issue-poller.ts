@@ -1,6 +1,9 @@
 import { parsePollerIntervalMs, runIssuePollerOnce, startIssuePollerLoop } from "../lib/issue-poller.js";
 
 async function main(): Promise<void> {
+  process.env.POLLER_EVENT_KIND = process.env.POLLER_EVENT_KIND ?? "pulls";
+  console.warn("github-issue-poller is legacy; use npm run pr-poller for quality-agent workflows.");
+
   const once = process.argv.includes("--once");
   if (once) {
     await runIssuePollerOnce();

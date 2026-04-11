@@ -1,7 +1,7 @@
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { createRunFromIssue } from "../lib/run-store.js";
+import { createRunFromRequest } from "../lib/run-store.js";
 import { buildPlan, loadPlannerContext, writePlanArtifact, writeTriageArtifact } from "../lib/planner.js";
 import { loadRunnerContext, runBuildStage } from "../lib/runner.js";
 import { loadValidatorContext, runValidationStage } from "../lib/validator.js";
@@ -58,7 +58,7 @@ async function main(): Promise<void> {
   const originalPath = process.env.PATH ?? "";
 
   try {
-    const run = await createRunFromIssue({ app: sampleApp, issue: sampleIssue });
+    const run = await createRunFromRequest({ app: sampleApp, issue: sampleIssue });
     const plannerContext = await loadPlannerContext(run.metadata.name);
     const plan = buildPlan(plannerContext);
 

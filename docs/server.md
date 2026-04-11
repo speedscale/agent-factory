@@ -65,8 +65,8 @@ GitHub PR webhook intake (optional):
 
 GitHub poller mode (optional):
 
-- standalone command: `npm run issue-poller -- --once`
-- PR-focused command: `npm run pr-poller -- --once`
+- primary command: `npm run pr-poller -- --once`
+- legacy alias: `npm run issue-poller -- --once`
 - embedded in intake: set `INTAKE_ENABLE_EMBEDDED_POLLER=true`
 - interval: `POLLER_INTERVAL_MS` (default `120000`)
 - poll selector: `POLLER_EVENT_KIND=issues|pulls|both` (default `pulls`)
@@ -91,6 +91,7 @@ Run operations:
 
 - list runs: `npm run runs -- list [--phase <phase>]`
 - retry a failed run: `npm run runs -- retry <run-name>`
+- queue onboarding baseline run: `npm run runs -- baseline examples/apps/demo-node/agentapp.yaml --target demo-node`
 
 When Redis backend is enabled, intake and retry operations enqueue run names to Redis and workers consume from Redis.
 
@@ -217,9 +218,9 @@ WORKER_SOURCE=/repos/microsvc docker compose --env-file .env.server -f docker-co
 Then submit intake requests from another terminal:
 
 ```bash
-curl -sS -X POST http://127.0.0.1:8080/runs \
+curl -sS -X POST http://127.0.0.1:8080/qa/runs \
   -H "content-type: application/json" \
-  --data-binary @examples/runs/demo-node-intake.json
+  --data-binary @examples/runs/demo-node-pr-quality-intake.json
 ```
 
 QA-mode intake example:
@@ -247,17 +248,17 @@ docker compose --env-file .env.server -f docker-compose.server.yml down
 ### Submit a run request
 
 ```bash
-curl -sS -X POST http://localhost:8080/runs \
+curl -sS -X POST http://localhost:8080/qa/runs \
   -H "Authorization: Bearer change-me" \
   -H "content-type: application/json" \
-  --data-binary @examples/runs/demo-node-intake.json
+  --data-binary @examples/runs/demo-node-pr-quality-intake.json
 ```
 
 If secure mode is disabled, omit the auth header.
 
 Expected outcome:
 
-- intake response includes a run name
+- intake response includes one or more run names (`runs[]`)
 - worker logs `run processed`
 - `artifacts/<run-name>/run.json` reaches `succeeded`
 

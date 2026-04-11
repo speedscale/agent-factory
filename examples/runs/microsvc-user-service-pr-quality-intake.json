@@ -1,0 +1,28 @@
+{
+  "source": "github-webhook",
+  "repository": {
+    "provider": "github",
+    "owner": "speedscale",
+    "name": "microsvc"
+  },
+  "appRef": {
+    "name": "microsvc-user-service",
+    "qualityTarget": "user-service"
+  },
+  "request": {
+    "mode": "comparison",
+    "pullRequest": {
+      "number": 456,
+      "url": "https://github.com/speedscale/microsvc/pull/456",
+      "headSha": "abc123",
+      "baseSha": "def456"
+    }
+  },
+  "requestedBy": {
+    "type": "bot",
+    "login": "agent-factory[bot]"
+  },
+  "metadata": {
+    "reason": "pr-opened"
+  }
+}

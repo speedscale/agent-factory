@@ -108,13 +108,13 @@ Port-forward intake API:
 kubectl -n agent-factory port-forward svc/intake-api 8080:8080
 ```
 
-Submit sample intake payload:
+Submit sample QA intake payload:
 
 ```bash
-curl -sS -X POST http://127.0.0.1:8080/runs \
+curl -sS -X POST http://127.0.0.1:8080/qa/runs \
   -H "Authorization: Bearer <token-if-enabled>" \
   -H "content-type: application/json" \
-  --data-binary @examples/runs/demo-node-intake.json
+  --data-binary @examples/runs/demo-node-pr-quality-intake.json
 ```
 
 Query run status from intake API:

@@ -1,6 +1,11 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import { parse as parseYaml } from "yaml";
 import type { AgentRunPhase } from "../contracts/index.js";
+import type { AgentApp } from "../contracts/index.js";
 import { listRuns, requeueRun } from "../lib/run-admin.js";
 import { createRunQueueFromEnv } from "../lib/run-queue.js";
+import { createRunFromRequest } from "../lib/run-store.js";
 
 const phases: AgentRunPhase[] = [
   "queued",
@@ -44,9 +49,104 @@ function printUsage(): void {
         message: "run operations",
         usage: [
           "npm run runs -- list [--phase <phase>]",
-          "npm run runs -- retry <run-name> [--force]"
+          "npm run runs -- retry <run-name> [--force]",
+          "npm run runs -- baseline <app-manifest-path> [--target <name>] [--id <custom-id>]"
         ],
         phases
+      },
+      null,
+      2
+    )
+  );
+}
+
+function resolveTarget(app: AgentApp, targetName?: string): { name: string; workdir: string; baselineRef?: string } {
+  const configuredTargets = app.spec.quality?.baseline?.targets ?? [];
+
+  if (configuredTargets.length === 0) {
+    return {
+      name: app.metadata.name,
+      workdir: app.spec.repo.workdir
+    };
+  }
+
+  if (targetName) {
+    const selected = configuredTargets.find((target) => target.name.toLowerCase() === targetName.toLowerCase());
+    if (!selected) {
+      throw new Error(`quality target '${targetName}' not found in manifest`);
+    }
+
+    return {
+      name: selected.name,
+      workdir: selected.workdir,
+      baselineRef: selected.baselineRef
+    };
+  }
+
+  if (configuredTargets.length > 1) {
+    throw new Error("manifest has multiple quality targets; provide --target <name>");
+  }
+
+  const selected = configuredTargets[0];
+  return {
+    name: selected.name,
+    workdir: selected.workdir,
+    baselineRef: selected.baselineRef
+  };
+}
+
+async function loadAgentAppFromManifest(manifestPath: string): Promise<AgentApp> {
+  const absolutePath = path.resolve(manifestPath);
+  const raw = await readFile(absolutePath, "utf8");
+  const parsed = absolutePath.endsWith(".json") ? JSON.parse(raw) : parseYaml(raw);
+
+  if (typeof parsed !== "object" || parsed === null) {
+    throw new Error(`invalid manifest payload: ${manifestPath}`);
+  }
+
+  const candidate = parsed as AgentApp;
+  if (!candidate.metadata?.name || !candidate.spec?.repo?.workdir) {
+    throw new Error(`manifest missing required fields: ${manifestPath}`);
+  }
+
+  return candidate;
+}
+
+async function runBaseline(argv: string[]): Promise<void> {
+  const manifestPath = argv[1];
+  if (!manifestPath) {
+    throw new Error("baseline requires <app-manifest-path>");
+  }
+
+  const targetName = getArg(argv, ["--target", "-t"]);
+  const customId = getArg(argv, ["--id"]);
+  const app = await loadAgentAppFromManifest(manifestPath);
+  const target = resolveTarget(app, targetName);
+  const issueId = customId ?? `baseline-${target.name}-${Date.now()}`;
+
+  const run = await createRunFromRequest({
+    app,
+    issue: {
+      id: issueId,
+      title: `Baseline capture: ${app.metadata.name}/${target.name}`,
+      body: "Onboarding baseline capture request",
+      url: undefined
+    },
+    request: {
+      source: "developer",
+      mode: "baseline"
+    },
+    qualityTarget: target
+  });
+
+  console.log(
+    JSON.stringify(
+      {
+        message: "baseline run queued",
+        run: run.metadata.name,
+        app: app.metadata.name,
+        qualityTarget: target.name,
+        workdir: target.workdir
       },
       null,
       2
@@ -122,6 +222,11 @@ async function main(): Promise<void> {
 
   if (command === "retry") {
     await runRetry(argv);
+    return;
+  }
+
+  if (command === "baseline") {
+    await runBaseline(argv);
     return;
   }
 
