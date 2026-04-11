@@ -1,0 +1,85 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+title: QualityBaseline
+description: Baseline command outcomes for a configured quality target.
+type: object
+required:
+  - apiVersion
+  - kind
+  - metadata
+  - spec
+properties:
+  apiVersion:
+    type: string
+    const: agents.speedscale.io/v1alpha1
+  kind:
+    type: string
+    const: QualityBaseline
+  metadata:
+    type: object
+    required:
+      - name
+      - generatedAt
+    properties:
+      name:
+        type: string
+      generatedAt:
+        type: string
+    additionalProperties: false
+  spec:
+    type: object
+    required:
+      - appRef
+      - target
+      - commands
+    properties:
+      appRef:
+        type: object
+        required:
+          - name
+        properties:
+          name:
+            type: string
+        additionalProperties: false
+      target:
+        type: object
+        required:
+          - name
+          - workdir
+        properties:
+          name:
+            type: string
+          workdir:
+            type: string
+          baselineRef:
+            type: string
+        additionalProperties: false
+      commands:
+        type: object
+        required:
+          - build
+        properties:
+          build:
+            type: object
+            required:
+              - command
+              - exitCode
+            properties:
+              command:
+                type: string
+              exitCode:
+                type: number
+            additionalProperties: false
+          validation:
+            type: object
+            required:
+              - command
+              - exitCode
+            properties:
+              command:
+                type: string
+              exitCode:
+                type: number
+            additionalProperties: false
+        additionalProperties: false
+    additionalProperties: false
+additionalProperties: false

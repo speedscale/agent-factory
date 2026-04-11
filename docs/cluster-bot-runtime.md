@@ -87,7 +87,7 @@ Do not move planning/build/validation logic into that controller.
 
 1. Deploy Redis queue overlay and bot secrets.
 2. Deploy job-runtime overlay with queue-drain CronJob.
-3. Wire GitHub webhook relay to `POST /runs` using app manifest mapping.
+3. Wire GitHub webhook relay to `POST /qa/runs` using app manifest mapping.
 4. Wire Slack command relay to same canonical intake path.
 5. Verify one full run produces baseline comparison artifacts and a bot-authored PR quality comment.
 
