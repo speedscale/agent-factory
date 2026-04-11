@@ -48,9 +48,15 @@ kubectl apply -k examples/deploy/kubernetes/overlays/redis
 Submit:
 
 ```bash
-curl -sS -X POST http://127.0.0.1:8080/runs \
+curl -sS -X POST http://127.0.0.1:8080/qa/runs \
   -H "content-type: application/json" \
-  --data-binary @examples/runs/demo-node-intake.json
+  --data-binary @examples/runs/demo-node-pr-quality-intake.json
+```
+
+Queue onboarding baseline from manifest:
+
+```bash
+npm run runs -- baseline examples/apps/demo-node/agentapp.yaml --target demo-node
 ```
 
 List/query:

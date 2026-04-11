@@ -5,7 +5,7 @@ import { parse as parseYaml } from "yaml";
 import type { AgentApp } from "../contracts/index.js";
 import { createGitHubAuthProviderFromEnv } from "./github-auth.js";
 import { resolveFromRepo } from "./io.js";
-import { createRunFromIssue, type IntakeRequest } from "./run-store.js";
+import { createRunFromRequest, type IntakeRequest } from "./run-store.js";
 
 interface GitHubIssue {
   number: number;
@@ -61,20 +61,34 @@ function loadPollerConfigFromEnv(): PollerConfig {
   };
 }
 
-function resolveQualityTarget(app: AgentApp): IntakeRequest["qualityTarget"] {
-  const target = app.spec.quality?.baseline?.targets?.[0];
-  if (target) {
-    return {
+function resolveQualityTargets(app: AgentApp): Array<NonNullable<IntakeRequest["qualityTarget"]>> {
+  const targets = app.spec.quality?.baseline?.targets;
+  if (targets && targets.length > 0) {
+    return targets.map((target) => ({
       name: target.name,
       workdir: target.workdir,
       baselineRef: target.baselineRef
-    };
+    }));
   }
 
-  return {
-    name: app.metadata.name,
-    workdir: app.spec.repo.workdir
-  };
+  return [
+    {
+      name: app.metadata.name,
+      workdir: app.spec.repo.workdir
+    }
+  ];
+}
+
+function toIssueId(baseId: string, targetName: string, totalTargets: number): string {
+  if (totalTargets <= 1) {
+    return baseId;
+  }
+
+  const suffix = targetName
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return `${baseId}-${suffix}`;
 }
 
 function parseRepoAppMapFromJson(raw: string): Map<string, string> {
@@ -271,7 +285,7 @@ async function handleIssue(
     }
   };
 
-  await createRunFromIssue(intake);
+  await createRunFromRequest(intake);
   await markProcessed(redis, config.statePrefix, repo, issue.number);
   console.log(`queued run for ${repo}#${issue.number}`);
 }
@@ -318,31 +332,37 @@ async function handlePullRequest(
     return;
   }
 
-  const intake: IntakeRequest = {
-    app,
-    issue: {
-      id: `pr-${String(pullRequest.number)}`,
-      title: `Quality validation for PR #${String(pullRequest.number)}`,
-      body: pullRequest.body ?? "",
-      url: pullRequest.html_url
-    },
-    request: {
-      source: "pull_request",
-      mode: "comparison",
-      url: pullRequest.html_url,
-      pullRequest: {
-        repository: repo,
-        number: pullRequest.number,
-        headSha: pullRequest.head.sha,
-        baseSha: pullRequest.base.sha
-      }
-    },
-    qualityTarget: resolveQualityTarget(app)
-  };
+  const qualityTargets = resolveQualityTargets(app);
+  for (const qualityTarget of qualityTargets) {
+    const intake: IntakeRequest = {
+      app,
+      issue: {
+        id: toIssueId(`pr-${String(pullRequest.number)}`, qualityTarget.name, qualityTargets.length),
+        title:
+          qualityTargets.length > 1
+            ? `Quality validation for PR #${String(pullRequest.number)} [target: ${qualityTarget.name}]`
+            : `Quality validation for PR #${String(pullRequest.number)}`,
+        body: pullRequest.body ?? "",
+        url: pullRequest.html_url
+      },
+      request: {
+        source: "pull_request",
+        mode: "comparison",
+        url: pullRequest.html_url,
+        pullRequest: {
+          repository: repo,
+          number: pullRequest.number,
+          headSha: pullRequest.head.sha,
+          baseSha: pullRequest.base.sha
+        }
+      },
+      qualityTarget
+    };
 
-  await createRunFromIssue(intake);
+    await createRunFromRequest(intake);
+  }
   await markProcessed(redis, config.statePrefix, repo, pullRequest.number);
-  console.log(`queued run for ${repo}#${pullRequest.number}`);
+  console.log(`queued ${qualityTargets.length} run(s) for ${repo}#${pullRequest.number}`);
 }
 
 export async function runIssuePollerOnce(): Promise<void> {

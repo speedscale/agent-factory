@@ -112,7 +112,7 @@ async function initializeArtifactFiles(artifactRoot: string): Promise<void> {
   ]);
 }
 
-export async function createRunFromIssue(input: IntakeRequest): Promise<AgentRun> {
+export async function createRunFromRequest(input: IntakeRequest): Promise<AgentRun> {
   const runName = createRunName(input.app.metadata.name, input.issue.id);
   const artifactRoot = ensureRelativePath("artifacts", runName);
   const workspaceRoot = ensureRelativePath(".work", runName);
@@ -212,4 +212,8 @@ export async function createRunFromIssue(input: IntakeRequest): Promise<AgentRun
   }
 
   return run;
+}
+
+export async function createRunFromIssue(input: IntakeRequest): Promise<AgentRun> {
+  return createRunFromRequest(input);
 }

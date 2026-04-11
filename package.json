@@ -14,6 +14,7 @@
     "runs": "tsx src/bin/runs.ts",
     "create-demo-fixture": "tsx src/bin/create-demo-fixture.ts",
     "demo": "tsx src/bin/demo.ts",
+    "qa-integration": "tsx src/bin/qa-integration.ts",
     "planner": "tsx src/bin/planner.ts",
     "runner": "tsx src/bin/runner.ts",
     "validator": "tsx src/bin/validator.ts",
