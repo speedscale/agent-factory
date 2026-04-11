@@ -1,0 +1,26 @@
+{
+  "source": "developer",
+  "repository": {
+    "provider": "github",
+    "owner": "speedscale",
+    "name": "outerspace-go"
+  },
+  "appRef": {
+    "name": "outerspace-go",
+    "qualityTarget": "app"
+  },
+  "request": {
+    "mode": "comparison",
+    "pullRequest": {
+      "number": 1,
+      "url": "https://github.com/speedscale/outerspace-go/pull/1"
+    }
+  },
+  "requestedBy": {
+    "type": "user",
+    "login": "operator"
+  },
+  "metadata": {
+    "reason": "manual-pr-validation"
+  }
+}

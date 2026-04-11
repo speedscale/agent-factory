@@ -1,0 +1,23 @@
+{
+  "source": "developer",
+  "repository": {
+    "provider": "github",
+    "owner": "speedscale",
+    "name": "outerspace-go"
+  },
+  "appRef": {
+    "name": "outerspace-go",
+    "qualityTarget": "app"
+  },
+  "request": {
+    "mode": "baseline",
+    "branch": "main"
+  },
+  "requestedBy": {
+    "type": "user",
+    "login": "operator"
+  },
+  "metadata": {
+    "reason": "initial-baseline-capture"
+  }
+}
