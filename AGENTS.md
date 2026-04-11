@@ -2,9 +2,9 @@
 
 ## Purpose
 
-This repository is a public reference architecture for an autonomous issue-to-fix workflow centered on the inner loop:
+This repository is a public reference architecture for an autonomous quality-validation workflow centered on the inner loop:
 
-`issue -> plan -> build -> validate`
+`request -> baseline -> compare -> report`
 
 Keep changes aligned with that goal. Prefer small, explicit contracts over broad platform abstractions.
 
@@ -20,7 +20,7 @@ Keep changes aligned with that goal. Prefer small, explicit contracts over broad
 
 - The first implementation should target one simple demo application.
 - The agent should operate against an app manifest rather than hardcoded repo logic.
-- The initial system should emit artifacts for every step: triage, plan, patch, build logs, validation result.
+- The initial system should emit artifacts for every step: request, baseline target, build logs, validation result, quality report.
 
 ## Repository Conventions
 

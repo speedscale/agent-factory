@@ -115,6 +115,14 @@ properties:
                     - markdown
               failOnRegression:
                 type: boolean
+              thresholds:
+                type: object
+                properties:
+                  maxBuildStderrLineDelta:
+                    type: number
+                  maxValidationStderrLineDelta:
+                    type: number
+                additionalProperties: false
             additionalProperties: false
         additionalProperties: false
       build:

@@ -35,6 +35,10 @@ export interface AgentApp {
       reporting?: {
         formats?: Array<"json" | "markdown">;
         failOnRegression?: boolean;
+        thresholds?: {
+          maxBuildStderrLineDelta?: number;
+          maxValidationStderrLineDelta?: number;
+        };
       };
     };
     build: {

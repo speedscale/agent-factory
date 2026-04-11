@@ -53,6 +53,14 @@ curl -sS -X POST http://127.0.0.1:8080/qa/runs \
   --data-binary @examples/runs/demo-node-pr-quality-intake.json
 ```
 
+Multi-target example (queues one run per target):
+
+```bash
+curl -sS -X POST http://127.0.0.1:8080/qa/runs \
+  -H "content-type: application/json" \
+  --data-binary @examples/runs/demo-node-multi-target-pr-quality-intake.json
+```
+
 Queue onboarding baseline from manifest:
 
 ```bash
@@ -76,6 +84,7 @@ For real PR requests, treat successful command execution as necessary but not su
 - provide endpoint-level replay outcomes when performance is in scope
 - keep `build.test` and `validate.proxymock.command` meaningful (no no-op placeholders)
 - ensure baseline artifacts are current for each onboarded quality target
+- ensure GitHub bot auth is configured so PR quality comments can be posted/updated
 
 ## Operational Baselines
 

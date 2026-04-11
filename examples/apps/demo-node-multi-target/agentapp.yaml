@@ -1,7 +1,7 @@
 apiVersion: agents.speedscale.io/v1alpha1
 kind: AgentApp
 metadata:
-  name: demo-node
+  name: demo-node-multi-target
 spec:
   repo:
     provider: github
@@ -21,9 +21,13 @@ spec:
     baseline:
       strategy: multi-project
       targets:
-        - name: demo-node
+        - name: node-api
           workdir: node
-          baselineRef: baseline/demo/node
+          baselineRef: baseline/demo/node-api
+          command: npm test
+        - name: node-worker
+          workdir: node
+          baselineRef: baseline/demo/node-worker
           command: npm test
     reporting:
       formats:
@@ -39,10 +43,15 @@ spec:
     start: npm start
   validate:
     proxymock:
-      dataset: sample-node-bug
+      dataset: demo-node-404
       mode: replay-with-mocks
       command: proxymock replay
+      service:
+        command: npm start
+        host: 127.0.0.1
+        port: 3000
+        startupTimeoutSeconds: 30
   policy:
     autoBranch: true
-    autoMr: false
+    autoMr: true
     autoMerge: false

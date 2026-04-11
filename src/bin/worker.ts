@@ -9,6 +9,7 @@ import { createRunQueueFromEnv, type RunQueue } from "../lib/run-queue.js";
 import { RUN_CLAIM_FILENAME } from "../lib/run-admin.js";
 import { writeRunResultArtifact } from "../lib/run-result.js";
 import { writeQualityArtifacts } from "../lib/quality-report.js";
+import { publishPrQualityComment } from "../lib/pr-quality-comment.js";
 import type { AgentRun } from "../contracts/index.js";
 
 interface WorkerOptions {
@@ -116,6 +117,13 @@ async function processRun(runName: string, sourceDir?: string): Promise<void> {
         }
       })
     ]);
+
+    try {
+      await publishPrQualityComment(nextRun, runnerContext.app);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`failed to publish PR quality comment for ${runName}: ${message}`);
+    }
     return;
   }
 
@@ -172,6 +180,13 @@ async function processRun(runName: string, sourceDir?: string): Promise<void> {
       }
     })
   ]);
+
+  try {
+    await publishPrQualityComment(finalRun, runnerContext.app);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`failed to publish PR quality comment for ${runName}: ${message}`);
+  }
 }
 
 async function tryClaimRun(runName: string, claimTtlMs: number): Promise<boolean> {

@@ -1,0 +1,27 @@
+{
+  "source": "developer",
+  "repository": {
+    "provider": "github",
+    "owner": "speedscale",
+    "name": "demo-multi"
+  },
+  "appRef": {
+    "name": "demo-node-multi-target"
+  },
+  "request": {
+    "mode": "comparison",
+    "pullRequest": {
+      "number": 999,
+      "url": "https://github.com/speedscale/demo/pull/999",
+      "headSha": "abc123",
+      "baseSha": "def456"
+    }
+  },
+  "requestedBy": {
+    "type": "user",
+    "login": "developer"
+  },
+  "metadata": {
+    "reason": "multi-target-intake-smoke"
+  }
+}
