@@ -32,7 +32,11 @@ function createApp(): AgentApp {
         },
         reporting: {
           failOnRegression: true,
-          formats: ["json", "markdown"]
+          formats: ["json", "markdown"],
+          thresholds: {
+            maxBuildStderrLineDelta: 1,
+            maxValidationStderrLineDelta: 1
+          }
         }
       },
       build: {
@@ -160,6 +164,26 @@ async function main(): Promise<void> {
     }
   });
   assert.equal(regressionOutcome.outcome, "regression");
+
+  const thresholdRun = createRun(`run-integration-threshold-${suffix}`, "comparison");
+  await ensureRunArtifacts(thresholdRun.metadata.name);
+  const thresholdOutcome = await writeQualityArtifacts({
+    run: thresholdRun,
+    app,
+    build: {
+      command: "npm test",
+      exitCode: 0,
+      stdout: "ok",
+      stderr: "line1\nline2\nline3"
+    },
+    validation: {
+      command: "proxymock replay",
+      exitCode: 0,
+      stdout: "replay ok",
+      stderr: ""
+    }
+  });
+  assert.equal(thresholdOutcome.outcome, "regression");
 
   console.log(JSON.stringify({ message: "qa integration checks passed" }, null, 2));
 }

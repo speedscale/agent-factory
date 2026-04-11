@@ -35,8 +35,8 @@ jobs:
 
       - name: Start intake API
         run: |
-          INTAKE_REPO_APP_MAP_JSON='{"speedscale/demo":"examples/apps/demo-node/agentapp.yaml"}' \
-          INTAKE_ALLOWED_REPOS='speedscale/demo' \
+          INTAKE_REPO_APP_MAP_JSON='{"speedscale/demo":"examples/apps/demo-node/agentapp.yaml","speedscale/demo-multi":"examples/apps/demo-node-multi-target/agentapp.yaml"}' \
+          INTAKE_ALLOWED_REPOS='speedscale/demo,speedscale/demo-multi' \
           npm run intake-api > intake-api.log 2>&1 &
           echo $! > intake-api.pid
 
@@ -94,6 +94,13 @@ jobs:
             --data-binary @webhook-pr.json > webhook-response.json
           node -e 'const fs=require("fs"); const payload=JSON.parse(fs.readFileSync("webhook-response.json","utf8")); if(!payload.runs?.[0]?.metadata?.name){console.error(payload); process.exit(1)};'
 
+      - name: Submit multi-target intake request
+        run: |
+          curl -sS -X POST http://127.0.0.1:8080/qa/runs \
+            -H "content-type: application/json" \
+            --data-binary @examples/runs/demo-node-multi-target-pr-quality-intake.json > multi-target-response.json
+          node -e 'const fs=require("fs"); const payload=JSON.parse(fs.readFileSync("multi-target-response.json","utf8")); const runs=payload.runs||[]; if(runs.length!==2){console.error(payload); process.exit(1)}; const names=runs.map((r)=>r.metadata?.name||""); if(!names.every((name)=>name.includes("node-api")||name.includes("node-worker"))){console.error(names); process.exit(1)};'
+
       - name: Stop intake API
         if: always()
         run: |
@@ -113,3 +120,4 @@ jobs:
             intake-response.json
             comparison-response.json
             webhook-response.json
+            multi-target-response.json

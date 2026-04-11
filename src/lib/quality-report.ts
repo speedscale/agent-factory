@@ -158,6 +158,12 @@ export async function writeQualityArtifacts(input: WriteQualityArtifactsInput): 
   let outcome: QualityReport["spec"]["outcome"] = "pass";
   let summary = "Current run matches baseline expectations.";
   let baselineForCompare: QualityBaseline | undefined;
+  const reportingThresholds = app.spec.quality?.reporting?.thresholds;
+
+  const buildStdoutLines = countLines(build.stdout);
+  const buildStderrLines = countLines(build.stderr);
+  const validationStdoutLines = typeof validation !== "undefined" ? countLines(validation.stdout) : undefined;
+  const validationStderrLines = typeof validation !== "undefined" ? countLines(validation.stderr) : undefined;
 
   if (mode === "baseline") {
     await writeJsonFile(resolveFromRepo(baselineStorePath), baselineDoc);
@@ -177,9 +183,24 @@ export async function writeQualityArtifacts(input: WriteQualityArtifactsInput): 
         typeof baselineForCompare.spec.commands.validation !== "undefined" &&
         baselineForCompare.spec.commands.validation.exitCode !== validation.exitCode;
 
-      if (buildChanged || validationChanged) {
+      const buildStderrDelta = Math.abs(baselineForCompare.spec.commands.build.stderrLines - buildStderrLines);
+      const validationStderrDelta =
+        typeof validationStderrLines !== "undefined" && typeof baselineForCompare.spec.commands.validation !== "undefined"
+          ? Math.abs(baselineForCompare.spec.commands.validation.stderrLines - validationStderrLines)
+          : 0;
+      const buildThresholdExceeded =
+        typeof reportingThresholds?.maxBuildStderrLineDelta === "number" &&
+        buildStderrDelta > reportingThresholds.maxBuildStderrLineDelta;
+      const validationThresholdExceeded =
+        typeof reportingThresholds?.maxValidationStderrLineDelta === "number" &&
+        validationStderrDelta > reportingThresholds.maxValidationStderrLineDelta;
+
+      if (buildChanged || validationChanged || buildThresholdExceeded || validationThresholdExceeded) {
         outcome = "regression";
-        summary = "Current run differs from baseline command outcomes.";
+        summary =
+          buildThresholdExceeded || validationThresholdExceeded
+            ? "Current run exceeds configured quality thresholds versus baseline."
+            : "Current run differs from baseline command outcomes.";
       }
     }
   }
@@ -211,9 +232,9 @@ export async function writeQualityArtifacts(input: WriteQualityArtifactsInput): 
           baselineExitCode: baselineForCompare?.spec.commands.build.exitCode,
           currentExitCode: build.exitCode,
           baselineStdoutLines: baselineForCompare?.spec.commands.build.stdoutLines,
-          currentStdoutLines: countLines(build.stdout),
+          currentStdoutLines: buildStdoutLines,
           baselineStderrLines: baselineForCompare?.spec.commands.build.stderrLines,
-          currentStderrLines: countLines(build.stderr)
+          currentStderrLines: buildStderrLines
         },
         validation:
           typeof validation !== "undefined"
@@ -221,9 +242,9 @@ export async function writeQualityArtifacts(input: WriteQualityArtifactsInput): 
                 baselineExitCode: baselineForCompare?.spec.commands.validation?.exitCode,
                 currentExitCode: validation.exitCode,
                 baselineStdoutLines: baselineForCompare?.spec.commands.validation?.stdoutLines,
-                currentStdoutLines: countLines(validation.stdout),
+                currentStdoutLines: validationStdoutLines ?? 0,
                 baselineStderrLines: baselineForCompare?.spec.commands.validation?.stderrLines,
-                currentStderrLines: countLines(validation.stderr)
+                currentStderrLines: validationStderrLines ?? 0
               }
             : undefined
       },
@@ -231,6 +252,15 @@ export async function writeQualityArtifacts(input: WriteQualityArtifactsInput): 
         firstUsefulLine(build.stderr) ? `build stderr: ${firstUsefulLine(build.stderr)}` : undefined,
         typeof validation !== "undefined" && firstUsefulLine(validation.stderr)
           ? `validation stderr: ${firstUsefulLine(validation.stderr)}`
+          : undefined,
+        typeof reportingThresholds?.maxBuildStderrLineDelta === "number" &&
+        typeof baselineForCompare?.spec.commands.build.stderrLines === "number"
+          ? `build stderr delta: ${Math.abs(baselineForCompare.spec.commands.build.stderrLines - buildStderrLines)} (threshold ${reportingThresholds.maxBuildStderrLineDelta})`
+          : undefined,
+        typeof reportingThresholds?.maxValidationStderrLineDelta === "number" &&
+        typeof validationStderrLines === "number" &&
+        typeof baselineForCompare?.spec.commands.validation?.stderrLines === "number"
+          ? `validation stderr delta: ${Math.abs(baselineForCompare.spec.commands.validation.stderrLines - validationStderrLines)} (threshold ${reportingThresholds.maxValidationStderrLineDelta})`
           : undefined
       ].filter((entry): entry is string => typeof entry === "string")
     }

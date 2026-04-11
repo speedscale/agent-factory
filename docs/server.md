@@ -62,6 +62,7 @@ GitHub PR webhook intake (optional):
 - auth options for GitHub API calls:
   - preferred: `GITHUB_APP_ID` + `GITHUB_APP_PRIVATE_KEY`
   - fallback: `GITHUB_BOT_TOKEN` or `GH_TOKEN`
+  - worker uses same credentials to publish/update PR quality comments
 
 GitHub poller mode (optional):
 
@@ -73,8 +74,10 @@ GitHub poller mode (optional):
 - polls open issues/PRs in `INTAKE_ALLOWED_REPOS`
 - loads repo manifests from `INTAKE_REPO_APP_MAP_FILE` or `INTAKE_REPO_APP_MAP_JSON`
 - queues runs for events that satisfy required labels
+- queues one run per onboarded quality target when target is not explicitly specified
 - posts one bot comment for missing-label or missing-manifest cases
 - GitHub auth uses same precedence as webhook intake (App first, token fallback)
+- worker posts/updates one PR quality comment per target run
 
 Worker trigger mode (optional):
 
@@ -92,6 +95,7 @@ Run operations:
 - list runs: `npm run runs -- list [--phase <phase>]`
 - retry a failed run: `npm run runs -- retry <run-name>`
 - queue onboarding baseline run: `npm run runs -- baseline examples/apps/demo-node/agentapp.yaml --target demo-node`
+- queue all targets from multi-target manifest: `npm run runs -- baseline examples/apps/demo-node-multi-target/agentapp.yaml`
 
 When Redis backend is enabled, intake and retry operations enqueue run names to Redis and workers consume from Redis.
 

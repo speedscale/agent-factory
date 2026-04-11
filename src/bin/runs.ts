@@ -60,14 +60,16 @@ function printUsage(): void {
   );
 }
 
-function resolveTarget(app: AgentApp, targetName?: string): { name: string; workdir: string; baselineRef?: string } {
+function resolveTargets(app: AgentApp, targetName?: string): Array<{ name: string; workdir: string; baselineRef?: string }> {
   const configuredTargets = app.spec.quality?.baseline?.targets ?? [];
 
   if (configuredTargets.length === 0) {
-    return {
-      name: app.metadata.name,
-      workdir: app.spec.repo.workdir
-    };
+    return [
+      {
+        name: app.metadata.name,
+        workdir: app.spec.repo.workdir
+      }
+    ];
   }
 
   if (targetName) {
@@ -76,23 +78,20 @@ function resolveTarget(app: AgentApp, targetName?: string): { name: string; work
       throw new Error(`quality target '${targetName}' not found in manifest`);
     }
 
-    return {
-      name: selected.name,
-      workdir: selected.workdir,
-      baselineRef: selected.baselineRef
-    };
+    return [
+      {
+        name: selected.name,
+        workdir: selected.workdir,
+        baselineRef: selected.baselineRef
+      }
+    ];
   }
 
-  if (configuredTargets.length > 1) {
-    throw new Error("manifest has multiple quality targets; provide --target <name>");
-  }
-
-  const selected = configuredTargets[0];
-  return {
+  return configuredTargets.map((selected) => ({
     name: selected.name,
     workdir: selected.workdir,
     baselineRef: selected.baselineRef
-  };
+  }));
 }
 
 async function loadAgentAppFromManifest(manifestPath: string): Promise<AgentApp> {
@@ -121,32 +120,37 @@ async function runBaseline(argv: string[]): Promise<void> {
   const targetName = getArg(argv, ["--target", "-t"]);
   const customId = getArg(argv, ["--id"]);
   const app = await loadAgentAppFromManifest(manifestPath);
-  const target = resolveTarget(app, targetName);
-  const issueId = customId ?? `baseline-${target.name}-${Date.now()}`;
+  const targets = resolveTargets(app, targetName);
 
-  const run = await createRunFromRequest({
-    app,
-    issue: {
-      id: issueId,
-      title: `Baseline capture: ${app.metadata.name}/${target.name}`,
-      body: "Onboarding baseline capture request",
-      url: undefined
-    },
-    request: {
-      source: "developer",
-      mode: "baseline"
-    },
-    qualityTarget: target
-  });
+  const runs = await Promise.all(
+    targets.map((target) => {
+      const baseId = customId ?? `baseline-${Date.now()}`;
+      const issueId = targets.length > 1 ? `${baseId}-${target.name}` : baseId;
+
+      return createRunFromRequest({
+        app,
+        issue: {
+          id: issueId,
+          title: `Baseline capture: ${app.metadata.name}/${target.name}`,
+          body: "Onboarding baseline capture request",
+          url: undefined
+        },
+        request: {
+          source: "developer",
+          mode: "baseline"
+        },
+        qualityTarget: target
+      });
+    })
+  );
 
   console.log(
     JSON.stringify(
       {
-        message: "baseline run queued",
-        run: run.metadata.name,
+        message: "baseline run(s) queued",
+        runs: runs.map((run) => run.metadata.name),
         app: app.metadata.name,
-        qualityTarget: target.name,
-        workdir: target.workdir
+        targets: targets.map((target) => ({ name: target.name, workdir: target.workdir }))
       },
       null,
       2

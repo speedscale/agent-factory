@@ -30,6 +30,9 @@ spec:
         - json
         - markdown
       failOnRegression: true
+      thresholds:
+        maxBuildStderrLineDelta: 50
+        maxValidationStderrLineDelta: 50
   build:
     install: make build
     test: make test

@@ -2,14 +2,14 @@
 
 Audience: Agent Factory developers and operators tracking Phase B execution outcomes.
 
-This is the concrete execution plan for the first real-ticket autonomous run.
+This document is historical context from the issue-first phase. Current operator flows are PR/manual QA request-first.
 
 ## Selected target
 
 - repo: `speedscale/microsvc`
 - issue: `#58`
 - issue URL: `https://github.com/speedscale/microsvc/issues/58`
-- intake payload: `examples/runs/microsvc-user-service-intake.json`
+- intake payload (legacy): `examples/runs/microsvc-user-service-intake.json`
 
 ## Why this issue
 
@@ -20,7 +20,7 @@ This is the concrete execution plan for the first real-ticket autonomous run.
 ## Execution steps
 
 1. start intake and worker in server mode
-2. submit `microsvc-user-service-intake.json` to intake API
+2. submit a QA intake payload to `/qa/runs` (legacy flow used `microsvc-user-service-intake.json`)
 3. wait for run phase to reach `succeeded` or `failed`
 4. collect evidence bundle from `artifacts/<run-name>/`
 5. evaluate against `docs/autonomy-mvp.md` rubric
