@@ -1,4 +1,5 @@
 {
   "speedscale/microsvc": "examples/apps/microsvc-user-service/agentapp.yaml",
-  "speedscale/demo": "examples/apps/demo-node/agentapp.yaml"
+  "speedscale/demo": "examples/apps/demo-node/agentapp.yaml",
+  "speedscale/outerspace-go": "examples/apps/outerspace-go/agentapp.yaml"
 }
