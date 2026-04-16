@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { AgentApp, AgentRun } from "../contracts/index.js";
 import type { QualityBaseline, QualityReport } from "../contracts/index.js";
+import type { GateReport, GateVerdict } from "../contracts/index.js";
 import { readJsonFile, resolveFromRepo, writeJsonFile } from "./io.js";
 
 interface CommandSnapshot {
@@ -62,12 +63,13 @@ function resolveBaselineStorePath(app: AgentApp, target: QualityTarget): string 
   return path.posix.join("artifacts", "baselines", `${ref.replace(/^\/+/, "")}.json`);
 }
 
-function resolveReportPaths(run: AgentRun): { baseline: string; json: string; markdown: string } {
+function resolveReportPaths(run: AgentRun): { baseline: string; json: string; markdown: string; gate: string } {
   const base = path.posix.join("artifacts", run.metadata.name);
   return {
     baseline: run.status.artifacts.baseline ?? path.posix.join(base, "baseline.json"),
     json: run.status.artifacts.qualityReportJson ?? path.posix.join(base, "quality-report.json"),
-    markdown: run.status.artifacts.qualityReportMarkdown ?? path.posix.join(base, "quality-report.md")
+    markdown: run.status.artifacts.qualityReportMarkdown ?? path.posix.join(base, "quality-report.md"),
+    gate: run.status.artifacts.gateReport ?? path.posix.join(base, "gate.json")
   };
 }
 
@@ -113,6 +115,120 @@ function firstUsefulLine(text: string): string | undefined {
   return line;
 }
 
+function evaluateGate(input: {
+  run: AgentRun;
+  mode: "comparison" | "baseline";
+  outcome: QualityReport["spec"]["outcome"];
+  summary: string;
+  baselineFound: boolean;
+  baselineUpdated: boolean;
+  build: CommandSnapshot;
+  validation?: CommandSnapshot;
+  baselineForCompare?: QualityBaseline;
+  buildStderrDelta?: number;
+  validationStderrDelta?: number;
+  reportPaths: { json: string; markdown: string };
+  baselineStorePath: string;
+}): GateReport {
+  const {
+    run,
+    mode,
+    outcome,
+    summary,
+    baselineFound,
+    baselineUpdated,
+    build,
+    validation,
+    baselineForCompare,
+    buildStderrDelta,
+    validationStderrDelta,
+    reportPaths,
+    baselineStorePath
+  } = input;
+
+  const reasonCodes: string[] = [];
+  let verdict: GateVerdict = "PASS";
+
+  if (mode === "comparison" && !baselineFound) {
+    verdict = "FAIL_NO_BASELINE";
+    reasonCodes.push("BASELINE_MISSING");
+  } else if (run.status.phase !== "succeeded") {
+    verdict = outcome === "regression" ? "FAIL_REGRESSION" : "FAIL_SYSTEM";
+    reasonCodes.push(outcome === "regression" ? "OUTCOME_REGRESSION" : "RUN_PHASE_NOT_SUCCEEDED");
+  } else if (outcome === "regression") {
+    verdict = "FAIL_REGRESSION";
+    reasonCodes.push("OUTCOME_REGRESSION");
+  }
+
+  if (mode === "baseline" && !baselineUpdated) {
+    verdict = "FAIL_SYSTEM";
+    reasonCodes.push("BASELINE_NOT_UPDATED");
+  }
+
+  if (build.exitCode !== 0) {
+    reasonCodes.push("BUILD_EXIT_NONZERO");
+  }
+
+  if (validation && validation.exitCode !== 0) {
+    reasonCodes.push("VALIDATION_EXIT_NONZERO");
+  }
+
+  const nextActions: string[] = [];
+  if (verdict === "FAIL_NO_BASELINE") {
+    nextActions.push("Run baseline mode first on known-good commit.");
+  }
+  if (reasonCodes.includes("BUILD_EXIT_NONZERO")) {
+    nextActions.push("Inspect build log and fix build/test command failures.");
+  }
+  if (reasonCodes.includes("VALIDATION_EXIT_NONZERO")) {
+    nextActions.push("Inspect validation log and fix replay or app startup failures.");
+  }
+  if (verdict === "FAIL_REGRESSION") {
+    nextActions.push("Compare replay outputs against baseline and inspect changed endpoints.");
+  }
+  if (nextActions.length === 0) {
+    nextActions.push("Gate passed; continue with PR review or merge policy checks.");
+  }
+
+  return {
+    apiVersion: "agents.speedscale.io/v1alpha1",
+    kind: "GateReport",
+    metadata: {
+      name: `gate-${run.metadata.name}`,
+      generatedAt: new Date().toISOString()
+    },
+    spec: {
+      runRef: {
+        name: run.metadata.name
+      },
+      appRef: {
+        name: run.spec.appRef.name
+      },
+      mode,
+      verdict,
+      blocking: verdict !== "PASS",
+      reasonCodes,
+      summary,
+      metrics: {
+        buildExitCode: build.exitCode,
+        validationExitCode: validation?.exitCode,
+        baselineBuildExitCode: baselineForCompare?.spec.commands.build.exitCode,
+        baselineValidationExitCode: baselineForCompare?.spec.commands.validation?.exitCode,
+        buildStderrLineDelta: buildStderrDelta,
+        validationStderrLineDelta: validationStderrDelta
+      },
+      evidencePaths: {
+        qualityReportJson: reportPaths.json,
+        qualityReportMarkdown: reportPaths.markdown,
+        buildLog: run.status.artifacts.buildLog,
+        validationLog: run.status.artifacts.validationReport,
+        baselineStorePath
+      },
+      nextActions
+    }
+  };
+}
+
 export async function writeQualityArtifacts(input: WriteQualityArtifactsInput): Promise<QualityReportOutcome> {
   const { run, app, build, validation } = input;
   const target = resolveQualityTarget(run, app);
@@ -120,6 +236,7 @@ export async function writeQualityArtifacts(input: WriteQualityArtifactsInput): 
   const baselineStorePath = resolveBaselineStorePath(app, target);
   const reportPaths = resolveReportPaths(run);
   const now = new Date().toISOString();
+  const baselineEligible = build.exitCode === 0 && (typeof validation === "undefined" || validation.exitCode === 0);
 
   const baselineDoc: QualityBaseline = {
     apiVersion: "agents.speedscale.io/v1alpha1",
@@ -165,12 +282,22 @@ export async function writeQualityArtifacts(input: WriteQualityArtifactsInput): 
   const validationStdoutLines = typeof validation !== "undefined" ? countLines(validation.stdout) : undefined;
   const validationStderrLines = typeof validation !== "undefined" ? countLines(validation.stderr) : undefined;
 
+  let baselineFound = false;
+  let baselineUpdated = false;
+
   if (mode === "baseline") {
-    await writeJsonFile(resolveFromRepo(baselineStorePath), baselineDoc);
-    summary = "Baseline updated from current run outputs.";
+    if (baselineEligible) {
+      await writeJsonFile(resolveFromRepo(baselineStorePath), baselineDoc);
+      summary = "Baseline updated from current run outputs.";
+      baselineUpdated = true;
+    } else {
+      outcome = "warning";
+      summary = "Baseline not updated because build/validation failed. Fix run, then rerun baseline mode.";
+    }
   } else {
     try {
       baselineForCompare = await readJsonFile<QualityBaseline>(resolveFromRepo(baselineStorePath));
+      baselineFound = true;
     } catch {
       outcome = "warning";
       summary = "No baseline found for this target. Run baseline mode during onboarding before enforcing comparison results.";
@@ -204,6 +331,15 @@ export async function writeQualityArtifacts(input: WriteQualityArtifactsInput): 
       }
     }
   }
+
+  const buildStderrDelta =
+    typeof baselineForCompare?.spec.commands.build.stderrLines === "number"
+      ? Math.abs(baselineForCompare.spec.commands.build.stderrLines - buildStderrLines)
+      : undefined;
+  const validationStderrDelta =
+    typeof validationStderrLines === "number" && typeof baselineForCompare?.spec.commands.validation?.stderrLines === "number"
+      ? Math.abs(baselineForCompare.spec.commands.validation.stderrLines - validationStderrLines)
+      : undefined;
 
   const report: QualityReport = {
     apiVersion: "agents.speedscale.io/v1alpha1",
@@ -255,21 +391,41 @@ export async function writeQualityArtifacts(input: WriteQualityArtifactsInput): 
           : undefined,
         typeof reportingThresholds?.maxBuildStderrLineDelta === "number" &&
         typeof baselineForCompare?.spec.commands.build.stderrLines === "number"
-          ? `build stderr delta: ${Math.abs(baselineForCompare.spec.commands.build.stderrLines - buildStderrLines)} (threshold ${reportingThresholds.maxBuildStderrLineDelta})`
+          ? `build stderr delta: ${buildStderrDelta ?? 0} (threshold ${reportingThresholds.maxBuildStderrLineDelta})`
           : undefined,
         typeof reportingThresholds?.maxValidationStderrLineDelta === "number" &&
         typeof validationStderrLines === "number" &&
         typeof baselineForCompare?.spec.commands.validation?.stderrLines === "number"
-          ? `validation stderr delta: ${Math.abs(baselineForCompare.spec.commands.validation.stderrLines - validationStderrLines)} (threshold ${reportingThresholds.maxValidationStderrLineDelta})`
+          ? `validation stderr delta: ${validationStderrDelta ?? 0} (threshold ${reportingThresholds.maxValidationStderrLineDelta})`
           : undefined
       ].filter((entry): entry is string => typeof entry === "string")
     }
   };
 
+  const gateReport = evaluateGate({
+    run,
+    mode,
+    outcome,
+    summary,
+    baselineFound,
+    baselineUpdated,
+    build,
+    validation,
+    baselineForCompare,
+    buildStderrDelta,
+    validationStderrDelta,
+    reportPaths: {
+      json: reportPaths.json,
+      markdown: reportPaths.markdown
+    },
+    baselineStorePath
+  });
+
   await Promise.all([
     writeJsonFile(resolveFromRepo(reportPaths.baseline), baselineForCompare ?? baselineDoc),
     writeJsonFile(resolveFromRepo(reportPaths.json), report),
-    writeFile(resolveFromRepo(reportPaths.markdown), toMarkdown(report), "utf8")
+    writeFile(resolveFromRepo(reportPaths.markdown), toMarkdown(report), "utf8"),
+    writeJsonFile(resolveFromRepo(reportPaths.gate), gateReport)
   ]);
 
   return { outcome, summary };

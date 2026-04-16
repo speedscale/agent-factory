@@ -62,7 +62,8 @@ export async function requeueRun(runName: string, force = false): Promise<AgentR
     status: {
       ...run.status,
       phase: "queued",
-      summary: "Manually requeued by operator."
+      summary: "Manually requeued by operator.",
+      lastTransitionAt: new Date().toISOString()
     }
   };
 

@@ -22,13 +22,22 @@ export interface CommandResult {
   stderr: string;
 }
 
+interface CommandExecutionOptions {
+  timeoutSeconds?: number;
+  maxNoOutputSeconds?: number;
+}
+
 function resolveRunJsonPath(runInput: string): string {
   return runInput.endsWith(".json")
     ? resolveFromRepo(runInput)
     : resolveFromRepo("artifacts", runInput, "run.json");
 }
 
-async function runShellCommand(command: string, cwd: string): Promise<CommandResult> {
+async function runShellCommand(command: string, cwd: string, options: CommandExecutionOptions = {}): Promise<CommandResult> {
+  const timeoutSeconds = typeof options.timeoutSeconds === "number" && options.timeoutSeconds > 0 ? options.timeoutSeconds : undefined;
+  const maxNoOutputSeconds =
+    typeof options.maxNoOutputSeconds === "number" && options.maxNoOutputSeconds > 0 ? options.maxNoOutputSeconds : undefined;
+
   return await new Promise<CommandResult>((resolve) => {
     let settled = false;
     const child = spawn(command, {
@@ -39,13 +48,70 @@ async function runShellCommand(command: string, cwd: string): Promise<CommandRes
 
     let stdout = "";
     let stderr = "";
+    let hardTimeout: NodeJS.Timeout | undefined;
+    let idleTimeout: NodeJS.Timeout | undefined;
+    let forceKillTimeout: NodeJS.Timeout | undefined;
+
+    const clearTimers = (): void => {
+      if (hardTimeout) {
+        clearTimeout(hardTimeout);
+        hardTimeout = undefined;
+      }
+
+      if (idleTimeout) {
+        clearTimeout(idleTimeout);
+        idleTimeout = undefined;
+      }
+
+      if (forceKillTimeout) {
+        clearTimeout(forceKillTimeout);
+        forceKillTimeout = undefined;
+      }
+    };
+
+    const beginShutdown = (reason: string): void => {
+      if (settled) {
+        return;
+      }
+
+      stderr = [stderr.trimEnd(), reason].filter((line) => line.length > 0).join("\n");
+      child.kill("SIGTERM");
+
+      forceKillTimeout = setTimeout(() => {
+        child.kill("SIGKILL");
+      }, 3000);
+    };
+
+    const resetIdleTimer = (): void => {
+      if (!maxNoOutputSeconds) {
+        return;
+      }
+
+      if (idleTimeout) {
+        clearTimeout(idleTimeout);
+      }
+
+      idleTimeout = setTimeout(() => {
+        beginShutdown(`command exceeded no-output timeout (${maxNoOutputSeconds}s): ${command}`);
+      }, maxNoOutputSeconds * 1000);
+    };
+
+    if (timeoutSeconds) {
+      hardTimeout = setTimeout(() => {
+        beginShutdown(`command exceeded timeout (${timeoutSeconds}s): ${command}`);
+      }, timeoutSeconds * 1000);
+    }
+
+    resetIdleTimer();
 
     child.stdout?.on("data", (chunk: Buffer) => {
       stdout += chunk.toString("utf8");
+      resetIdleTimer();
     });
 
     child.stderr?.on("data", (chunk: Buffer) => {
       stderr += chunk.toString("utf8");
+      resetIdleTimer();
     });
 
     child.on("error", (error) => {
@@ -54,6 +120,7 @@ async function runShellCommand(command: string, cwd: string): Promise<CommandRes
       }
 
       settled = true;
+      clearTimers();
       resolve({
         command,
         exitCode: 1,
@@ -68,6 +135,7 @@ async function runShellCommand(command: string, cwd: string): Promise<CommandRes
       }
 
       settled = true;
+      clearTimers();
       resolve({
         command,
         exitCode: exitCode ?? 1,
@@ -76,6 +144,61 @@ async function runShellCommand(command: string, cwd: string): Promise<CommandRes
       });
     });
   });
+}
+
+function firstUsefulLine(text: string): string {
+  const line = text
+    .split(/\r?\n/)
+    .map((entry) => entry.trim())
+    .find((entry) => entry.length > 0);
+
+  return line ?? "no output";
+}
+
+async function runShellCommandWithRetries(
+  command: string,
+  cwd: string,
+  options: CommandExecutionOptions,
+  retries: number,
+  stageName: string
+): Promise<CommandResult> {
+  const maxAttempts = Math.max(1, Math.floor(retries) + 1);
+  const failures: CommandResult[] = [];
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const result = await runShellCommand(command, cwd, options);
+    if (result.exitCode === 0) {
+      if (attempt === 1) {
+        return result;
+      }
+
+      return {
+        ...result,
+        stderr: [result.stderr.trimEnd(), `${stageName} succeeded on attempt ${attempt}/${maxAttempts}`]
+          .filter((line) => line.length > 0)
+          .join("\n")
+      };
+    }
+
+    failures.push(result);
+  }
+
+  const final = failures[failures.length - 1];
+  if (failures.length <= 1) {
+    return final;
+  }
+
+  const attemptSummary = failures
+    .slice(0, -1)
+    .map((failure, index) => `attempt ${index + 1}/${maxAttempts} failed (exit ${failure.exitCode}): ${firstUsefulLine(failure.stderr || failure.stdout)}`)
+    .join("\n");
+
+  return {
+    ...final,
+    stderr: [final.stderr.trimEnd(), `previous ${stageName} attempts:\n${attemptSummary}`]
+      .filter((line) => line.length > 0)
+      .join("\n")
+  };
 }
 
 function shellQuote(value: string): string {
@@ -148,7 +271,8 @@ async function ensureWorkdirExists(workspaceCwd: string): Promise<void> {
 
 async function prepareWorkspace(context: RunnerContext): Promise<void> {
   if (context.sourceDir) {
-    await mkdir(context.workspaceDir, { recursive: true });
+    await rm(context.workspaceDir, { recursive: true, force: true });
+    await mkdir(path.dirname(context.workspaceDir), { recursive: true });
     const excludedSegments = new Set([".git", "node_modules", "artifacts", ".work"]);
 
     await cp(context.sourceDir, context.workspaceDir, {
@@ -264,7 +388,16 @@ export async function runBuildStage(context: RunnerContext): Promise<{ result: C
   const workspaceCwd = path.join(context.workspaceDir, context.app.spec.repo.workdir);
   await ensureWorkdirExists(workspaceCwd);
   const command = context.app.spec.build.test;
-  const result = await runShellCommand(command, workspaceCwd);
+  const result = await runShellCommandWithRetries(
+    command,
+    workspaceCwd,
+    {
+      timeoutSeconds: context.app.spec.build.timeoutSeconds,
+      maxNoOutputSeconds: context.app.spec.build.maxNoOutputSeconds
+    },
+    context.app.spec.build.retries ?? 0,
+    "build"
+  );
 
   await Promise.all([
     writeCommandLog(resolveFromRepo(context.run.status.artifacts.buildLog ?? path.posix.join("artifacts", context.run.metadata.name, "build.log")), result),
@@ -276,6 +409,7 @@ export async function runBuildStage(context: RunnerContext): Promise<{ result: C
     status: {
       ...context.run.status,
       phase: result.exitCode === 0 ? "validating" : "failed",
+      lastTransitionAt: new Date().toISOString(),
       summary:
         result.exitCode === 0
           ? `Build command succeeded: ${command}`

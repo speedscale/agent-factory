@@ -42,6 +42,7 @@ export interface AgentRunResult {
       validationReport?: string;
       qualityReportJson?: string;
       qualityReportMarkdown?: string;
+      gateReport?: string;
       result: string;
     };
   };

@@ -108,11 +108,13 @@ async function initializeArtifactFiles(artifactRoot: string): Promise<void> {
     writeFile(path.join(artifactRoot, "validation.log"), "", "utf8"),
     writeFile(path.join(artifactRoot, "quality-report.json"), "", "utf8"),
     writeFile(path.join(artifactRoot, "quality-report.md"), "", "utf8"),
+    writeFile(path.join(artifactRoot, "gate.json"), "", "utf8"),
     writeFile(path.join(artifactRoot, "result.json"), "", "utf8")
   ]);
 }
 
 export async function createRunFromRequest(input: IntakeRequest): Promise<AgentRun> {
+  const now = new Date().toISOString();
   const runName = createRunName(input.app.metadata.name, input.issue.id);
   const artifactRoot = ensureRelativePath("artifacts", runName);
   const workspaceRoot = ensureRelativePath(".work", runName);
@@ -149,6 +151,7 @@ export async function createRunFromRequest(input: IntakeRequest): Promise<AgentR
     },
     status: {
       phase: "queued",
+      lastTransitionAt: now,
       artifacts: {
         evidence: ensureRelativePath(artifactRoot, "evidence.json"),
         triage: ensureRelativePath(artifactRoot, "triage.json"),
@@ -159,6 +162,7 @@ export async function createRunFromRequest(input: IntakeRequest): Promise<AgentR
         validationReport: ensureRelativePath(artifactRoot, "validation.log"),
         qualityReportJson: ensureRelativePath(artifactRoot, "quality-report.json"),
         qualityReportMarkdown: ensureRelativePath(artifactRoot, "quality-report.md"),
+        gateReport: ensureRelativePath(artifactRoot, "gate.json"),
         result: ensureRelativePath(artifactRoot, "result.json")
       }
     }

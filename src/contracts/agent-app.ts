@@ -45,12 +45,18 @@ export interface AgentApp {
       install: string;
       test: string;
       start: string;
+      timeoutSeconds?: number;
+      maxNoOutputSeconds?: number;
+      retries?: number;
     };
     validate: {
       proxymock: {
         dataset: string;
         mode: string;
         command: string;
+        timeoutSeconds?: number;
+        maxNoOutputSeconds?: number;
+        retries?: number;
         service?: {
           command?: string;
           host?: string;

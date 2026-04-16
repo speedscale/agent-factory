@@ -164,6 +164,12 @@ Optional claim expiration override:
 PATH="$(pwd)/.work/demo-fixture/bin:$PATH" npm run worker -- --source .work/demo-fixture --claim-ttl-ms 900000
 ```
 
+Optional stale active-run watchdog:
+
+```bash
+PATH="$(pwd)/.work/demo-fixture/bin:$PATH" npm run worker -- --source .work/demo-fixture --max-active-phase-ms 900000
+```
+
 Use `--once` for one-shot processing in tests/CI:
 
 ```bash

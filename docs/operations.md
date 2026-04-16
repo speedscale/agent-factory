@@ -19,6 +19,7 @@ From worker (`GET /metrics` when `WORKER_METRICS_PORT` is set):
 - `metrics.loops`
 - `metrics.lastBatchSize`
 - `metrics.runClaimsSkipped` (filesystem backend only)
+- `metrics.staleRunsFailed` (auto-failed stale active runs)
 
 ## Dashboard query examples
 
@@ -72,7 +73,8 @@ curl -sS http://127.0.0.1:9090/metrics
 
 1. Check worker `/metrics` (`loops` increasing, `runsProcessed` static indicates idle or blocked queue).
 2. Check queue backend configuration (`RUN_QUEUE_BACKEND`, `REDIS_URL`, `REDIS_QUEUE_KEY`).
-3. Restart worker deployment if metrics endpoint is stale.
+3. Enable stale-run watchdog by setting `WORKER_MAX_ACTIVE_PHASE_MS` (or `--max-active-phase-ms`) so old `planned/building/validating` runs are auto-failed.
+4. Restart worker deployment if metrics endpoint is stale.
 
 ## SLO starter suggestions
 

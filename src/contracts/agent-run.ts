@@ -47,6 +47,7 @@ export interface AgentRun {
   status: {
     phase: AgentRunPhase;
     summary?: string;
+    lastTransitionAt?: string;
     artifacts: {
       evidence?: string;
       triage?: string;
@@ -57,6 +58,7 @@ export interface AgentRun {
       validationReport?: string;
       qualityReportJson?: string;
       qualityReportMarkdown?: string;
+      gateReport?: string;
       result?: string;
     };
   };

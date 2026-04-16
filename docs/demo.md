@@ -5,13 +5,19 @@ Audience: Agent Factory users/operators.
 Run the full local loop with:
 
 ```bash
-npm run demo
+npm run loop-demo
 ```
 
 This command:
 
-- creates a demo `AgentRun` from the sample app and issue
-- writes a structured `AgentPlan`
-- runs the build stage in an isolated workspace
-- runs proxymock validation with a local shim
+- runs baseline mode first to seed the baseline contract
+- runs comparison mode with a forced replay failure to prove regression detection
+- runs comparison mode again with a passing replay to prove recovery
+- applies command guardrails (timeout, no-output timeout, retry) in build and validation
 - leaves artifacts under `artifacts/<run-name>/`
+
+For a single bot-orchestrated run from an intake file:
+
+```bash
+npm run bot -- --intake examples/runs/demo-node-intake.json
+```

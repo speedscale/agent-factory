@@ -28,6 +28,24 @@ This plan is intentionally forward-looking only.
 
 ## Active Roadmap
 
+### Rapid Proof Loop: Baseline -> Regression -> Recovery
+
+Status: in progress
+
+Objective:
+
+- make the inner loop visible immediately with one local command and inspectable artifacts
+
+Deliverables:
+
+- one-command demo path (`npm run loop-demo`) that executes baseline, failing comparison, and passing comparison
+- deterministic replay shim that proves the compare/report path detects and clears a regression
+- explicit guardrails for command execution (timeout, no-output timeout, retry)
+
+Exit criteria:
+
+- fresh local run produces three runs with quality outcomes that show baseline seed, regression detection, and recovery pass
+
 ### Phase 1: Bot Identity and PR/Request Intake
 
 Status: in progress
