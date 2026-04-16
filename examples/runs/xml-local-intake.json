@@ -1,0 +1,71 @@
+{
+  "app": {
+    "apiVersion": "agents.speedscale.io/v1alpha1",
+    "kind": "AgentApp",
+    "metadata": {
+      "name": "xml-demo"
+    },
+    "spec": {
+      "repo": {
+        "provider": "github",
+        "url": "https://example.local/xml-demo",
+        "defaultBranch": "main",
+        "workdir": "."
+      },
+      "quality": {
+        "baseline": {
+          "strategy": "single",
+          "targets": [
+            {
+              "name": "app",
+              "workdir": ".",
+              "baselineRef": "baseline/local/xml-demo/app"
+            }
+          ]
+        },
+        "reporting": {
+          "formats": [
+            "json",
+            "markdown"
+          ],
+          "failOnRegression": true,
+          "thresholds": {
+            "maxBuildStderrLineDelta": 20,
+            "maxValidationStderrLineDelta": 20
+          }
+        }
+      },
+      "build": {
+        "install": "python3 -m pip install -r requirements.txt",
+        "test": "python3 -m py_compile app.py",
+        "start": "python3 app.py"
+      },
+      "validate": {
+        "proxymock": {
+          "dataset": "xml-demo",
+          "mode": "replay-with-mocks",
+          "command": "proxymock replay --in ./proxymock/recorded-2025-09-30_00-37-17.824877Z --test-against localhost:8080 --fail-if requests.response-pct!=100",
+          "service": {
+            "command": "python3 app.py",
+            "host": "localhost",
+            "port": 8080,
+            "startupTimeoutSeconds": 30
+          },
+          "timeoutSeconds": 180,
+          "maxNoOutputSeconds": 30,
+          "retries": 0
+        }
+      }
+    }
+  },
+  "issue": {
+    "id": "manual-xml-demo-run",
+    "title": "Manual XML demo quality run",
+    "body": "Run replay quality gate against XML demo app.",
+    "url": "https://example.local/manual/xml-demo"
+  },
+  "request": {
+    "source": "developer",
+    "mode": "baseline"
+  }
+}

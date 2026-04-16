@@ -59,6 +59,7 @@ export async function writeRunResultArtifact(
         validationReport: run.status.artifacts.validationReport,
         qualityReportJson: run.status.artifacts.qualityReportJson,
         qualityReportMarkdown: run.status.artifacts.qualityReportMarkdown,
+        gateReport: run.status.artifacts.gateReport,
         result: resultPath
       }
     }

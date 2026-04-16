@@ -132,6 +132,9 @@ properties:
           - failed
       summary:
         type: string
+      lastTransitionAt:
+        type: string
+        format: date-time
       artifacts:
         type: object
         properties:
@@ -152,6 +155,8 @@ properties:
           qualityReportJson:
             type: string
           qualityReportMarkdown:
+            type: string
+          gateReport:
             type: string
           result:
             type: string

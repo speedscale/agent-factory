@@ -6,7 +6,7 @@ import { loadRunnerContext, runBuildStage } from "../lib/runner.js";
 import { loadValidatorContext, runValidationStage } from "../lib/validator.js";
 import { readJsonFile, resolveFromRepo, writeJsonFile } from "../lib/io.js";
 import { createRunQueueFromEnv, type RunQueue } from "../lib/run-queue.js";
-import { RUN_CLAIM_FILENAME } from "../lib/run-admin.js";
+import { RUN_CLAIM_FILENAME, listRuns, writeRun } from "../lib/run-admin.js";
 import { writeRunResultArtifact } from "../lib/run-result.js";
 import { writeQualityArtifacts } from "../lib/quality-report.js";
 import { publishPrQualityComment } from "../lib/pr-quality-comment.js";
@@ -17,6 +17,7 @@ interface WorkerOptions {
   once: boolean;
   pollMs: number;
   claimTtlMs: number;
+  maxActivePhaseMs: number;
 }
 
 interface WorkerMetrics {
@@ -29,6 +30,7 @@ interface WorkerMetrics {
   runsProcessed: number;
   runsFailed: number;
   runClaimsSkipped: number;
+  staleRunsFailed: number;
   lastRun?: string;
   lastRunAt?: string;
 }
@@ -63,7 +65,8 @@ async function updateRun(runName: string, phase: AgentRun["status"]["phase"], su
     status: {
       ...run.status,
       phase,
-      summary
+      summary,
+      lastTransitionAt: new Date().toISOString()
     }
   };
 
@@ -156,6 +159,7 @@ async function processRun(runName: string, sourceDir?: string): Promise<void> {
         status: {
           ...validationResult.run.status,
           phase: "failed",
+          lastTransitionAt: new Date().toISOString(),
           summary: `Quality regression detected: ${qualityOutcome.summary}`
         }
       }
@@ -247,8 +251,10 @@ function parseOptions(argv: string[]): WorkerOptions {
   const once = hasFlag(argv, ["--once"]);
   const pollArg = getArg(argv, ["--poll-ms", "-p"]);
   const claimTtlArg = getArg(argv, ["--claim-ttl-ms"]);
+  const maxActivePhaseArg = getArg(argv, ["--max-active-phase-ms"]);
   const pollMs = Number(pollArg ?? "2000");
   const claimTtlMs = Number(claimTtlArg ?? "900000");
+  const maxActivePhaseMs = Number(maxActivePhaseArg ?? process.env.WORKER_MAX_ACTIVE_PHASE_MS ?? "0");
 
   if (!Number.isFinite(pollMs) || pollMs <= 0) {
     throw new Error("--poll-ms must be a positive integer");
@@ -258,12 +264,73 @@ function parseOptions(argv: string[]): WorkerOptions {
     throw new Error("--claim-ttl-ms must be a non-negative integer");
   }
 
+  if (!Number.isFinite(maxActivePhaseMs) || maxActivePhaseMs < 0) {
+    throw new Error("--max-active-phase-ms must be a non-negative integer");
+  }
+
   return {
     sourceDir,
     once,
     pollMs: Math.floor(pollMs),
-    claimTtlMs: Math.floor(claimTtlMs)
+    claimTtlMs: Math.floor(claimTtlMs),
+    maxActivePhaseMs: Math.floor(maxActivePhaseMs)
   };
+}
+
+function parseTransitionTime(run: AgentRun): number | undefined {
+  const value = run.status.lastTransitionAt;
+  if (!value) {
+    return undefined;
+  }
+
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) {
+    return undefined;
+  }
+
+  return parsed;
+}
+
+async function failStaleActiveRuns(maxActivePhaseMs: number): Promise<number> {
+  if (maxActivePhaseMs <= 0) {
+    return 0;
+  }
+
+  const runs = await listRuns();
+  const now = Date.now();
+  let staleRunsFailed = 0;
+
+  for (const run of runs) {
+    if (run.status.phase !== "planned" && run.status.phase !== "building" && run.status.phase !== "validating") {
+      continue;
+    }
+
+    const transitionTime = parseTransitionTime(run);
+    if (typeof transitionTime === "undefined") {
+      continue;
+    }
+
+    const ageMs = now - transitionTime;
+    if (ageMs <= maxActivePhaseMs) {
+      continue;
+    }
+
+    const nextRun: AgentRun = {
+      ...run,
+      status: {
+        ...run.status,
+        phase: "failed",
+        summary: `Run exceeded max active phase age (${maxActivePhaseMs}ms) while in '${run.status.phase}'.`,
+        lastTransitionAt: new Date().toISOString()
+      }
+    };
+
+    await writeRun(run.metadata.name, nextRun);
+    await writeRunResultArtifact(nextRun);
+    staleRunsFailed += 1;
+  }
+
+  return staleRunsFailed;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -330,7 +397,8 @@ async function runWorker(queue: RunQueue, options: WorkerOptions): Promise<void>
     lastBatchSize: 0,
     runsProcessed: 0,
     runsFailed: 0,
-    runClaimsSkipped: 0
+    runClaimsSkipped: 0,
+    staleRunsFailed: 0
   };
 
   const metricsServer = startWorkerMetricsServer(metrics);
@@ -341,6 +409,7 @@ async function runWorker(queue: RunQueue, options: WorkerOptions): Promise<void>
   try {
     while (true) {
       metrics.loops += 1;
+      metrics.staleRunsFailed += await failStaleActiveRuns(options.maxActivePhaseMs);
       const queuedRuns = await queue.listQueuedRuns();
       metrics.lastBatchSize = queuedRuns.length;
       if (queuedRuns.length > 0) {

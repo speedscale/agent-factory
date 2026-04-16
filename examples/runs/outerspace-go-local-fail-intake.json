@@ -1,0 +1,62 @@
+{
+  "app": {
+    "apiVersion": "agents.speedscale.io/v1alpha1",
+    "kind": "AgentApp",
+    "metadata": {
+      "name": "outerspace-go"
+    },
+    "spec": {
+      "repo": {
+        "provider": "github",
+        "url": "https://github.com/speedscale/outerspace-go",
+        "defaultBranch": "main",
+        "workdir": "."
+      },
+      "quality": {
+        "baseline": {
+          "strategy": "single",
+          "targets": [
+            {
+              "name": "app",
+              "workdir": ".",
+              "baselineRef": "baseline/speedscale/outerspace-go/app"
+            }
+          ]
+        },
+        "reporting": {
+          "formats": [
+            "json",
+            "markdown"
+          ],
+          "failOnRegression": true,
+          "thresholds": {
+            "maxBuildStderrLineDelta": 50,
+            "maxValidationStderrLineDelta": 50
+          }
+        }
+      },
+      "build": {
+        "install": "go mod download",
+        "test": "make test",
+        "start": "make run"
+      },
+      "validate": {
+        "proxymock": {
+          "dataset": "outerspace-go",
+          "mode": "replay-with-mocks",
+          "command": "false"
+        }
+      }
+    }
+  },
+  "issue": {
+    "id": "manual-outerspace-go-fail-run",
+    "title": "Manual outerspace-go forced fail run",
+    "body": "Force validation failure to demonstrate blocking gate output.",
+    "url": "https://example.local/manual/outerspace-go/fail"
+  },
+  "request": {
+    "source": "developer",
+    "mode": "comparison"
+  }
+}

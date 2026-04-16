@@ -21,10 +21,28 @@ It takes a validation request (usually from a pull request), runs reproducible q
 
 ```bash
 npm install
-npm run demo
+npm run loop-demo
 ```
 
-Artifacts land in `artifacts/<run-name>/`, including terminal summary `result.json` and quality report outputs.
+This runs a visible baseline -> regression -> recovery sequence. Artifacts land in `artifacts/<run-name>/`, including terminal summary `result.json` and quality report outputs.
+
+Run a single local bot-orchestrated run (no GitHub/webhook required):
+
+```bash
+npm run bot
+```
+
+Optional: simulate replay failure quickly:
+
+```bash
+npm run bot -- --proxymock-mode fail
+```
+
+Check gate verdict and fail CI on blocking result:
+
+```bash
+npm run gate:check -- --run <run-name>
+```
 
 ## Quick Run (Always-On Compose)
 
@@ -51,5 +69,6 @@ Submit quality runs through intake API `POST /qa/runs` using payloads in `exampl
 - `validation.log`
 - `quality-report.json`
 - `quality-report.md`
+- `gate.json`
 - `evidence.json`
 - `result.json`

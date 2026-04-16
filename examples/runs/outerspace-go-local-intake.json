@@ -1,0 +1,68 @@
+{
+  "app": {
+    "apiVersion": "agents.speedscale.io/v1alpha1",
+    "kind": "AgentApp",
+    "metadata": {
+      "name": "outerspace-go"
+    },
+    "spec": {
+      "repo": {
+        "provider": "github",
+        "url": "https://github.com/speedscale/outerspace-go",
+        "defaultBranch": "main",
+        "workdir": "."
+      },
+      "quality": {
+        "trigger": {
+          "pullRequest": true,
+          "manualRequest": true,
+          "prePrRequest": false
+        },
+        "baseline": {
+          "strategy": "single",
+          "targets": [
+            {
+              "name": "app",
+              "workdir": ".",
+              "baselineRef": "baseline/speedscale/outerspace-go/app",
+              "command": "make integration-test"
+            }
+          ]
+        },
+        "reporting": {
+          "formats": [
+            "json",
+            "markdown"
+          ],
+          "failOnRegression": true,
+          "thresholds": {
+            "maxBuildStderrLineDelta": 50,
+            "maxValidationStderrLineDelta": 50
+          }
+        }
+      },
+      "build": {
+        "install": "go mod download",
+        "test": "make test",
+        "start": "make run"
+      },
+      "validate": {
+        "proxymock": {
+          "dataset": "outerspace-go",
+          "mode": "replay-with-mocks",
+          "command": "make integration-test"
+        }
+      }
+    }
+  },
+  "issue": {
+    "id": "manual-outerspace-go-run",
+    "title": "Manual outerspace-go quality run",
+    "body": "Run proxymock-based quality loop against local outerspace-go repository.",
+    "url": "https://example.local/manual/outerspace-go"
+  },
+  "request": {
+    "source": "developer",
+    "mode": "baseline"
+  }
+}
