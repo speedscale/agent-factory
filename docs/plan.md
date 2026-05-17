@@ -53,15 +53,16 @@ This unblocks automated Spec phase — the Planner can ask "what is broken and b
 
 Owner: proxymock team. Blocks: Planner automation.
 
-### 2 — Isolated branch per run
+### 2 — Isolated worktree per run
 
-The Worker currently writes fixes directly to the live source file. Production requires:
+The Worker currently writes fixes directly to the operator's live source tree. Production requires:
 
-- `git clone` + `git checkout -b agent/<run-name>` at run start
-- Worker operates on the branch copy
-- Deployer opens the PR from that branch
+- `git worktree add <workdir>/repo agent/<ticket-slug>` from `main` at Worker phase start, before any file is modified
+- Worker's `sourceDir` is set to the worktree path, not the operator's checkout
+- Deployer pushes the branch and opens the PR from it
+- After merge, `git worktree remove` + branch delete; stale unmerged worktrees older than 7 days are flagged for cleanup
 
-This maps to the `policy.autoBranch` flag already in `AgentApp`. Wire it up.
+Rule is now codified in `AGENTS.md`. Wire up the implementation: add `setupWorktree(repoPath, workdir, branchName)` in `llm-engine.ts` that runs `git worktree add`, returns the worktree path, and sets `sourceDir` to it before the Worker loop starts. Add a `cleanupAgentWorktrees(repoPath)` utility that removes merged worktrees and flags stale ones.
 
 ### 3 — Test harness scaffold generator
 

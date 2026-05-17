@@ -25,6 +25,8 @@ Four planes must stay explicit:
 - **Proxymock evidence is a hard gate.** Do not mark a run succeeded without proxymock regression replay exit `0`.
 - **Minimal fixes only.** Workers write the minimal change that addresses the root cause. No cleanup, no refactoring beyond the fix.
 - **No private Speedscale dependencies.** Keep the repo portable. Internal integrations belong in configuration, not source.
+- **Worktree per run.** Every agent run creates a `git worktree` at `<workdir>/repo` on a new branch `agent/<ticket-slug>` (e.g. `agent/s-10886-radar-perf`) branched from `main`. The Worker writes all fixes into the worktree directory, never into the operator's live checkout. The worktree is created at Worker phase start, before any file is modified.
+- **Branch cleanup.** Agent branches are deleted and their worktrees removed after the PR merges. Stale unmerged agent branches older than 7 days must be flagged in the run store for operator review and deleted if no open PR exists. The naming prefix `agent/` is reserved; no human work should land on these branches.
 
 ## Deployment models — what changes between them
 
