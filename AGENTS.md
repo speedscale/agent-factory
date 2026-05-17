@@ -2,55 +2,67 @@
 
 ## Purpose
 
-This repository is a public reference architecture for an autonomous quality-validation workflow centered on the inner loop:
+Agent Factory is an LLM-driven software-delivery loop:
 
-`request -> baseline -> compare -> report`
+**Spec → Generate → Validate → Deploy → Observe**
 
-Keep changes aligned with that goal. Prefer small, explicit contracts over broad platform abstractions.
+The LLM is grounded in real captured traffic (RRPairs via proxymock). Every fix is validated against production evidence before a human approves it. The system ships as a Helm chart alongside `speedscale-operator` for BYOC customers, and runs as an internal service for Speedscale Cloud (SOS).
 
-## Design Rules
+## Design boundaries
 
-- Keep the boundary between app, agent, and validation planes explicit.
-- Do not introduce private Speedscale repository dependencies.
-- Prefer doc-first changes until the first runnable golden path is clearly defined.
-- Treat `proxymock` validation as evidence, not as an optional extra.
-- Favor portable examples that can be understood by external users.
+Four planes must stay explicit:
 
-## Initial Implementation Direction
+- **Engine plane** — LLM orchestration (Planner, Worker). Lives in `src/lib/llm-engine.ts`. The engine proposes; it does not decide.
+- **Tool plane** — proxymock MCP + engine-native tools (read, search, write, run). The LLM calls tools; tools execute deterministically and return results.
+- **Control plane** — intake API, run queue, run store, artifact tree. App-agnostic; reads `AgentApp` manifests, not repo-specific logic.
+- **Context plane** — RRPairs, metrics, logs, source code. Customer-owned. Enters LLM prompts only via the tool plane, never directly.
 
-- The first implementation should target one simple demo application.
-- The agent should operate against an app manifest rather than hardcoded repo logic.
-- The initial system should emit artifacts for every step: request, baseline target, build logs, validation result, quality report.
+## Core rules
 
-## Repository Conventions
+- **Reproduce before generating.** The Planner must name the measurement metric and confirm it is measurable from the snapshot before the Worker writes any code. No metric = no fix.
+- **Identical harness methodology.** The reproduce and confirm harnesses must use the same mock, same measurement, same threshold. Changing methodology between phases invalidates the comparison.
+- **Cluster filter on snapshots.** Always pass `--filter '(cluster IS "prod")'` (or the correct cluster) when pulling snapshots. Wrong cluster = empty or wrong signal.
+- **Proxymock evidence is a hard gate.** Do not mark a run succeeded without proxymock regression replay exit `0`.
+- **Minimal fixes only.** Workers write the minimal change that addresses the root cause. No cleanup, no refactoring beyond the fix.
+- **No private Speedscale dependencies.** Keep the repo portable. Internal integrations belong in configuration, not source.
 
-- Put reference docs in `docs/`.
-- Put sample onboarding manifests in `examples/apps/`.
-- Put user-facing examples and sample issues in `examples/issues/`.
-- Put schemas and machine-readable contracts in `schemas/`.
+## Deployment models — what changes between them
 
-## Versioning Policy
+The code is identical. Configuration differs:
 
-- Version bumps are CI-managed on merge to `main`.
-- Contributors should not manually bump `package.json` in feature PRs unless explicitly doing a release-oriented change.
-- CI currently applies a patch bump automatically after merges to `main`.
-- Use semantic versioning intent for release planning:
-  - patch: docs-only, fixes, minor behavior hardening
-  - minor: new user-visible capability or contract extension
-  - major: breaking contract change
+| | Cloud (SOS) | BYOC |
+|---|---|---|
+| `AgentApp.spec.engine.endpoint` | Anthropic direct | Customer-configured |
+| `AgentApp.spec.repo.url` | Speedscale's GitLab | Customer's git mirror |
+| Helm release operator | Speedscale | Customer |
 
-## Multi-Repo Agent Instruction Resolution
+## Repository conventions
 
-When Agent Factory is used to change another repository:
+- `src/lib/llm-engine.ts` — LLM agent loop, tool implementations, Planner/Worker phases
+- `src/lib/planner.ts` — deterministic planner stub (fallback when no LLM key configured)
+- `src/contracts/` — typed contracts: AgentRun, AgentApp, AgentPlan, QualityReport
+- `docs/` — reference docs; update when behavior changes
+- `examples/apps/` — sample AgentApp manifests
+- `schemas/` — machine-readable YAML schemas for contracts
 
-1. Read this repo's `AGENTS.md` and the target repo's `AGENTS.md` before planning changes.
-2. Apply the stricter rule when instructions overlap.
-3. If instructions conflict and cannot both be satisfied, stop and ask for operator decision.
+## Multi-repo instruction resolution
+
+When Agent Factory drives changes in a target repo:
+
+1. Read this repo's `AGENTS.md` and the target repo's `AGENTS.md` before planning.
+2. Stricter constraint wins when both can be satisfied.
+3. If constraints conflict and cannot both be satisfied, stop and request operator direction.
 4. In PR summaries, state which instruction files were applied.
 
-## Out of Scope For Early Commits
+## Versioning
 
-- full production CI/CD design
-- multi-cluster deployment automation
-- private internal integrations
-- broad framework experiments without a clear role in the inner loop
+- Version bumps are CI-managed on merge to `main`.
+- Do not manually bump `package.json` in feature PRs.
+- Semantic intent: patch = docs/fixes, minor = new capability or contract extension, major = breaking contract change.
+
+## Out of scope
+
+- Multi-cluster deployment automation (post-MVP)
+- Private internal integrations in source (use config)
+- LLM fine-tuning or model training
+- Replacing proxymock as the validation evidence layer

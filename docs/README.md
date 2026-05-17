@@ -1,36 +1,38 @@
 # Documentation Index
 
-Use this index to find the right docs by audience.
+## Primary entry points
 
-## Primary Entry Points
+- `docs/users.md` — start here if you run or operate Agent Factory
+- `docs/developers.md` — start here if you build or change Agent Factory
 
-- `docs/users.md` - start here if you run/operate Agent Factory
-- `docs/developers.md` - start here if you build/change Agent Factory
+## Architecture and design
 
-## For Agent Factory Users
+- `docs/architecture.md` — full system design: loop phases, planes, deployment models, contracts
+- `docs/engine.md` — LLM engine: tool catalog, agent loop, Planner/Worker phases, configuration
+- `docs/plan.md` — active roadmap and next steps
 
-- `docs/users.md` - primary user guide (run modes, deployment, submission, operations)
-- `docs/server.md` - detailed local/server runbook
-- `docs/kubernetes.md` - Kubernetes deployment details
-- `docs/cluster-bot-runtime.md` - webhook/slack bot runtime on Kubernetes
-- `docs/operations.md` - metrics thresholds and remediation runbook
-- `docs/microsvc.md` - microsvc walkthrough
+## Deployment
 
-## For Agent Factory Developers
+- `docs/users.md` — runtime modes (local, server, Docker Compose, Kubernetes)
+- `docs/server.md` — local/server runbook detail
+- `docs/kubernetes.md` — Kubernetes deployment
+- `docs/cluster-bot-runtime.md` — webhook/Slack bot runtime on Kubernetes
+- `docs/operations.md` — metrics thresholds and remediation runbook
 
-- `docs/developers.md` - primary developer guide (architecture, contracts, roadmap, release)
-- `docs/architecture.md` - detailed system architecture
-- `docs/plan.md` - execution roadmap and current priorities
-- `schemas/qa-intake.schema.yaml` - canonical PR/manual validation intake contract
-- `schemas/quality-baseline.schema.yaml` - baseline artifact schema
-- `schemas/quality-report.schema.yaml` - quality comparison report schema
-- `docs/autonomy-mvp.md` - real-ticket autonomy contract and rubric
-- `docs/phase-b-first-run.md` - first-live-run record and operator decisions
-- `docs/history.md` - implementation history snapshot
-- `docs/release.md` - release checklist
+## Autonomy and quality contracts
 
-## Quick Rule
+- `docs/autonomy-mvp.md` — real-ticket intake contract and pass/fail rubric
+- `schemas/` — machine-readable YAML schemas for all contracts
 
-- If you are operating the system: start with `docs/users.md`.
-- If you are changing the system: start with `docs/developers.md`.
-- Use remaining docs as detailed references, not first-stop onboarding.
+## History and release
+
+- `docs/history.md` — implementation history
+- `docs/phase-b-first-run.md` — first live run record
+- `docs/release.md` — release checklist
+
+## Quick rule
+
+- Operating the system → `docs/users.md`
+- Changing the system → `docs/developers.md`
+- Understanding the LLM engine → `docs/engine.md`
+- Understanding the architecture → `docs/architecture.md`
