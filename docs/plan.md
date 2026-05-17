@@ -1,157 +1,123 @@
-# Execution Plan
+# Roadmap
 
-Audience: Agent Factory developers/contributors.
+Audience: Agent Factory developers and contributors.
 
 ## Goal
 
-Operate a bot-first, multi-repo quality factory that runs:
+Ship an LLM-driven fix loop — **Spec → Generate → Validate → Deploy → Observe** — that works reliably on Speedscale's own services (SOS/Cloud) and then packages as a Helm chart for BYOC customers.
 
-`request -> baseline -> quality checks -> compare -> report/comment`
+The SOS manual spike (2026-05-17) proved the loop works end-to-end. The outstanding work is automation, hardening, and productization.
 
-across these repositories:
+---
 
-- `speedscale/microsvc`
-- `speedscale/demo`
+## Active: complete the SOS spike
 
-Deferred scope (re-enable later after app installation expansion):
+### S-10885 observe step
 
-- `kenahrens/crm-demo`
-- `kenahrens/newboots`
+MR-356 (Gmail concurrency fix) is open. After merge:
 
-## Current Focus
+1. Pull a new prod snapshot 24–72h post-deploy with `--filter '(cluster IS "prod")'`
+2. Confirm Gmail 429 rate on `gmail.googleapis.com/messages.get` dropped to near zero
+3. Store the post-deploy snapshot as the new evidence baseline
 
-This plan is intentionally forward-looking only.
+Exit criteria: 429 rate ≤ 1% in the post-deploy snapshot.
 
-- Architecture details live in `docs/architecture.md`.
-- Policy/instruction requirements live in `AGENTS.md`.
-- This file tracks active execution phases and acceptance criteria.
+### S-10886 API performance
 
-## Active Roadmap
+Radar `/api/pipeline/opportunities` and `/api/directory` endpoints are slow. Work this using the same reproduce → fix → confirm workflow:
 
-### Rapid Proof Loop: Baseline -> Regression -> Recovery
+1. Pull fresh radar prod snapshot
+2. Identify P95 latency baseline for the affected endpoints
+3. Reproduce the latency in a harness
+4. Implement caching or query optimization
+5. Confirm P95 dropped below threshold
 
-Status: in progress
+### S-10884 usr-mgmt unblock
 
-Objective:
+Waiting on Shaun to instrument `usr-mgmt` in the prod cluster. Once done:
 
-- make the inner loop visible immediately with one local command and inspectable artifacts
+1. Pull prod snapshot with `--filter '(cluster IS "prod")'`
+2. Run data survey (originally planned)
 
-Deliverables:
+---
 
-- one-command demo path (`npm run loop-demo`) that executes baseline, failing comparison, and passing comparison
-- deterministic replay shim that proves the compare/report path detects and clears a regression
-- explicit guardrails for command execution (timeout, no-output timeout, retry)
+## Near-term: unblock automation
 
-Exit criteria:
+### 1 — `summarize_traffic` proxymock MCP tool
 
-- fresh local run produces three runs with quality outcomes that show baseline seed, regression detection, and recovery pass
+The single most labour-intensive manual step in the SOS spike was reading individual RRPair files to count 429s and identify burst patterns. This should be a single MCP tool call.
 
-### Phase 1: Bot Identity and PR/Request Intake
+Required output: per-endpoint error rates (sorted by count), status code breakdown, burst detection (N requests within T ms), slowest endpoints by P95, cluster-scoped.
 
-Status: in progress
+This unblocks automated Spec phase — the Planner can ask "what is broken and by how much" without hand-parsing snapshots.
 
-Objective:
+Owner: proxymock team. Blocks: Planner automation.
 
-- receive PR and explicit QA validation requests as a dedicated bot identity, not an operator user
+### 2 — Isolated branch per run
 
-Deliverables:
+The Worker currently writes fixes directly to the live source file. Production requires:
 
-- GitHub App (or bot token) configured across all target repos
-- webhook receiver for PR events with repo allowlist
-- canonical intake mapping to `schemas/qa-intake.schema.yaml`
-- bot-authored PR comment smoke test in each repo
+- `git clone` + `git checkout -b agent/<run-name>` at run start
+- Worker operates on the branch copy
+- Deployer opens the PR from that branch
 
-Exit criteria:
+This maps to the `policy.autoBranch` flag already in `AgentApp`. Wire it up.
 
-- opening or updating a PR in any target repo creates quality intake artifacts
-- first automated response in each repo is authored by bot identity
+### 3 — Test harness scaffold generator
 
-### Phase 2: Repo Onboarding and Baseline Contracts
+Given a named metric and the source code context, the LLM should generate the reproduce harness in one pass rather than iteratively. The SOS spike showed this takes ~5–7 tool iterations; a good scaffold prompt reduces this to 1–2.
 
-Status: pending
+Write a dedicated prompt for harness generation, separate from the main Planner prompt.
 
-Objective:
+### 4 — Design review
 
-- remove repo-specific logic from workers by onboarding each repo and defining baseline scope via manifests
+Half-day session: Ken + Matt + one customer-facing person. Review SOS spike learnings, confirm §12 priority order, decide BYOC Helm chart scope and timeline.
 
-Deliverables:
+---
 
-- one `AgentApp` manifest per target repo
-- per-repo quality targets (single-project or multi-project directories)
-- per-target install/build/test/start/validate commands
-- baseline capture metadata and comparison policy per target
+## Medium-term: BYOC productization
 
-Exit criteria:
+### 5 — `validate_candidate` MCP tool
 
-- in-scope repos run baseline and PR comparisons from manifest-only configuration
+Orchestrates build → mock deps → replay → diff in one call. Returns a structured `ValidationResult`. Collapses the most error-prone code path in the Validate phase.
 
-### Phase 3: Quality Signal Engine
+### 6 — Helm chart + CRDs
 
-Status: pending
+Single chart installed alongside `speedscale-operator`. Includes:
+- `AgentRun` CRD
+- Intake API deployment
+- Worker deployment
+- Run store (PVC default; S3-compatible configurable)
+- RBAC (viewer + approver roles, OIDC)
+- Engine configuration (kind, model, endpoint, auth secret ref)
 
-Objective:
+Three sizing profiles: small (1 worker), medium (3 workers), HA (3 workers + Redis queue).
 
-- make deterministic pass/warn/fail quality decisions with explicit operator-readable rationale
+### 7 — Customer OIDC + Review UI
 
-Deliverables:
+Review UI (React SPA) where operators see run status, QualityReport, and reproduce/confirm harness output, and approve the PR. Auth via customer OIDC.
 
-- quality states: `pass`, `warning`, `regression`
-- confidence and policy gates before final status reporting
-- structured fallback comment template when baseline coverage is missing
+### 8 — Engine option 2 + 3 validation
 
-Exit criteria:
+Spike generic LLM SDK (OpenAI-compatible, targets Azure) and private-LLM path (vLLM in-cluster). Measure fix-acceptance rate vs Option 1 (Claude SDK). Decide quality floor before committing to option 3 for air-gapped customers.
 
-- every processed request lands in one quality state with a recorded reason
+---
 
-### Phase 4: PR Quality Reporting Pipeline
+## Deferred
 
-Status: pending
+- `extract_for_prompt` (DLP-aware RRPair extraction for LLM prompts) — needed for full BYOC privacy guarantee
+- Load mode on `replay_traffic` — load testing phase in Validate
+- `generate_rrpair_from_spec` + `coverage_check` — closes the loop for new-feature work
+- Cross-deploy filter on `search_traffic` — needed for high-confidence post-deploy observe
+- Multi-repo app support (`AgentApp.dependencies`)
 
-Objective:
+---
 
-- produce PR quality outcomes end-to-end with verifiable baseline comparison
+## Measurement targets
 
-Deliverables:
-
-- baseline artifact(s) captured per onboarded target
-- PR build/test/validation execution
-- quality diff report tied to run artifacts
-- bot-authored PR comment with evidence links
-
-Exit criteria:
-
-- at least one successful PR quality report loop in `speedscale/microsvc`
-- at least one successful PR quality report loop in one additional target repo
-
-### Phase 5: Reliability and Throughput
-
-Status: pending
-
-Objective:
-
-- make the quality path consistently runnable under repeated PR/request intake
-
-Deliverables:
-
-- stable staging runtime profile (queue, worker, retries, timeouts)
-- failure classification surfaced in run artifacts
-- operational checks for stuck runs and backlog growth
-
-Exit criteria:
-
-- ten consecutive PR/request events complete without infrastructure-level manual recovery
-
-## Operational Rules For This Phase
-
-- For PR/request events: run checks, compare to baseline, and comment with quality evidence.
-- If baseline coverage is missing: post bot comment explaining onboarding/baseline gap and next action.
-- Do not post personal-user-authored automation output in target repos.
-
-## Immediate Iteration Backlog
-
-1. complete PR-centric bot identity setup and verify bot-authored comment on each target repo
-2. enable webhook or polling intake for in-scope repos with allowlist enforcement
-3. add or finalize baseline target manifests for `speedscale/microsvc` and `speedscale/demo`
-4. implement fallback comment path for missing baseline coverage
-5. run one real `microsvc` PR through full quality loop and record artifacts
-6. run one real PR from a second target repo through full quality loop
+| Metric | Target |
+|---|---|
+| Time from issue → confirmed fix (LLM) | < 10 minutes |
+| Fix acceptance rate (human approves MR) | > 60% |
+| False-positive regression rate (replay gate) | < 5% |
+| Post-deploy bug recurrence rate | < 10% |

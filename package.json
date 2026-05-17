@@ -21,7 +21,8 @@
     "planner": "tsx src/bin/planner.ts",
     "runner": "tsx src/bin/runner.ts",
     "validator": "tsx src/bin/validator.ts",
-    "run-to-pr": "tsx src/bin/run-to-pr.ts"
+    "run-to-pr": "tsx src/bin/run-to-pr.ts",
+    "llm-run": "tsx src/bin/llm-run.ts"
   },
   "engines": {
     "node": ">=20"
@@ -32,6 +33,7 @@
     "typescript": "^5.8.0"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.96.0",
     "redis": "^5.8.2",
     "yaml": "^2.8.3"
   }

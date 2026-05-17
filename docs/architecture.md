@@ -1,166 +1,246 @@
-# Reference Architecture
+# Architecture
 
-Audience: Agent Factory developers/contributors.
+Audience: Agent Factory developers and contributors.
 
-## Overview
+## The loop
 
-Agent Factory is designed around one quality-first inner loop:
+Five phases. Each has a clear input, output, and tool surface. The loop closes from Observe back to Spec.
 
-`request -> select scope -> run checks -> compare baseline -> report`
+```
+Spec → Generate → Validate → Deploy → Observe
+ ↑                                        │
+ └────────────── feedback ───────────────┘
+```
 
-The control plane must stay app-agnostic by reading a declarative `AgentApp` manifest instead of embedding repository-specific logic.
+### Spec (+ Reproduce)
 
-## System Planes
+Input: issue, alert, or PR trigger.
 
-### App Plane
+The Planner inventories RRPair coverage for the affected service via `search_traffic`, then:
 
-The app plane owns:
+1. Names the **measurement metric** — the specific, quantifiable property the bug violates. Examples: *peak concurrent calls to X > 10*, *error rate on /api/sync > 5%*, *P95 latency > 500ms*.
+2. Confirms the metric is measurable from the available snapshot evidence.
+3. Writes and runs a **reproduce harness** against unpatched code. Records the baseline measurement.
 
-- application source
-- tests and build configuration
-- runtime manifests
-- app onboarding manifest (`AgentApp`)
+If the metric cannot be reproduced from the snapshot, the Planner files a coverage-gap triage and halts. It does not proceed to Generate.
 
-The app plane should not contain orchestration logic for the agent itself.
+Output: evidence inventory, metric definition, baseline measurement, reproduce harness.
 
-### Agent Plane
+### Generate
 
-The agent plane owns:
+Input: Planner output (metric, hypothesis, target file, baseline harness).
 
-- validation request intake (PR/manual/agent)
-- run queueing and state transitions
-- scope selection and baseline targeting
-- isolated workspace execution
-- artifact persistence and status reporting
+The Worker reads the relevant source files, writes the minimal fix, and saves it to the target file.
 
-The agent does not fix code; it evaluates quality and reports regressions.
+Output: patched source file, rationale.
 
-### Validation Plane
+### Validate
 
-The validation plane owns:
+Two jobs:
 
-- replay datasets
-- mock/replay command configuration
-- replay execution (`proxymock`)
-- pass/fail evidence
+1. **Confirm metric** — run the same reproduce harness against the patched code. The metric must now be within the acceptable bound. This is the primary gate. Reproduce and confirm use identical methodology (same harness, same mock, same threshold).
+2. **Regression replay** — start mock for downstream deps, replay inbound RRPairs via proxymock, diff with `compare_rrpair_files`. Unexpected status or payload divergence fails the gate.
 
-In practice, Speedscale capture and proxymock replay provide the request/response evidence chain from incident discovery through fix validation.
+Output: `QualityReport` with before/after metric, regression diff, confirm harness output.
 
-Validation is the proof layer that determines whether the candidate fix behaved as expected.
+### Deploy
 
-## Runtime Modes
+Deployer opens a PR/MR. PR body contains: spec, rationale, QualityReport, reproduce + confirm harness outputs, link to run artifacts.
 
-### Local Mode
+### Observe
 
-Use local mode for rapid iteration and deterministic demos:
+24–72h post-deploy: pull a new production snapshot and confirm the bug metric dropped to acceptable levels. This closes the loop. The post-deploy snapshot becomes the new evidence baseline.
 
-- run `npm run demo` for a complete golden path
-- optional stage-by-stage commands: `intake-api`, `planner`, `runner`, `validator`
-- artifacts are written to `artifacts/<run-name>/`
+---
 
-### Server Mode
+## System planes
 
-Use server mode for continuous, API-driven automation:
+### Engine plane
 
-- `intake-api` accepts quality run requests (`POST /qa/runs`)
-- `intake-api` exposes run status queries (`GET /runs`, `GET /runs/{name}`)
-- `intake-api` exposes queue/run metrics (`GET /metrics`)
-- `intake-api` supports optional token auth for run and metrics endpoints (`INTAKE_API_TOKEN`)
-- `worker` polls queued runs and executes plan/build/validate
-- external webhook/slack adapters can translate events into canonical intake requests
-- `worker` can expose optional local metrics endpoint when `WORKER_METRICS_PORT` is set
-- both services are stateless; run state is stored in artifact files
-- queue backend is selected via `RUN_QUEUE_BACKEND` (`filesystem` or `redis`)
+The LLM orchestrator. Runs as Planner (Spec phase) then Worker (Generate + Validate phases).
 
-This is the minimal server architecture required to migrate from CLI-only operation to a daemonized agent model.
+```typescript
+interface Engine {
+  plan(spec: SpecInput, tools: ToolCatalog): Promise<AgentPlan>
+  generate(plan: AgentPlan, tools: ToolCatalog): Promise<CandidatePatch>
+  summarize(run: AgentRun): Promise<QualityReport>
+}
+```
 
-### Cluster Bot Mode
+Three backend options behind one interface:
 
-Use cluster bot mode for ticket-driven automation across repositories:
+| Option | Backend | When to use |
+|---|---|---|
+| 1 | Claude Agent SDK (Anthropic / Bedrock) | Default; best quality |
+| 2 | Generic LLM SDK (OpenAI-compatible) | Azure or vendor-agnostic |
+| 3 | Self-hosted vLLM / TGI | Air-gapped, regulated |
 
-- GitHub webhooks and Slack commands feed a canonical intake event
-- intake queues runs and workers execute as short-lived Kubernetes Jobs
-- automation credentials are bot-scoped (not operator personal identity)
-- completed Jobs are garbage-collected with TTL/history limits
+Implementation: `src/lib/llm-engine.ts`. See `docs/engine.md` for tool catalog and agent loop detail.
 
-See `docs/cluster-bot-runtime.md` for deployment profile and identity contract.
+### Tool plane
 
-## Control Flow
+The LLM's only interface to the outside world. All tool calls are deterministic and logged.
 
-1. Intake receives a validation request and app manifest, then writes `run.json` in `queued` phase.
-2. Worker resolves the baseline target(s) for the repository/workdir scope.
-3. Worker prepares isolated workspace and runs configured quality checks.
-4. Worker executes configured validation commands (for example proxymock replay).
-5. Worker compares current outputs to baseline artifacts.
-6. Worker writes structured quality report artifacts and updates run phase.
-7. Artifacts remain available for audit and reproducibility.
+**Engine-native tools** (implemented in `llm-engine.ts`):
 
-## Component Contracts
+| Tool | Role |
+|---|---|
+| `read_file` | Read source files |
+| `search_code` | Grep across JS/TS source |
+| `list_snapshot_dir` | List RRPair files by host |
+| `read_rrpair` | Read a single RRPair markdown file |
+| `write_file` | Write generated harnesses or patches |
+| `run_script` | Execute a Node.js script and return output |
+| `emit_plan` | Terminal: Planner outputs structured AgentPlan |
+| `emit_patch` | Terminal: Worker outputs fix + confirm result |
+
+**proxymock MCP tools** (shipped in proxymock binary, called via MCP):
+
+| Tool | Role |
+|---|---|
+| `search_traffic` | Evidence search by service, time, status, URL |
+| `pull_remote_recording` | Snapshot filtered traffic as RRPairs |
+| `mock_server_start/stop` | Stand in for downstream deps |
+| `replay_traffic` | Replay RRPairs against the patched service |
+| `compare_rrpair_files` | Structured regression diff |
+| `record_traffic_start/stop` | Capture fresh traffic when coverage is short |
+
+Planned MCP additions (not yet shipped): `summarize_traffic`, `validate_candidate`, `extract_for_prompt`, load mode on `replay_traffic`. See `docs/plan.md`.
+
+### Control plane
+
+App-agnostic orchestration. Reads `AgentApp` manifests; contains no repo-specific logic.
+
+- **Intake API** — normalizes triggers (issue, PR, alert, Slack, direct API) into `AgentRun` CRD
+- **Run queue** — filesystem or Redis backend; workers poll and claim runs
+- **Run store** — S3-compatible object store or PVC; holds artifact tree per run
+- **Review UI** — React SPA showing run status, QualityReport, reproduce/confirm output; human approves PR from here
+- **RBAC** — OIDC; two roles: `viewer`, `approver`
+- **Audit log** — append-only; every state transition and tool call is logged
+
+### Context plane
+
+Customer-owned data. Never leaves the VPC. Reaches the LLM only via tool-plane calls, after DLP masking.
+
+- Speedscale RRPair store (captured traffic)
+- Metrics (Speedscale + Prometheus)
+- Logs (Loki, Elasticsearch, Splunk)
+- Source code + SCM (git mirror, PR target)
+
+---
+
+## Deployment models
+
+### Speedscale Cloud
+
+Speedscale operates the agent factory against its own services (SOS — Speedscale on Speedscale).
+
+- Agent factory runs in Speedscale's k8s cluster
+- LLM: Anthropic direct (Speedscale's API key)
+- Traffic: Speedscale's own proxymock captures
+- Code: Speedscale's GitLab repos
+- PRs: Speedscale's GitLab
+
+This is the validation environment. Features proven here ship to BYOC.
+
+### Customer BYOC
+
+Customer installs via Helm alongside `speedscale-operator`. Everything stays in the customer's VPC.
+
+```bash
+helm install agent-factory speedscale/agent-factory \
+  --set engine.kind=claude-sdk \
+  --set engine.auth.secretRef=anthropic-api-key \
+  --set scm.provider=github \
+  --set scm.auth.secretRef=github-pat
+```
+
+```yaml
+engine:
+  kind: claude-sdk          # claude-sdk | generic-llm | private-llm
+  model: claude-sonnet-4-7
+  endpoint: https://api.anthropic.com
+  auth: secretRef/anthropic-api-key
+```
+
+Air-gapped customers use `kind: private-llm` with an in-cluster vLLM deployment. The system behaves identically; quality may differ until open-weights models improve on coding tasks.
+
+---
+
+## Contracts
 
 ### `AgentApp`
 
-Each app manifest declares:
+Declares everything the agent needs to work on a service:
 
-- repository location and default branch
-- one or more project working directories for quality scope
-- install/test/start commands
-- validation commands and baseline target contract
-- reporting policy (fail on regression, output formats)
+- repo provider, URL, default branch, workdir
+- build/install/start commands
+- validation commands and proxymock dataset
+- quality policy (fail on regression, auto-branch, auto-MR)
+- engine configuration (kind, model, endpoint)
 
 ### `AgentRun`
 
-Each run captures:
+Captures the lifecycle of one fix attempt:
 
-- request source and trigger context (PR/manual/agent)
-- workspace root and branch intent
-- baseline target(s)
-- lifecycle phase (`queued`, `planned`, `building`, `validating`, `succeeded`, `failed`)
+- trigger source (issue/PR/alert/manual)
+- issue spec (title, body, URL)
+- workspace root and branch
+- phase: `queued → planned → building → validating → succeeded/failed`
 - artifact pointers
 
-### Artifact Set
+### `AgentPlan`
 
-Each run should emit:
+Output of the Planner phase:
 
-- `request.json`
-- `app.json`
-- `run.json`
-- `evidence.json`
-- `baseline.json`
-- `build.log`
-- `validation.log`
-- `quality-report.json`
-- `quality-report.md`
-- `result.json`
+- summary and hypothesis
+- metric and baseline measurement
+- steps (reproduce → fix → confirm → report)
+- target file and function
 
-## Reliability and Safety Guardrails
+### `QualityReport`
 
-- **Deterministic workers**: execute one run at a time per worker process.
-- **Isolated workspace**: run commands under `.work/<run-name>`.
-- **Run claiming**: workers create a per-run claim file before processing to avoid double execution.
-- **Idempotent intake**: run identity is derived from app name + request scope + source id.
-- **Evidence-first completion**: do not mark success without validation command exit `0`.
-- **App-agnostic control plane**: onboarding data lives in app manifest, not worker code.
+Output of the Validate phase:
 
-## Deployment Topology (Server)
+- before/after metric values
+- regression replay pass/fail
+- structured diff
+- confirm harness output
 
-For early server deployments:
+---
 
-- 1 intake API instance
-- 1+ worker instances (single-run concurrency per process)
-- shared persistent volume or object-backed artifact store
+## Artifact tree per run
 
-In Kubernetes terms, this maps to one `Deployment` for API and one `Deployment` for workers, both mounting the same run store (or using a future external state backend).
+```
+artifacts/<run-name>/
+  run.json              ← AgentRun lifecycle state
+  plan.json             ← AgentPlan (Planner output)
+  reproduce.mjs         ← baseline measurement harness
+  confirm.mjs           ← same harness against patched code
+  patch.json            ← Worker output (fix, rationale)
+  build.log
+  validation.log
+  quality-report.json
+  quality-report.md
+  result.json
+```
 
-## What This Architecture Guarantees
+---
 
-- You can run and test the factory locally end-to-end.
-- You can run and test the same flow as long-lived services.
-- Every phase emits inspectable artifacts that prove what happened.
+## Reliability guardrails
 
-## Known Early Limitations
+- **Reproduce is a hard gate.** Planner halts and files a triage comment if metric is not measurable from available evidence.
+- **Deterministic workers** — one run at a time per worker process; per-run claim file prevents double execution.
+- **Isolated workspace** — Worker operates in `.work/<run-name>/`; never writes to live source except via `write_file` tool (which is logged).
+- **Evidence-first completion** — run is not marked `succeeded` without proxymock replay exit `0` and confirm harness exit `0`.
+- **Agent-generated harnesses are tagged** — labeled in QualityReport; require human approval before joining the regression baseline.
+- **Humans gate merges** — auto-merge is opt-in per `AgentApp`, behind a quality threshold.
 
-- Current run store is file-based (single shared filesystem assumption).
-- Current planner/runner are deterministic stubs for reference behavior.
-- Queue semantics are polling-based, not event-stream based.
+---
 
-These are acceptable for reference architecture and local/server validation of the inner loop.
+## Known limitations (current)
+
+- Run store is file-based; assumes shared filesystem. Object-store backend is planned.
+- proxymock MCP `summarize_traffic` not yet implemented — Planner reads raw RRPair files.
+- Worker writes fixes directly to source; isolated-branch mode (git clone + branch per run) is next.
+- No load-test phase yet (`replay_traffic` load mode not implemented).

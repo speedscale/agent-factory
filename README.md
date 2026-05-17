@@ -1,74 +1,72 @@
 # Agent Factory
 
-Agent Factory is a reference architecture for a quality validation loop:
+Agent Factory runs a complete software-delivery loop — **Spec → Generate → Validate → Deploy → Observe** — driven by an LLM grounded in real captured traffic. Every fix is validated against production RRPairs via `proxymock` before a human approves it.
 
-`onboard -> baseline -> compare -> report`
+## What it does
 
-It takes a validation request (usually from a pull request), runs reproducible quality checks, compares results to baseline, and emits artifacts for operator review.
+1. **Spec** — ingests an issue, alert, or PR; pulls a snapshot of captured traffic; identifies the measurable metric the bug violates; confirms the bug is reproducible.
+2. **Generate** — LLM reads the relevant source files and writes a minimal fix.
+3. **Validate** — runs the same reproduce harness against the patched code to confirm the metric is within bound; runs regression replay via proxymock.
+4. **Deploy** — opens a PR/MR with the fix, harness output, and quality report as evidence.
+5. **Observe** — post-deploy snapshot comparison closes the loop.
 
-## Start Here
+## Deployment models
 
-- **I want to run Agent Factory:** see `docs/users.md`
-- **I want to build/change Agent Factory:** see `docs/developers.md`
-- **I need the full doc index:** see `docs/README.md`
+| | Speedscale Cloud | Customer BYOC |
+|---|---|---|
+| Traffic data | Speedscale-hosted | Customer's proxymock BYOC |
+| LLM endpoint | Anthropic (Speedscale key) | Customer's choice (Anthropic, Bedrock, Azure, self-hosted) |
+| Code access | Speedscale's repos | Customer's git mirror |
+| Deployment | Speedscale-operated | Helm chart in customer's cluster |
+| Data boundary | Speedscale VPC | Customer VPC — data never leaves |
 
-## Audience Split
+## Quick start — LLM fix loop
 
-- **Users (operators/integrators):** deployment, run submission, metrics, troubleshooting, and day-2 operations
-- **Developers (contributors):** architecture, contracts, roadmap, release flow, and implementation history
+```bash
+npm install
+export ANTHROPIC_API_KEY=<your-key>
 
-## Quick Run (Local Golden Path)
+npm run llm-run -- \
+  --title "Service X returning 429 errors on /api/sync" \
+  --body  "Errors cluster in short bursts suggesting a concurrency problem." \
+  --snapshot /path/to/snapshot/inner-dir \
+  --source  /path/to/service/src \
+  --workdir /tmp/llm-run-work \
+  --verbose
+```
+
+Artifacts land in `--workdir`: `plan.json` (Planner output), `reproduce.mjs`, `confirm.mjs`, `patch.json`.
+
+## Quick start — validation loop only
+
+Run the existing quality baseline → regression → recovery demo:
 
 ```bash
 npm install
 npm run loop-demo
 ```
 
-This runs a visible baseline -> regression -> recovery sequence. Artifacts land in `artifacts/<run-name>/`, including terminal summary `result.json` and quality report outputs.
-
-Run a single local bot-orchestrated run (no GitHub/webhook required):
-
-```bash
-npm run bot
-```
-
-Optional: simulate replay failure quickly:
-
-```bash
-npm run bot -- --proxymock-mode fail
-```
-
-Check gate verdict and fail CI on blocking result:
+Check gate verdict for a specific run:
 
 ```bash
 npm run gate:check -- --run <run-name>
 ```
 
-## Quick Run (Always-On Compose)
+## Documentation
 
-```bash
-cp .env.server.example .env.server
-docker compose --env-file .env.server -f docker-compose.server.yml up -d
-docker compose --env-file .env.server -f docker-compose.server.yml ps
-```
+- **[docs/architecture.md](docs/architecture.md)** — full system design, planes, deployment models
+- **[docs/engine.md](docs/engine.md)** — LLM engine: tool catalog, agent loop, Planner/Worker phases
+- **[docs/plan.md](docs/plan.md)** — active roadmap and next steps
+- **[docs/users.md](docs/users.md)** — operators: deployment, run submission, operations
+- **[docs/developers.md](docs/developers.md)** — contributors: development workflow, contracts, release
 
-## Quick Run (Kubernetes)
+## Core artifacts per run
 
-```bash
-kubectl apply -k examples/deploy/kubernetes/base
-kubectl apply -k examples/deploy/kubernetes/overlays/redis
-```
-
-Submit quality runs through intake API `POST /qa/runs` using payloads in `examples/runs/` (comparison and baseline examples are included).
-
-## Core Artifacts Per Run
-
-- `run.json`
-- `baseline.json`
-- `build.log`
-- `validation.log`
-- `quality-report.json`
-- `quality-report.md`
-- `gate.json`
-- `evidence.json`
-- `result.json`
+| Artifact | Description |
+|---|---|
+| `plan.json` | Planner output: metric, baseline, hypothesis, target file |
+| `reproduce.mjs` | Self-contained harness measuring the bug metric on unpatched code |
+| `confirm.mjs` | Same harness run against patched code — the primary fix gate |
+| `patch.json` | Worker output: fix, rationale, confirm result |
+| `quality-report.json/.md` | Regression replay diff against baseline RRPairs |
+| `result.json` | Run summary with phase outcomes |
