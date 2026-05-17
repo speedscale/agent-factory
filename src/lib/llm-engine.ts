@@ -30,7 +30,7 @@ const execAsync = promisify(exec);
 const apiKey = process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY_DO_NOT_USE;
 const MODEL = "claude-sonnet-4-6";
 const MAX_TOKENS = 8192;
-const MAX_LOOPS = 30;
+const MAX_LOOPS = parseInt(process.env.ENGINE_MAX_LOOPS ?? "50", 10);
 
 export interface EmitPlanResult {
   plan: AgentPlan;
@@ -45,6 +45,9 @@ export interface EmitPatchResult {
   rationale: string;
   harnessPath?: string;
   confirmResult?: string;
+  /** Set when a worktree was created for this run. */
+  worktreePath?: string;
+  branchName?: string;
 }
 
 export interface LLMRunOptions {
@@ -52,6 +55,50 @@ export interface LLMRunOptions {
   sourceDir?: string;
   workDir?: string;
   verbose?: boolean;
+  /** Absolute path to the git repo root. When set, Worker creates a worktree before writing any files. */
+  repoDir?: string;
+  /** Branch name for the worktree, e.g. "agent/s-10886-radar-perf". Required when repoDir is set. */
+  branchName?: string;
+}
+
+export interface WorktreeResult {
+  worktreePath: string;
+  branchName: string;
+  /** sourceDir remapped into the worktree (replaces opts.sourceDir for the Worker) */
+  sourceDir: string;
+}
+
+/**
+ * Creates a git worktree at <workDir>/repo on a new branch from main.
+ * Returns the worktree path and the remapped sourceDir.
+ */
+export async function setupWorktree(
+  repoDir: string,
+  workDir: string,
+  branchName: string,
+  originalSourceDir: string
+): Promise<WorktreeResult> {
+  const worktreePath = path.join(workDir, "repo");
+  // Detect default branch (main or master)
+  const { stdout: branchOut } = await execAsync(`git -C ${JSON.stringify(repoDir)} symbolic-ref refs/remotes/origin/HEAD 2>/dev/null || git -C ${JSON.stringify(repoDir)} rev-parse --abbrev-ref HEAD`);
+  const defaultBranch = branchOut.trim().replace(/^.*\//, '') || "main";
+  await execAsync(`git -C ${JSON.stringify(repoDir)} worktree add -b ${JSON.stringify(branchName)} ${JSON.stringify(worktreePath)} ${defaultBranch}`);
+  // Remap sourceDir: replace the repoDir prefix with the worktree path
+  const rel = path.relative(repoDir, originalSourceDir);
+  const remappedSourceDir = path.join(worktreePath, rel);
+  return { worktreePath, branchName, sourceDir: remappedSourceDir };
+}
+
+/**
+ * Removes a worktree and deletes the branch. Safe to call even if worktree doesn't exist.
+ */
+export async function teardownWorktree(repoDir: string, worktreePath: string, branchName: string): Promise<void> {
+  try {
+    await execAsync(`git -C ${JSON.stringify(repoDir)} worktree remove --force ${JSON.stringify(worktreePath)}`);
+  } catch { /* already gone */ }
+  try {
+    await execAsync(`git -C ${JSON.stringify(repoDir)} branch -D ${JSON.stringify(branchName)}`);
+  } catch { /* already gone */ }
 }
 
 const client = new Anthropic({ apiKey });
@@ -74,7 +121,7 @@ async function toolReadFile(filePath: string): Promise<string> {
 async function toolSearchCode(pattern: string, dir: string): Promise<string> {
   try {
     const { stdout } = await execAsync(
-      `grep -rn --include="*.js" --include="*.ts" --include="*.mjs" -m 50 ${JSON.stringify(pattern)} ${JSON.stringify(dir)} 2>/dev/null || true`
+      `grep -rEn --include="*.js" --include="*.ts" --include="*.mjs" -m 50 ${JSON.stringify(pattern)} ${JSON.stringify(dir)} 2>/dev/null || true`
     );
     return stdout.trim() || "(no matches)";
   } catch {
@@ -258,14 +305,27 @@ async function agentLoop(
   systemPrompt: string,
   userMessage: string,
   terminalToolName: string,
-  verbose: boolean
+  verbose: boolean,
+  maxLoops: number = MAX_LOOPS
 ): Promise<Record<string, string>> {
   const messages: Anthropic.MessageParam[] = [{ role: "user", content: userMessage }];
   let loops = 0;
+  // Inject a "you must emit now" nudge when 80% of budget is used
+  const nudgeAt = Math.floor(maxLoops * 0.8);
+  let nudgeSent = false;
 
-  while (loops < MAX_LOOPS) {
+  while (loops < maxLoops) {
     loops++;
-    if (verbose) console.error(`[engine] loop ${loops}/${MAX_LOOPS}`);
+    if (verbose) console.error(`[engine] loop ${loops}/${maxLoops}`);
+
+    // Inject a forced-emit nudge into the message stream at 80% of loop budget
+    if (loops === nudgeAt && !nudgeSent) {
+      nudgeSent = true;
+      messages.push({
+        role: "user",
+        content: `[SYSTEM] You have used ${loops} of ${maxLoops} allowed loops. You MUST call ${terminalToolName} now with whatever findings you have. Do not read any more files or call any other tools first.`
+      });
+    }
 
     const response = await client.messages.create({
       model: MODEL,
@@ -313,7 +373,7 @@ async function agentLoop(
     messages.push({ role: "user", content: toolResults });
   }
 
-  throw new Error(`agent loop exceeded ${MAX_LOOPS} iterations`);
+  throw new Error(`agent loop exceeded ${maxLoops} iterations`);
 }
 
 // ---------- Planner phase ----------
@@ -334,6 +394,9 @@ Rules:
 - For algorithmic bugs (concurrency, batching), write a self-contained Node.js harness to measure the metric.
 - Do NOT write any fix yet. Your job ends at emit_plan.
 - The metric must be a number with a threshold (e.g. "peak concurrent gmail.googleapis.com/messages.get calls must be ≤ 10").
+
+STOPPING RULE — CRITICAL:
+By loop 20, you must have identified the root cause(s). Once you have identified a root cause and have at least one measurable baseline (from the snapshot or a harness), call emit_plan IMMEDIATELY. Do not continue reading more files, correlating more data, or writing additional harnesses after you have enough to emit a plan. Perfectionism past loop 20 is waste that causes the run to fail. When in doubt, emit what you have.
 `;
 
 export async function runPlanner(
@@ -348,7 +411,8 @@ export async function runPlanner(
   if (opts.sourceDir) parts.push(`Source directory: ${opts.sourceDir}`);
   if (opts.workDir) parts.push(`Work directory for harness files: ${opts.workDir}`);
 
-  const result = await agentLoop(PLANNER_SYSTEM, parts.join("\n"), "emit_plan", opts.verbose ?? false);
+  const PLANNER_MAX_LOOPS = parseInt(process.env.ENGINE_PLANNER_MAX_LOOPS ?? "30", 10);
+  const result = await agentLoop(PLANNER_SYSTEM, parts.join("\n"), "emit_plan", opts.verbose ?? false, PLANNER_MAX_LOOPS);
 
   const plan: AgentPlan = {
     apiVersion: "agents.speedscale.io/v1alpha1",
@@ -397,23 +461,51 @@ export async function runWorker(
   planResult: EmitPlanResult,
   opts: LLMRunOptions
 ): Promise<EmitPatchResult> {
+  let worktree: WorktreeResult | undefined;
+
+  // Set up an isolated worktree before touching any source files.
+  if (opts.repoDir && opts.branchName && opts.sourceDir && opts.workDir) {
+    worktree = await setupWorktree(opts.repoDir, opts.workDir, opts.branchName, opts.sourceDir);
+    console.log(`[engine] worktree: ${worktree.worktreePath} (branch: ${worktree.branchName})`);
+  }
+
+  const effectiveSourceDir = worktree?.sourceDir ?? opts.sourceDir;
+
+  // Remap any original sourceDir paths in plan text to the worktree sourceDir so the Worker
+  // doesn't accidentally write to the operator's live checkout.
+  function remapPaths(s: string): string {
+    if (!worktree || !opts.sourceDir) return s;
+    return s.replaceAll(opts.sourceDir, worktree.sourceDir);
+  }
+
   const parts = [
-    `Plan summary: ${planResult.plan.spec.summary}`,
-    `Hypothesis: ${planResult.plan.spec.hypothesis}`,
+    `Plan summary: ${remapPaths(planResult.plan.spec.summary)}`,
+    `Hypothesis: ${remapPaths(planResult.plan.spec.hypothesis)}`,
     `Metric to fix: ${planResult.metric}`,
     `Baseline measurement: ${planResult.baseline}`,
-    `Target file: ${planResult.plan.spec.steps.find((s) => s.action === "edit")?.description}`,
-    `Rationale from Planner: ${planResult.rationale}`
+    `Target file: ${remapPaths(planResult.plan.spec.steps.find((s) => s.action === "edit")?.description ?? "")}`,
+    `Rationale from Planner: ${remapPaths(planResult.rationale)}`
   ];
-  if (opts.sourceDir) parts.push(`Source directory: ${opts.sourceDir}`);
+  if (effectiveSourceDir) parts.push(`Source directory: ${effectiveSourceDir}`);
   if (opts.workDir) parts.push(`Work directory: ${opts.workDir}`);
+  if (worktree) {
+    parts.push(
+      `WORKTREE: Source files are in an isolated worktree at ${worktree.worktreePath}. ` +
+      `For ALL read_file and write_file calls that touch source code, use paths under ${worktree.sourceDir}. ` +
+      `Do NOT read from or write to ${opts.sourceDir} — that directory is off-limits for this run.`
+    );
+  }
 
-  const result = await agentLoop(WORKER_SYSTEM, parts.join("\n"), "emit_patch", opts.verbose ?? false);
+  const WORKER_MAX_LOOPS = parseInt(process.env.ENGINE_WORKER_MAX_LOOPS ?? "25", 10);
+  const result = await agentLoop(WORKER_SYSTEM, parts.join("\n"), "emit_patch", opts.verbose ?? false, WORKER_MAX_LOOPS);
 
   return {
     filePath: result.targetFile,
     patch: result.patch,
     rationale: result.rationale,
-    harnessPath: result.harnessPath
+    harnessPath: result.harnessPath,
+    confirmResult: result.confirmResult,
+    worktreePath: worktree?.worktreePath,
+    branchName: worktree?.branchName,
   };
 }
