@@ -241,6 +241,6 @@ function normalizeOpenAIFinishReason(reason: string | null | undefined): string 
 export function defaultModelFor(provider: LLMProvider): string {
   switch (provider) {
     case "anthropic": return "claude-sonnet-4-6";
-    case "openrouter": return "openai/gpt-4o";
+    case "openrouter": return "openai/gpt-5.4";
   }
 }

@@ -14,7 +14,7 @@
  *     --branch  agent/s-10886-radar-perf   (branch name; derived from --title if omitted) \
  *     --workdir /tmp/llm-run-work \
  *     [--provider anthropic|openrouter]    (default: anthropic) \
- *     [--model <id>]                        (default: claude-sonnet-4-6 / openai/gpt-4o) \
+ *     [--model <id>]                        (default: claude-sonnet-4-6 / openai/gpt-5.4) \
  *     [--verbose]
  *
  * When --repo is provided, the Worker creates a git worktree at <workdir>/repo
