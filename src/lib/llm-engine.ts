@@ -125,9 +125,21 @@ async function toolReadFile(filePath: string): Promise<string> {
 }
 
 async function toolSearchCode(pattern: string, dir: string): Promise<string> {
+  // Common source extensions across the languages we expect to encounter as
+  // Agent Factory targets. Without --include, grep -r matches binaries and
+  // node_modules; with too narrow a list, Go/Python/Java targets return zero
+  // matches and weaker models give up.
+  const includes = [
+    "*.js", "*.ts", "*.mjs", "*.tsx", "*.jsx",
+    "*.go", "*.py", "*.java", "*.kt", "*.rb",
+    "*.c", "*.h", "*.cpp", "*.hpp", "*.cc",
+    "*.rs", "*.cs", "*.swift", "*.php",
+    "*.sh", "*.yaml", "*.yml", "*.toml", "*.json"
+  ].map((g) => `--include=${JSON.stringify(g)}`).join(" ");
+  const excludes = `--exclude-dir=node_modules --exclude-dir=.git --exclude-dir=vendor --exclude-dir=dist --exclude-dir=build`;
   try {
     const { stdout } = await execAsync(
-      `grep -rEn --include="*.js" --include="*.ts" --include="*.mjs" -m 50 ${JSON.stringify(pattern)} ${JSON.stringify(dir)} 2>/dev/null || true`
+      `grep -rEn ${includes} ${excludes} -m 50 ${JSON.stringify(pattern)} ${JSON.stringify(dir)} 2>/dev/null || true`
     );
     return stdout.trim() || "(no matches)";
   } catch {
