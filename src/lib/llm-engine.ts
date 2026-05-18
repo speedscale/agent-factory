@@ -330,23 +330,26 @@ async function agentLoop(
 ): Promise<Record<string, string>> {
   const messages: ConvMessage[] = [{ role: "user", content: userMessage }];
   let loops = 0;
-  // Inject a "you must emit now" nudge when 80% of budget is used
-  const nudgeAt = Math.floor(maxLoops * 0.8);
+  // Inject a "you must emit now" nudge when 60% of budget is used.
+  // Earlier than 60% wastes budget; later (e.g. 80%) is too late for weaker
+  // models that bail on end_turn before the nudge ever fires.
+  const nudgeAt = Math.floor(maxLoops * 0.6);
   let nudgeSent = false;
 
   if (verbose) console.error(`[engine] provider=${provider} model=${model}`);
+
+  function nudgeMessage(): string {
+    return `[SYSTEM] You have used ${loops} of ${maxLoops} allowed loops. You MUST call ${terminalToolName} now with whatever findings you have. Do not read any more files or call any other tools first.`;
+  }
 
   while (loops < maxLoops) {
     loops++;
     if (verbose) console.error(`[engine] loop ${loops}/${maxLoops}`);
 
-    // Inject a forced-emit nudge into the message stream at 80% of loop budget
+    // Inject a forced-emit nudge into the message stream at the scheduled budget point.
     if (loops === nudgeAt && !nudgeSent) {
       nudgeSent = true;
-      messages.push({
-        role: "user",
-        content: `[SYSTEM] You have used ${loops} of ${maxLoops} allowed loops. You MUST call ${terminalToolName} now with whatever findings you have. Do not read any more files or call any other tools first.`
-      });
+      messages.push({ role: "user", content: nudgeMessage() });
     }
 
     const turn: AssistantTurn = await callLLM({
@@ -372,8 +375,18 @@ async function agentLoop(
     }
 
     if (turn.stopReason === "end_turn" && turn.toolUses.length === 0) {
-      // LLM finished without calling the terminal tool — shouldn't happen with good prompts
-      throw new Error(`agent stopped without calling ${terminalToolName}`);
+      // Weaker models reach a hypothesis and then just stop without calling the
+      // terminal tool. Don't fail — record the model's parting text, inject a
+      // forced-emit nudge, and continue. If we've already nudged, we let the
+      // loop budget catch this (throwing only on max-iterations).
+      if (verbose) console.error(`[engine] end_turn without ${terminalToolName} — injecting forced-emit nudge`);
+      if (turn.textBlocks.length > 0) {
+        // Keep the assistant's reasoning in history so the next turn can build on it.
+        messages.push({ role: "assistant", turn });
+      }
+      messages.push({ role: "user", content: nudgeMessage() });
+      nudgeSent = true;
+      continue;
     }
 
     // Add assistant turn to history
