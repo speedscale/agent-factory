@@ -12,7 +12,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 
-export type LLMProvider = "anthropic" | "openrouter" | "ds4";
+export type LLMProvider = "anthropic" | "openrouter" | "ds4" | "omlx";
 
 export interface ToolDef {
   name: string;
@@ -64,6 +64,8 @@ export async function callLLM(params: CallLLMParams): Promise<AssistantTurn> {
       return callOpenAICompatible(openrouterClient, params);
     case "ds4":
       return callOpenAICompatible(ds4Client, params);
+    case "omlx":
+      return callOpenAICompatible(omlxClient, params);
     default: {
       const _exhaustive: never = params.provider;
       throw new Error(`unknown provider: ${_exhaustive as string}`);
@@ -150,6 +152,12 @@ const openrouterClient = new OpenAI({
 const ds4Client = new OpenAI({
   apiKey: process.env.DS4_API_KEY || "ds4-local",
   baseURL: process.env.DS4_BASE_URL || "http://127.0.0.1:38011/v1"
+});
+
+// omlx is the local MLX-based multi-model server (Qwen, Gemma, Nemotron). No auth needed.
+const omlxClient = new OpenAI({
+  apiKey: process.env.OMLX_API_KEY || "omlx-local",
+  baseURL: process.env.OMLX_BASE_URL || "http://127.0.0.1:38010/v1"
 });
 
 async function callOpenAICompatible(client: OpenAI, params: CallLLMParams): Promise<AssistantTurn> {
@@ -250,5 +258,6 @@ export function defaultModelFor(provider: LLMProvider): string {
     case "anthropic": return "claude-sonnet-4-6";
     case "openrouter": return "openai/gpt-5.4";
     case "ds4": return "deepseek-v4-flash";
+    case "omlx": return "Qwen3.6-27B-4bit";
   }
 }
