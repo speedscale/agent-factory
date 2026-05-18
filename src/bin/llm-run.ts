@@ -13,8 +13,8 @@
  *     --repo    /path/to/service           (git repo root — enables worktree isolation) \
  *     --branch  agent/s-10886-radar-perf   (branch name; derived from --title if omitted) \
  *     --workdir /tmp/llm-run-work \
- *     [--provider anthropic|openrouter]    (default: anthropic) \
- *     [--model <id>]                        (default: claude-sonnet-4-6 / openai/gpt-5.4) \
+ *     [--provider anthropic|openrouter|ds4] (default: anthropic) \
+ *     [--model <id>]                        (default: claude-sonnet-4-6 / openai/gpt-5.4 / deepseek-v4-flash) \
  *     [--verbose]
  *
  * When --repo is provided, the Worker creates a git worktree at <workdir>/repo
@@ -71,15 +71,15 @@ async function main(): Promise<void> {
   const workDir = getArg(argv, ["--workdir", "-w"]) ?? path.join(process.cwd(), ".llm-run-work");
   const verbose = hasFlag(argv, ["--verbose", "-v"]);
   const providerArg = getArg(argv, ["--provider", "-p"]) ?? "anthropic";
-  if (providerArg !== "anthropic" && providerArg !== "openrouter") {
-    console.error(`unknown provider: ${providerArg}. Expected one of: anthropic, openrouter`);
+  if (providerArg !== "anthropic" && providerArg !== "openrouter" && providerArg !== "ds4") {
+    console.error(`unknown provider: ${providerArg}. Expected one of: anthropic, openrouter, ds4`);
     process.exit(1);
   }
-  const provider = providerArg as "anthropic" | "openrouter";
+  const provider = providerArg as "anthropic" | "openrouter" | "ds4";
   const model = getArg(argv, ["--model", "-m"]);
 
   if (!snapshotDir) {
-    console.error("usage: llm-run --snapshot <dir> [--source <dir>] [--repo <dir>] [--branch <name>] [--title <str>] [--body <str>] [--workdir <dir>] [--provider anthropic|openrouter] [--model <id>] [--verbose]");
+    console.error("usage: llm-run --snapshot <dir> [--source <dir>] [--repo <dir>] [--branch <name>] [--title <str>] [--body <str>] [--workdir <dir>] [--provider anthropic|openrouter|ds4] [--model <id>] [--verbose]");
     process.exit(1);
   }
 

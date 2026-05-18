@@ -12,7 +12,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 
-export type LLMProvider = "anthropic" | "openrouter";
+export type LLMProvider = "anthropic" | "openrouter" | "ds4";
 
 export interface ToolDef {
   name: string;
@@ -61,7 +61,9 @@ export async function callLLM(params: CallLLMParams): Promise<AssistantTurn> {
     case "anthropic":
       return callAnthropic(params);
     case "openrouter":
-      return callOpenRouter(params);
+      return callOpenAICompatible(openrouterClient, params);
+    case "ds4":
+      return callOpenAICompatible(ds4Client, params);
     default: {
       const _exhaustive: never = params.provider;
       throw new Error(`unknown provider: ${_exhaustive as string}`);
@@ -137,15 +139,20 @@ async function callAnthropic(params: CallLLMParams): Promise<AssistantTurn> {
   };
 }
 
-// ---------- OpenRouter (OpenAI-compatible API) ----------
+// ---------- OpenAI-compatible providers (OpenRouter, local DS4, etc.) ----------
 
-const openrouterApiKey = process.env.OPENROUTER_API_KEY;
 const openrouterClient = new OpenAI({
-  apiKey: openrouterApiKey,
+  apiKey: process.env.OPENROUTER_API_KEY,
   baseURL: "https://openrouter.ai/api/v1"
 });
 
-async function callOpenRouter(params: CallLLMParams): Promise<AssistantTurn> {
+// DS4 is the local DeepSeek-V4-Flash server (antirez/ds4). No auth needed.
+const ds4Client = new OpenAI({
+  apiKey: process.env.DS4_API_KEY || "ds4-local",
+  baseURL: process.env.DS4_BASE_URL || "http://127.0.0.1:38011/v1"
+});
+
+async function callOpenAICompatible(client: OpenAI, params: CallLLMParams): Promise<AssistantTurn> {
   const tools: OpenAI.Chat.Completions.ChatCompletionTool[] = params.tools.map((t) => ({
     type: "function",
     function: {
@@ -190,7 +197,7 @@ async function callOpenRouter(params: CallLLMParams): Promise<AssistantTurn> {
     messages.push(assistant);
   }
 
-  const response = await openrouterClient.chat.completions.create({
+  const response = await client.chat.completions.create({
     model: params.model,
     max_tokens: params.maxTokens,
     tools,
@@ -242,5 +249,6 @@ export function defaultModelFor(provider: LLMProvider): string {
   switch (provider) {
     case "anthropic": return "claude-sonnet-4-6";
     case "openrouter": return "openai/gpt-5.4";
+    case "ds4": return "deepseek-v4-flash";
   }
 }
