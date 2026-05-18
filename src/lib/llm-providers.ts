@@ -205,11 +205,21 @@ async function callOpenAICompatible(client: OpenAI, params: CallLLMParams): Prom
     messages.push(assistant);
   }
 
+  // Low temperature collapses meandering tool selection on weaker models
+  // (DS4 went from wandering /usr/bin/find as a "script" to picking the
+  // correct first tool with temperature=0.1). reasoning_effort=high engages
+  // DeepSeek's deep thinking mode; models that don't support it ignore it.
+  // Both env-vars override these defaults if a run needs different behavior.
+  const temperature = parseFloat(process.env.LLM_TEMPERATURE ?? "0.1");
+  const reasoningEffort = process.env.LLM_REASONING_EFFORT ?? "high";
   const response = await client.chat.completions.create({
     model: params.model,
     max_tokens: params.maxTokens,
+    temperature,
     tools,
-    messages
+    messages,
+    // reasoning_effort isn't in the official OpenAI SDK types yet; cast through.
+    ...({ reasoning_effort: reasoningEffort } as object)
   });
 
   const choice = response.choices[0];
