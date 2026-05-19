@@ -40,6 +40,10 @@ export interface AssistantTurn {
   /** Normalized: "end_turn" | "tool_use" | "max_tokens" | "stop_sequence" | other provider string */
   stopReason: string;
   usage?: { inputTokens?: number; outputTokens?: number };
+  /** DeepSeek-style chain-of-thought returned as a separate field on the
+   * assistant message. We preserve it across turns so reasoning models can
+   * continue their thought instead of re-deriving context every loop. */
+  reasoningContent?: string;
 }
 
 export type ConvMessage =
@@ -208,6 +212,11 @@ async function callOpenAICompatible(client: OpenAI, params: CallLLMParams): Prom
         function: { name: tu.name, arguments: JSON.stringify(tu.input) }
       }));
     }
+    // Preserve DeepSeek-style reasoning_content across turns. ds4-server and
+    // omlx accept it on input; cloud providers that don't will silently drop it.
+    if (m.turn.reasoningContent) {
+      (assistant as unknown as Record<string, unknown>).reasoning_content = m.turn.reasoningContent;
+    }
     messages.push(assistant);
   }
 
@@ -235,6 +244,8 @@ async function callOpenAICompatible(client: OpenAI, params: CallLLMParams): Prom
   const msg = choice.message;
 
   const textBlocks: TextBlock[] = msg.content ? [{ text: msg.content }] : [];
+  // reasoning_content isn't in the OpenAI SDK types but DeepSeek/Qwen return it.
+  const reasoningContent = (msg as unknown as { reasoning_content?: string }).reasoning_content;
 
   const toolUses: ToolUse[] = (msg.tool_calls ?? []).map((tc) => {
     if (tc.type !== "function") {
@@ -255,6 +266,7 @@ async function callOpenAICompatible(client: OpenAI, params: CallLLMParams): Prom
     textBlocks,
     toolUses,
     stopReason,
+    reasoningContent,
     usage: {
       inputTokens: response.usage?.prompt_tokens,
       outputTokens: response.usage?.completion_tokens
