@@ -16,19 +16,23 @@
  *   emit_patch         — terminal: agent has finished the Worker phase
  */
 
-import Anthropic from "@anthropic-ai/sdk";
 import { exec } from "node:child_process";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { readdir } from "node:fs/promises";
 import { promisify } from "node:util";
 import path from "node:path";
 import type { AgentPlan } from "../contracts/index.js";
+import {
+  callLLM,
+  defaultModelFor,
+  type AssistantTurn,
+  type ConvMessage,
+  type LLMProvider,
+  type ToolDef
+} from "./llm-providers.js";
 
 const execAsync = promisify(exec);
 
-// Prefer ANTHROPIC_API_KEY; fall back to the workspace's alternate var name.
-const apiKey = process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY_DO_NOT_USE;
-const MODEL = "claude-sonnet-4-6";
 const MAX_TOKENS = 8192;
 const MAX_LOOPS = parseInt(process.env.ENGINE_MAX_LOOPS ?? "50", 10);
 
@@ -59,6 +63,10 @@ export interface LLMRunOptions {
   repoDir?: string;
   /** Branch name for the worktree, e.g. "agent/s-10886-radar-perf". Required when repoDir is set. */
   branchName?: string;
+  /** LLM provider for both Planner and Worker. Defaults to "anthropic". */
+  provider?: LLMProvider;
+  /** Model identifier for the chosen provider. Defaults to defaultModelFor(provider). */
+  model?: string;
 }
 
 export interface WorktreeResult {
@@ -101,8 +109,6 @@ export async function teardownWorktree(repoDir: string, worktreePath: string, br
   } catch { /* already gone */ }
 }
 
-const client = new Anthropic({ apiKey });
-
 // ---------- tool implementations ----------
 
 async function toolReadFile(filePath: string): Promise<string> {
@@ -119,9 +125,21 @@ async function toolReadFile(filePath: string): Promise<string> {
 }
 
 async function toolSearchCode(pattern: string, dir: string): Promise<string> {
+  // Common source extensions across the languages we expect to encounter as
+  // Agent Factory targets. Without --include, grep -r matches binaries and
+  // node_modules; with too narrow a list, Go/Python/Java targets return zero
+  // matches and weaker models give up.
+  const includes = [
+    "*.js", "*.ts", "*.mjs", "*.tsx", "*.jsx",
+    "*.go", "*.py", "*.java", "*.kt", "*.rb",
+    "*.c", "*.h", "*.cpp", "*.hpp", "*.cc",
+    "*.rs", "*.cs", "*.swift", "*.php",
+    "*.sh", "*.yaml", "*.yml", "*.toml", "*.json"
+  ].map((g) => `--include=${JSON.stringify(g)}`).join(" ");
+  const excludes = `--exclude-dir=node_modules --exclude-dir=.git --exclude-dir=vendor --exclude-dir=dist --exclude-dir=build`;
   try {
     const { stdout } = await execAsync(
-      `grep -rEn --include="*.js" --include="*.ts" --include="*.mjs" -m 50 ${JSON.stringify(pattern)} ${JSON.stringify(dir)} 2>/dev/null || true`
+      `grep -rEn ${includes} ${excludes} -m 50 ${JSON.stringify(pattern)} ${JSON.stringify(dir)} 2>/dev/null || true`
     );
     return stdout.trim() || "(no matches)";
   } catch {
@@ -191,11 +209,11 @@ async function toolRunScript(scriptPath: string): Promise<string> {
 
 // ---------- tool definitions for the API ----------
 
-const TOOLS: Anthropic.Tool[] = [
+const TOOLS: ToolDef[] = [
   {
     name: "read_file",
     description: "Read a source file from disk. Use absolute paths.",
-    input_schema: {
+    inputSchema: {
       type: "object" as const,
       properties: { path: { type: "string", description: "Absolute path to the file" } },
       required: ["path"]
@@ -204,7 +222,7 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: "search_code",
     description: "Grep for a pattern across JS/TS source files in a directory.",
-    input_schema: {
+    inputSchema: {
       type: "object" as const,
       properties: {
         pattern: { type: "string", description: "Grep pattern (ERE)" },
@@ -216,7 +234,7 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: "list_snapshot_dir",
     description: "List RRPair files in a snapshot directory, grouped by host. Returns file paths you can pass to read_rrpair.",
-    input_schema: {
+    inputSchema: {
       type: "object" as const,
       properties: { dir: { type: "string", description: "Absolute path to the snapshot directory (the inner one containing host subdirs)" } },
       required: ["dir"]
@@ -225,7 +243,7 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: "read_rrpair",
     description: "Read a single RRPair markdown file from a snapshot. Shows request + response.",
-    input_schema: {
+    inputSchema: {
       type: "object" as const,
       properties: { path: { type: "string", description: "Absolute path to the .md RRPair file" } },
       required: ["path"]
@@ -234,7 +252,7 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: "write_file",
     description: "Write content to a file. Use this to produce test harnesses or patch files.",
-    input_schema: {
+    inputSchema: {
       type: "object" as const,
       properties: {
         path: { type: "string", description: "Absolute path to write" },
@@ -246,7 +264,7 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: "run_script",
     description: "Execute a Node.js script and return its stdout/stderr. Use this to run a reproduce or confirm harness.",
-    input_schema: {
+    inputSchema: {
       type: "object" as const,
       properties: { path: { type: "string", description: "Absolute path to the .mjs or .js script to run" } },
       required: ["path"]
@@ -255,7 +273,7 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: "emit_plan",
     description: "Terminal tool: emit the structured AgentPlan. Call this when you have identified the bug metric, confirmed it is reproducible, and have a hypothesis. This ends the Planner phase.",
-    input_schema: {
+    inputSchema: {
       type: "object" as const,
       properties: {
         summary: { type: "string", description: "One-sentence summary of the issue" },
@@ -272,7 +290,7 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: "emit_patch",
     description: "Terminal tool: emit the code fix. Call this when you have written the fix and verified it with the harness. This ends the Worker phase.",
-    input_schema: {
+    inputSchema: {
       type: "object" as const,
       properties: {
         targetFile: { type: "string", description: "Absolute path of the file that was patched" },
@@ -306,71 +324,92 @@ async function agentLoop(
   userMessage: string,
   terminalToolName: string,
   verbose: boolean,
-  maxLoops: number = MAX_LOOPS
+  maxLoops: number = MAX_LOOPS,
+  provider: LLMProvider = "anthropic",
+  model: string = defaultModelFor(provider)
 ): Promise<Record<string, string>> {
-  const messages: Anthropic.MessageParam[] = [{ role: "user", content: userMessage }];
+  const messages: ConvMessage[] = [{ role: "user", content: userMessage }];
   let loops = 0;
-  // Inject a "you must emit now" nudge when 80% of budget is used
-  const nudgeAt = Math.floor(maxLoops * 0.8);
+  // Inject a "you must emit now" nudge when 60% of budget is used.
+  // Earlier than 60% wastes budget; later (e.g. 80%) is too late for weaker
+  // models that bail on end_turn before the nudge ever fires.
+  const nudgeAt = Math.floor(maxLoops * 0.6);
   let nudgeSent = false;
+  // When set, the next callLLM forces the terminal tool via tool_choice.
+  // Weaker models ignore the inline nudge text; the API-level force does not.
+  let forceNextTurn = false;
+
+  if (verbose) console.error(`[engine] provider=${provider} model=${model}`);
+
+  function nudgeMessage(): string {
+    return `[SYSTEM] You have used ${loops} of ${maxLoops} allowed loops. You MUST call ${terminalToolName} now with whatever findings you have. Do not read any more files or call any other tools first.`;
+  }
 
   while (loops < maxLoops) {
     loops++;
     if (verbose) console.error(`[engine] loop ${loops}/${maxLoops}`);
 
-    // Inject a forced-emit nudge into the message stream at 80% of loop budget
+    // Inject a forced-emit nudge into the message stream at the scheduled budget point.
     if (loops === nudgeAt && !nudgeSent) {
       nudgeSent = true;
-      messages.push({
-        role: "user",
-        content: `[SYSTEM] You have used ${loops} of ${maxLoops} allowed loops. You MUST call ${terminalToolName} now with whatever findings you have. Do not read any more files or call any other tools first.`
-      });
+      forceNextTurn = true;
+      messages.push({ role: "user", content: nudgeMessage() });
     }
 
-    const response = await client.messages.create({
-      model: MODEL,
-      max_tokens: MAX_TOKENS,
+    const turn: AssistantTurn = await callLLM({
+      provider,
+      model,
       system: systemPrompt,
       tools: TOOLS,
-      messages
+      messages,
+      maxTokens: MAX_TOKENS,
+      forceToolName: forceNextTurn ? terminalToolName : undefined
     });
+    forceNextTurn = false;
 
-    if (verbose) console.error(`[engine] stop_reason=${response.stop_reason}`);
+    if (verbose) console.error(`[engine] stop_reason=${turn.stopReason}`);
 
-    // Collect all tool calls in this response
-    const toolUses = response.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
-    const textBlocks = response.content.filter((b): b is Anthropic.TextBlock => b.type === "text");
-
-    if (verbose && textBlocks.length > 0) {
-      console.error(`[engine] ${textBlocks.map((b) => b.text.slice(0, 200)).join(" ")}`);
+    if (verbose && turn.textBlocks.length > 0) {
+      console.error(`[engine] ${turn.textBlocks.map((b) => b.text.slice(0, 200)).join(" ")}`);
     }
 
     // Check if the terminal tool was called
-    const terminal = toolUses.find((t) => t.name === terminalToolName);
+    const terminal = turn.toolUses.find((t) => t.name === terminalToolName);
     if (terminal) {
       if (verbose) console.error(`[engine] terminal tool called: ${terminalToolName}`);
-      return terminal.input as Record<string, string>;
+      return terminal.input;
     }
 
-    if (response.stop_reason === "end_turn" && toolUses.length === 0) {
-      // LLM finished without calling the terminal tool — shouldn't happen with good prompts
-      throw new Error(`agent stopped without calling ${terminalToolName}`);
+    if (turn.stopReason === "end_turn" && turn.toolUses.length === 0) {
+      // Weaker models reach a hypothesis and then just stop without calling the
+      // terminal tool. Don't fail — record the model's parting text, inject a
+      // forced-emit nudge, and continue. If we've already nudged, we let the
+      // loop budget catch this (throwing only on max-iterations).
+      if (verbose) console.error(`[engine] end_turn without ${terminalToolName} — injecting forced-emit nudge`);
+      if (turn.textBlocks.length > 0) {
+        // Keep the assistant's reasoning in history so the next turn can build on it.
+        messages.push({ role: "assistant", turn });
+      }
+      messages.push({ role: "user", content: nudgeMessage() });
+      nudgeSent = true;
+      forceNextTurn = true;
+      continue;
     }
 
     // Add assistant turn to history
-    messages.push({ role: "assistant", content: response.content });
+    messages.push({ role: "assistant", turn });
 
     // Execute all non-terminal tool calls and add results
-    const toolResults: Anthropic.ToolResultBlockParam[] = [];
-    for (const toolUse of toolUses) {
+    const toolResults: { toolUseId: string; content: string }[] = [];
+    for (const toolUse of turn.toolUses) {
       if (toolUse.name === terminalToolName) continue;
       if (verbose) console.error(`[engine] tool: ${toolUse.name}(${JSON.stringify(toolUse.input).slice(0, 100)})`);
-      const result = await dispatchTool(toolUse.name, toolUse.input as Record<string, string>);
+      const result = await dispatchTool(toolUse.name, toolUse.input);
       if (verbose) console.error(`[engine] result: ${result.slice(0, 150)}`);
-      toolResults.push({ type: "tool_result", tool_use_id: toolUse.id, content: result });
+      toolResults.push({ toolUseId: toolUse.id, content: result });
     }
 
-    messages.push({ role: "user", content: toolResults });
+    messages.push({ role: "user", toolResults });
   }
 
   throw new Error(`agent loop exceeded ${maxLoops} iterations`);
@@ -412,7 +451,9 @@ export async function runPlanner(
   if (opts.workDir) parts.push(`Work directory for harness files: ${opts.workDir}`);
 
   const PLANNER_MAX_LOOPS = parseInt(process.env.ENGINE_PLANNER_MAX_LOOPS ?? "30", 10);
-  const result = await agentLoop(PLANNER_SYSTEM, parts.join("\n"), "emit_plan", opts.verbose ?? false, PLANNER_MAX_LOOPS);
+  const provider = opts.provider ?? "anthropic";
+  const model = opts.model ?? defaultModelFor(provider);
+  const result = await agentLoop(PLANNER_SYSTEM, parts.join("\n"), "emit_plan", opts.verbose ?? false, PLANNER_MAX_LOOPS, provider, model);
 
   const plan: AgentPlan = {
     apiVersion: "agents.speedscale.io/v1alpha1",
@@ -497,7 +538,9 @@ export async function runWorker(
   }
 
   const WORKER_MAX_LOOPS = parseInt(process.env.ENGINE_WORKER_MAX_LOOPS ?? "25", 10);
-  const result = await agentLoop(WORKER_SYSTEM, parts.join("\n"), "emit_patch", opts.verbose ?? false, WORKER_MAX_LOOPS);
+  const provider = opts.provider ?? "anthropic";
+  const model = opts.model ?? defaultModelFor(provider);
+  const result = await agentLoop(WORKER_SYSTEM, parts.join("\n"), "emit_patch", opts.verbose ?? false, WORKER_MAX_LOOPS, provider, model);
 
   return {
     filePath: result.targetFile,
