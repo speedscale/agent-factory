@@ -2,11 +2,11 @@
 
 Audience: Agent Factory developers.
 
-The LLM engine is the intelligence layer. It runs a tool-use agentic loop using the Claude API, driving the Planner and Worker phases. Implementation: `src/lib/llm-engine.ts`.
+The LLM engine is the intelligence layer. It runs a tool-use agentic loop using the Claude API, driving the Planner, Worker, and Evaluator phases. Implementation: `src/lib/llm-engine.ts`.
 
 ## Agent loop
 
-Each phase (Planner, Worker) is a conversation with Claude using Anthropic's tool-use API. The loop runs until Claude calls a **terminal tool** (`emit_plan` for Planner, `emit_patch` for Worker), at which point the phase ends and the result is returned.
+Each phase (Planner, Worker, Evaluator) is a conversation with Claude using Anthropic's tool-use API. The loop runs until Claude calls a **terminal tool** (`emit_plan` for Planner, `emit_patch` for Worker, `emit_eval_report` for Evaluator), at which point the phase ends and the result is returned.
 
 ```
 system prompt
@@ -49,6 +49,7 @@ Maximum iterations: 30. Model: `claude-sonnet-4-6` (configurable via `ENGINE_MOD
 |---|---|---|
 | `emit_plan` | Planner | `summary`, `hypothesis`, `metric`, `baseline`, `targetFile`, `targetFunction`, `rationale` |
 | `emit_patch` | Worker | `targetFile`, `patch`, `rationale`, `confirmResult` |
+| `emit_eval_report` | Evaluator | `addressedRequirements[]`, `missedRequirements[]`, `confirmHarnessTrustworthy`, `confirmHarnessNotes`, `overallVerdict`, `summary` |
 
 Terminal tools end the loop immediately. The engine extracts their `input` as the structured result.
 
@@ -115,6 +116,36 @@ Work directory: <path>
 }
 ```
 
+## Evaluator phase
+
+**System prompt goal:** independently verify the Worker's patch actually delivers the spec. The Worker grades its own homework; the Evaluator is a second pair of eyes.
+
+**Tools:** read-only — `read_file`, `search_code`, `list_snapshot_dir`, `read_rrpair`, plus terminal `emit_eval_report`. No `write_file` or `run_script`.
+
+**Rules enforced via prompt:**
+- Enumerate every spec requirement (numbered, bulleted, or written as should/must/needs to).
+- For each, verify the patched source reflects it — read the file, don't trust the Worker's patch-text description.
+- Read the confirm harness (if any) and decide whether it actually exercises the planned metric. A harness that asserts on a hardcoded string or reads the source instead of running it is *not* trustworthy.
+- Verdict: `pass` only if every requirement is addressed AND the harness is trustworthy; `partial` for missed requirements or weak harness; `fail` for missing/wrong core fix.
+
+**Input to Claude:** original spec, Planner's plan, Worker's patch + confirm result, plus paths to source/snapshot/work dirs.
+
+**Output (`EmitEvalReportResult`):**
+```typescript
+{
+  addressedRequirements: string[];        // quoted from spec body
+  missedRequirements: string[];           // quoted from spec body
+  confirmHarnessTrustworthy: boolean;
+  confirmHarnessNotes: string;
+  overallVerdict: "pass" | "partial" | "fail";
+  summary: string;
+}
+```
+
+**Effect on the run:** the engine writes `eval-report.json` to the work directory and prints the verdict + missed-requirements list. A `fail` verdict exits the process with code 2 so CI / orchestration scripts can react. Skip with `--no-eval`.
+
+Without an Evaluator, the only signal that a patch is complete is the Worker's self-reported `confirmResult`. In practice, that signal is unreliable: a Worker can write a harness that doesn't actually test the planned metric, or skip a spec item entirely while passing its own self-graded check. The Evaluator catches both failure modes.
+
 ## Configuration
 
 | Env var | Default | Description |
@@ -124,6 +155,9 @@ Work directory: <path>
 | `ENGINE_MODEL` | `claude-sonnet-4-6` | Model ID |
 | `ENGINE_MAX_TOKENS` | `8192` | Max tokens per response |
 | `ENGINE_MAX_LOOPS` | `30` | Max tool-use iterations per phase |
+| `ENGINE_PLANNER_MAX_LOOPS` | `30` | Planner-specific loop cap |
+| `ENGINE_WORKER_MAX_LOOPS` | `25` | Worker-specific loop cap |
+| `ENGINE_EVALUATOR_MAX_LOOPS` | `20` | Evaluator-specific loop cap |
 
 ## Running the engine directly
 

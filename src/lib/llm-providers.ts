@@ -19,7 +19,14 @@ export interface ToolDef {
   description: string;
   inputSchema: {
     type: "object";
-    properties: Record<string, { type: string; description?: string }>;
+    properties: Record<string, {
+      type: string;
+      description?: string;
+      /** For type: "array" — schema of each item. */
+      items?: { type: string };
+      /** For type: "string" — restrict to one of these values. */
+      enum?: string[];
+    }>;
     required?: string[];
   };
 }
