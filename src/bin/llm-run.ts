@@ -31,7 +31,7 @@ import path from "node:path";
 import { exec } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
-import { runPlanner, runWorker } from "../lib/llm-engine.js";
+import { runPlanner, runWorker, runEvaluator } from "../lib/llm-engine.js";
 
 const execAsync = promisify(exec);
 
@@ -70,6 +70,7 @@ async function main(): Promise<void> {
   const branchName = getArg(argv, ["--branch"]) ?? (repoDir ? `agent/${slugify(title)}` : undefined);
   const workDir = getArg(argv, ["--workdir", "-w"]) ?? path.join(process.cwd(), ".llm-run-work");
   const verbose = hasFlag(argv, ["--verbose", "-v"]);
+  const skipEval = hasFlag(argv, ["--no-eval"]);
   const providerArg = getArg(argv, ["--provider", "-p"]) ?? "anthropic";
   if (providerArg !== "anthropic" && providerArg !== "openrouter" && providerArg !== "ds4" && providerArg !== "omlx") {
     console.error(`unknown provider: ${providerArg}. Expected one of: anthropic, openrouter, ds4, omlx`);
@@ -134,6 +135,49 @@ async function main(): Promise<void> {
     patchFile: patchOutput
   }, null, 2));
 
+  // ---- Evaluator phase ----
+  let evalResult: Awaited<ReturnType<typeof runEvaluator>> | undefined;
+  let evaluatorMs = 0;
+  if (!skipEval) {
+    const evaluatorStart = Date.now();
+    console.log("\n=== EVALUATOR PHASE ===");
+
+    // Evaluator reads from the patched source — use worktree path if Worker created one.
+    const evalSourceDir = patchResult.worktreePath
+      ? patchResult.worktreePath + (sourceDir && repoDir ? sourceDir.slice(repoDir.length) : "")
+      : sourceDir;
+
+    try {
+      evalResult = await runEvaluator(
+        { title, body },
+        planResult,
+        patchResult,
+        { snapshotDir, sourceDir: evalSourceDir, workDir, verbose, provider, model }
+      );
+
+      evaluatorMs = Date.now() - evaluatorStart;
+      const evalOutput = path.join(workDir, "eval-report.json");
+      await writeFile(evalOutput, JSON.stringify(evalResult, null, 2), "utf8");
+
+      console.log(JSON.stringify({
+        phase: "evaluated",
+        durationMs: evaluatorMs,
+        verdict: evalResult.overallVerdict,
+        addressed: evalResult.addressedRequirements.length,
+        missed: evalResult.missedRequirements.length,
+        confirmTrustworthy: evalResult.confirmHarnessTrustworthy,
+        reportFile: evalOutput
+      }, null, 2));
+
+      if (evalResult.missedRequirements.length > 0) {
+        console.log("\nMissed requirements:");
+        for (const r of evalResult.missedRequirements) console.log(`  - ${r}`);
+      }
+    } catch (err) {
+      console.warn(`Evaluator phase failed (continuing without): ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   // ---- Auto MR creation ----
   let mrUrl: string | undefined;
   if (patchResult.worktreePath && patchResult.branchName && repoDir) {
@@ -162,13 +206,22 @@ async function main(): Promise<void> {
   console.log(JSON.stringify({
     plannerMs,
     workerMs,
-    totalMs: plannerStart + plannerMs + workerMs - plannerStart,
+    evaluatorMs: evaluatorMs || undefined,
+    totalMs: plannerMs + workerMs + evaluatorMs,
     metric: planResult.metric,
     baseline: planResult.baseline,
     fix: patchResult.rationale,
     confirmResult: patchResult.confirmResult ?? "(not run)",
+    evalVerdict: evalResult?.overallVerdict ?? (skipEval ? "(skipped)" : "(not run)"),
+    evalMissed: evalResult?.missedRequirements.length ?? 0,
     mrUrl: mrUrl ?? "(not created)"
   }, null, 2));
+
+  // Exit non-zero on a fail verdict so CI / scripts can react.
+  if (evalResult?.overallVerdict === "fail") {
+    console.error("\nEvaluator verdict: FAIL. The patch does not address the spec.");
+    process.exit(2);
+  }
 }
 
 void main().catch((err: unknown) => {

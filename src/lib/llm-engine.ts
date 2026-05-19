@@ -54,6 +54,16 @@ export interface EmitPatchResult {
   branchName?: string;
 }
 
+export interface EmitEvalReportResult {
+  addressedRequirements: string[];
+  missedRequirements: string[];
+  confirmHarnessTrustworthy: boolean;
+  confirmHarnessNotes: string;
+  /** "pass" | "partial" | "fail" */
+  overallVerdict: string;
+  summary: string;
+}
+
 export interface LLMRunOptions {
   snapshotDir?: string;
   sourceDir?: string;
@@ -300,6 +310,43 @@ const TOOLS: ToolDef[] = [
       },
       required: ["targetFile", "patch", "rationale"]
     }
+  },
+  {
+    name: "emit_eval_report",
+    description: "Terminal tool: emit the evaluation report comparing the Worker's patch to the original spec and plan. Call this when you have enumerated the spec requirements, checked each against the patch, and assessed the confirm harness. This ends the Evaluator phase.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        addressedRequirements: {
+          type: "array",
+          items: { type: "string" },
+          description: "Spec requirements that ARE reflected in the patch. Quote the requirement text verbatim or near-verbatim from the spec body."
+        },
+        missedRequirements: {
+          type: "array",
+          items: { type: "string" },
+          description: "Spec requirements that are NOT reflected in the patch. Quote the requirement text verbatim or near-verbatim from the spec body. Empty array if everything is addressed."
+        },
+        confirmHarnessTrustworthy: {
+          type: "boolean",
+          description: "True if the confirm harness actually exercises the metric named in the plan. False if the harness asserts on something else, was skipped, or appears fabricated."
+        },
+        confirmHarnessNotes: {
+          type: "string",
+          description: "One or two sentences explaining the confirmHarnessTrustworthy assessment. What does the harness actually test? Does it match the planned metric?"
+        },
+        overallVerdict: {
+          type: "string",
+          enum: ["pass", "partial", "fail"],
+          description: "pass = all requirements addressed and harness trustworthy; partial = some requirements missed or harness weak but core fix landed; fail = core fix missing or patch is wrong."
+        },
+        summary: {
+          type: "string",
+          description: "One or two sentences summarising the verdict and what (if anything) the user should do next."
+        }
+      },
+      required: ["addressedRequirements", "missedRequirements", "confirmHarnessTrustworthy", "confirmHarnessNotes", "overallVerdict", "summary"]
+    }
   }
 ];
 
@@ -326,7 +373,8 @@ async function agentLoop(
   verbose: boolean,
   maxLoops: number = MAX_LOOPS,
   provider: LLMProvider = "anthropic",
-  model: string = defaultModelFor(provider)
+  model: string = defaultModelFor(provider),
+  tools: ToolDef[] = TOOLS
 ): Promise<Record<string, string>> {
   const messages: ConvMessage[] = [{ role: "user", content: userMessage }];
   let loops = 0;
@@ -360,7 +408,7 @@ async function agentLoop(
       provider,
       model,
       system: systemPrompt,
-      tools: TOOLS,
+      tools,
       messages,
       maxTokens: MAX_TOKENS,
       forceToolName: forceNextTurn ? terminalToolName : undefined
@@ -497,6 +545,92 @@ Rules:
 - Do not refactor beyond the fix. No cleanup. No new abstractions beyond what the fix requires.
 - If the confirm harness fails, read the output, fix the issue, and re-run.
 `;
+
+// ---------- Evaluator phase ----------
+
+const EVALUATOR_SYSTEM = `You are the Evaluator for the Speedscale Agent Factory.
+
+A Planner has produced a plan and a Worker has produced a patch with a confirm harness. Your job is to independently verify that the patch actually delivers the spec, NOT to take the Worker's self-report at face value.
+
+Tasks:
+1. Read the spec carefully. Enumerate every distinct requirement — numbered items, bulleted items, sentences with "should/must/needs to". Quote them.
+2. For each requirement, decide whether the patch reflects it. Use read_file on the patched source and search_code to verify. The patch field in the input shows what changed, but check the file directly — agents sometimes describe a change differently than the actual diff.
+3. Read the confirm harness (if a path was provided) and decide whether it actually exercises the metric named in the plan. A harness that "passes" by checking string equality on a hardcoded value, or by reading the source rather than running it, is NOT trustworthy.
+4. Call emit_eval_report with your findings.
+
+Rules:
+- You have READ-ONLY tools. Do not modify any files.
+- Be strict about missed requirements. If the spec says "add a --dry-run flag" and you can't find a --dry-run flag in the patch or source, that's a missed requirement, not a "minor gap."
+- "pass" verdict requires ALL spec requirements addressed AND confirm harness trustworthy.
+- "partial" = core fix landed but some requirements missing OR harness is weak (e.g. mocks the thing being tested).
+- "fail" = the core fix doesn't address the central bug, or the patch is plainly wrong.
+- Do not call emit_eval_report until you have actually read the patched source file.
+
+STOPPING RULE:
+By loop 15, emit the report with whatever findings you have. Do not keep exploring once the question is answered.
+`;
+
+export async function runEvaluator(
+  issueSpec: { title: string; body: string },
+  planResult: EmitPlanResult,
+  patchResult: EmitPatchResult,
+  opts: LLMRunOptions
+): Promise<EmitEvalReportResult> {
+  // Read-only subset of tools — no write_file, no run_script.
+  const evalTools: ToolDef[] = TOOLS.filter((t) =>
+    ["read_file", "search_code", "list_snapshot_dir", "read_rrpair", "emit_eval_report"].includes(t.name)
+  );
+
+  const parts = [
+    `=== Original spec ===`,
+    `Title: ${issueSpec.title}`,
+    `Body:`,
+    issueSpec.body,
+    ``,
+    `=== Planner output ===`,
+    `Summary: ${planResult.plan.spec.summary}`,
+    `Hypothesis: ${planResult.plan.spec.hypothesis}`,
+    `Metric: ${planResult.metric}`,
+    `Baseline: ${planResult.baseline}`,
+    `Rationale: ${planResult.rationale}`,
+    ``,
+    `=== Worker output ===`,
+    `Target file: ${patchResult.filePath}`,
+    `Patch (as reported by Worker):`,
+    patchResult.patch,
+    `Rationale: ${patchResult.rationale}`,
+    patchResult.harnessPath ? `Confirm harness path: ${patchResult.harnessPath}` : `Confirm harness path: (not provided)`,
+    `Confirm result (Worker self-report):`,
+    patchResult.confirmResult ?? "(none)"
+  ];
+
+  if (opts.sourceDir) parts.push(``, `Source directory (read patched files from here): ${opts.sourceDir}`);
+  if (opts.workDir) parts.push(`Work directory (harness scripts live here): ${opts.workDir}`);
+  if (opts.snapshotDir) parts.push(`Snapshot directory (original RRPair evidence): ${opts.snapshotDir}`);
+
+  const EVALUATOR_MAX_LOOPS = parseInt(process.env.ENGINE_EVALUATOR_MAX_LOOPS ?? "20", 10);
+  const provider = opts.provider ?? "anthropic";
+  const model = opts.model ?? defaultModelFor(provider);
+  const result = await agentLoop(
+    EVALUATOR_SYSTEM,
+    parts.join("\n"),
+    "emit_eval_report",
+    opts.verbose ?? false,
+    EVALUATOR_MAX_LOOPS,
+    provider,
+    model,
+    evalTools
+  );
+
+  return {
+    addressedRequirements: Array.isArray(result.addressedRequirements) ? result.addressedRequirements as unknown as string[] : [],
+    missedRequirements: Array.isArray(result.missedRequirements) ? result.missedRequirements as unknown as string[] : [],
+    confirmHarnessTrustworthy: result.confirmHarnessTrustworthy as unknown as boolean,
+    confirmHarnessNotes: result.confirmHarnessNotes ?? "",
+    overallVerdict: result.overallVerdict ?? "partial",
+    summary: result.summary ?? ""
+  };
+}
 
 export async function runWorker(
   planResult: EmitPlanResult,
