@@ -148,6 +148,29 @@ npm run llm-run -- \
 
 Terminal tools (`emit_*`) follow the same pattern but are detected by name in the loop and cause early return rather than dispatch.
 
+## Spec shape: what the engine handles, what it drops
+
+The engine is built around a metric-driven Planner → Worker loop. A spec succeeds when the agent can derive a measurable metric from snapshot evidence, write a reproduce harness measuring the baseline, apply a fix, and write a confirm harness measuring the new value.
+
+**Works well:**
+
+- Bugs visible in captured traffic: wrong status codes, malformed request/response bodies, latency, concurrency bursts, missing fields.
+- Anything where the difference between buggy and fixed is observable on the wire.
+
+**Drops or fails:**
+
+- Requirements with no wire signal — new CLI flags, dry-run modes, ergonomics, output formatting, log messages.
+- Multi-requirement specs where some items are wire-shaped and others aren't. Example seen in practice: a spec asked for (1) gate request body fields with a CLI-flag check — wire-shaped — and (2) add a `--dry-run` mode — no wire signal. Run 1 delivered item 1 cleanly with a passing confirm harness, then ignored item 2 despite both being explicit in the body.
+
+**Workaround: split multi-shape work into separate dispatches.**
+
+- Run 1: the wire-driven item. Reproduce harness reads the snapshot and measures the baseline metric; confirm harness asserts the new metric value.
+- Run 2: the non-wire item, narrower spec scoped just to the remaining work. Confirm harness asserts on stdout text / "no API call made" / "flag registered" / similar source-level signals. The engine accepts non-traffic confirmation when the spec doesn't promise wire evidence.
+
+This is more reliable than fighting the engine with a single broad spec that contains both shapes. Each run does what it's good at and stops.
+
+In practice, the split approach has cost ~7 min total engine time across both runs, plus ~10–15 min of human time around the runs (build, smoke test, commit). Single bundled MR, no scope inflation.
+
 ## SOS spike results (2026-05-17)
 
 Validated against the radar Gmail sync bug (S-10885). The LLM:
