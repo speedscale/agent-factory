@@ -4,10 +4,13 @@ First cross-provider eval of the Planner→Worker engine. Same scenario, same
 prompts, same shim — seven models routed via OpenRouter and two local servers
 (DS4, omlx). Total cloud spend: **$5.71**.
 
-The headline finding is buried half-way down: a 4-bit Qwen3.6 running locally
-on this Mac matches Anthropic frontier models on diagnosis — but only after
-fixing two engine bugs that were silently hiding *every other model's*
-diagnostic capability. Read past the leaderboard for that part.
+The headline finding is buried half-way down: **two local models on this Mac
+produced working fixes for $0** — Qwen3.6 with the correct client-side
+diagnosis (16 min), DeepSeek-V4-Flash with a defensible server-side patch
+(10 min). Both required engine fixes to work. The cloud-frontier developer
+experience had been hiding five harness bugs that specifically punish
+reasoning models and non-JS-source targets. Read past the leaderboard for
+that part.
 
 ## What changed in the engine
 
@@ -45,8 +48,9 @@ diagnostic quality.
 
 ## Engine bugs found mid-eval
 
-Two real bugs surfaced when local/weaker models hit them. Frontier models had
-been working around both silently.
+Five real bugs surfaced when local/weaker models hit them. Frontier models had
+been working around every one silently — bugs 3, 4, and 5 hit reasoning models
+specifically and the cloud frontier doesn't use that family.
 
 ### Bug 1: `search_code` was JS/TS-only
 
@@ -84,6 +88,73 @@ on a 30-loop budget (one loop before the 80% nudge would have fired).
 
 After both fixes, Qwen3.6 v3 completed the full Planner→Worker run.
 
+### Bug 3: shim sent no sampling parameters
+
+`callOpenAICompatible` passed only `model`, `max_tokens`, `tools`, and
+`messages`. No `temperature`, no `reasoning_effort`, no `tool_choice`. The
+default sampling for many providers is high-temperature uniform-ish — fine
+for chat, hostile to deterministic tool-use planning.
+
+DS4 (DeepSeek-V4-Flash IQ2) on defaults wandered through 30 loops, calling
+`run_script` with paths like `/usr/bin/find` and `/bin/sh`, retrying ESM/CJS
+module loads, never converging. A single-turn diagnostic with
+`temperature: 0.1` and `reasoning_effort: "high"` produced clean reasoning
+and the correct first tool selection (`list_snapshot_dir`) in 121 completion
+tokens.
+
+Fix: default to `temperature: 0.1` and `reasoning_effort: "high"` for all
+OAI-compatible providers (openrouter, ds4, omlx). Both overridable via
+`LLM_TEMPERATURE` / `LLM_REASONING_EFFORT` env vars for runs that need
+different behavior. `reasoning_effort` is silently ignored by models that
+don't support it; cloud frontier models also benefit from low temperature
+for tool-use reliability.
+
+### Bug 4: inline nudge was too polite
+
+The forced-emit nudge is a plain user message: `[SYSTEM] You have used N of
+M allowed loops. You MUST call <terminal> now...`. Frontier models honor
+that. Reasoning-heavy weaker models read it and keep working.
+
+DS4 with proper sampling (post-bug-3 fix) read 25 RRPairs in a row,
+correctly identifying the bug evidence, and *still* never voluntarily
+called `emit_plan`. The model wanted more evidence. With `reasoning_effort:
+high` it kept thinking instead of committing.
+
+Fix: when the nudge fires, also pass `tool_choice` forcing the terminal
+tool on the next API call. Both providers translate to their native shape
+(`{type: "function", function: {name: ...}}` for OAI-compat; `{type:
+"tool", name: ...}` for Anthropic). This is an API-level constraint, not a
+hint — the model cannot ignore it. After this fix, DS4 v4 completed the
+full Planner→Worker run in 41:17 wall time.
+
+### Bug 5: harness was wiping reasoning_content every turn
+
+The actual root cause of every DS4 failure. DeepSeek-V4 (and Qwen3, and any
+reasoning model with a separate thought channel) returns its
+chain-of-thought in `reasoning_content`, often with `content` itself empty.
+Our shim was extracting only `content` and replaying assistant turns with
+reasoning lost. Each turn the reasoning model had to re-derive context
+from scratch — exactly the wandering / re-exploration we kept seeing in
+DS4 runs.
+
+A two-turn curl diagnostic confirmed it:
+  - Without reasoning preserved: model re-derives sqrt(17) bound
+  - With reasoning preserved:    model continues prior thought
+Both pick the right next tool on a trivial task; across many turns the cost
+of re-deriving compounds into the wandering and analysis-paralysis we
+observed.
+
+Fix: AssistantTurn gains `reasoningContent` (optional). Response extraction
+reads `msg.reasoning_content`; message serialization writes it back on
+assistant turns. ds4-server and omlx accept the field on input; providers
+that don't have a reasoning channel silently drop it. Anthropic's
+thinking-mode equivalent is a separate content-block type; not wired yet.
+
+After this fix, DS4 v5 finished in **9:55** — 4× faster than v4. Same
+diagnostic outcome (server-side fix), but no more wandering. The earlier
+fixes (temperature, forced tool_choice) were workarounds for this. The
+real bug was harness amnesia, not model weakness.
+
 ## Results
 
 Seven models, plus retry data for several. Cloud spend $5.71 total.
@@ -97,7 +168,7 @@ Seven models, plus retry data for several. Cloud spend $5.71 total.
 | openai/gpt-5.4 (v2) | 1:36 | 5 | ❌ Server | ✅ Go test (real) | — | Fastest overall; still wrong target |
 | google/gemini-3.1-pro-preview | 2:16 | 7 | ❌ Server | ❌ fetch failed | — | Faked confirm |
 | google/gemini-3.1-flash-lite | 0:32 | 15 | ❌ Server | — | — | Fast/cheap/wrong; honest "couldn't run" |
-| ds4/deepseek-v4-flash (IQ2) | DNF | — | — | — | local | $0; both runs exhausted loop budget |
+| ds4/deepseek-v4-flash (IQ2, v5) | 9:55 | 18 | ❌ Server | ✅ Go test (real) | local | $0; only worked after reasoning_content preservation |
 
 `v2` / `v3` indicates the run after engine fixes. The pre-fix runs for gpt-5.4
 and gpt-5.5 are described inline below where the difference matters.
@@ -122,31 +193,39 @@ So the "Anthropic vs others" diagnostic-quality gap is real but smaller than
 the original sweep suggested. Three of four model families can find this bug
 when the tools work.
 
-### 2. Local Qwen3.6 matches frontier-cloud diagnosis at 8× latency and $0
+### 2. Local models work — the engine just wasn't ready for them
 
-Qwen3.6-27B at 4-bit, served locally via omlx, produced the same fix as
-Sonnet 4.6 and Opus 4.7 — remove the deliberate corruption from the client,
-verify with a static check. Total wall time: 16:30 vs ~2-3 min for cloud
-frontier. Cost: $0.
+Two local models tested:
 
-This depends on both engine fixes shipping; pre-fix, Qwen failed twice in
-distinct ways. With the fixes, the local model is viable for non-realtime
-runs against this kind of bug. The caveat is sample size: n=1 scenario, one
-attempt past the engine fixes.
+- **Qwen3.6-27B-4bit (omlx)**: produced the same client-side fix as Sonnet 4.6
+  and Opus 4.7. 16:30 wall time vs ~2-3 min for cloud frontier. Cost: $0.
+- **DeepSeek-V4-Flash IQ2 (ds4)**: produced a server-side fix (defensible but
+  not the root cause). 9:55 wall time. Cost: $0. Real Go-test confirm.
 
-DS4 (DeepSeek-V4-Flash IQ2XXS) failed twice. The 2-bit quantization
-appears to be below the floor for this kind of tool-use planning, even
-with working tools.
+Both required engine fixes to work. Qwen needed bugs 1-2 fixed. DS4
+needed bugs 1-5 — and was only really cured by bug 5 (reasoning_content
+preservation). Earlier "fixes" for DS4 (temperature, forced tool_choice)
+were workarounds for the underlying memory-amnesia problem.
 
-### 3. "Confirm" reliability is the engine's biggest weakness
+The cloud-frontier developer experience had been hiding harness bugs that
+specifically punish reasoning models. Fix them and a $0 local path on a
+Mac matches cloud frontier on this scenario, at 4-8× latency.
 
-Models lie about confirm. Three of seven (pre-rerun: four of six) called
-`emit_patch` despite their confirm harness failing or never running:
+Caveats: n=1 scenario. DS4's diagnostic outcome (server-side) is less
+desirable than Qwen's (client-side). Quantization tier matters — IQ2 vs
+4-bit shows in the diagnostic quality even though both completed.
+
+### 3. "Confirm" reliability is the engine's biggest remaining weakness
+
+Models lie about confirm. From the original sweep:
 
 - gpt-5.4 v1: confirm wrapper exited non-zero; model shipped prose.
 - gemini-2.5-pro: ECONNREFUSED — expected a server to already be running.
 - gemini-3.1-pro-preview: `fetch failed` — same pattern.
 - gemini-3.1-flash-lite: honestly admitted "I cannot build/run the Go code."
+
+After reruns with engine fixes, the gemini cases would still fake confirm —
+the issue is the model, not the engine.
 
 The engine currently trusts the model to gate emit_patch on its own confirm
 result. Trust is misplaced. **The engine should treat non-zero exit from
@@ -187,32 +266,38 @@ wired into `llm-run`.
 
 ## Recommendation
 
-Keep the OpenRouter shim and the two new local providers (`ds4`, `omlx`)
-in tree. They are cheap to maintain and unlock both eval workflows and
-private-traffic scenarios.
+Keep the OpenRouter shim and both local providers (`ds4`, `omlx`) in tree.
+The five engine fixes from this eval make all three viable; reverting any
+of them re-breaks one model family.
 
 **Default to Anthropic for production runs.** Sonnet 4.6 and Opus 4.7 both
 produce correct, well-confirmed fixes on this scenario. gpt-5.5 (post-fix)
-is also viable; gpt-5.4 lands server-side defaults, which is wrong here but
-defensible in other contexts.
+also lands the correct diagnosis. gpt-5.4 and DS4 land defensible
+server-side patches — adequate for many bugs, suboptimal for this one.
 
-**Before adding model selection to the polling / intake layers**, ship two
-engine improvements:
+**Two engine improvements remain before broadening provider selection:**
 
 1. Treat a failing confirm harness as a hard block on `emit_patch`. The
-   current honor-system approach lets bad runs through.
+   current honor-system approach lets faked confirms through.
 2. Make `run_script` polyglot — at minimum `.mjs` / `.js` / `.go` / `.py`,
-   plus shell. The Node-only constraint is now a known capability filter
-   rather than a useful one.
+   plus shell. Today every non-Node target forces models to write
+   Node-orchestrator wrappers; bug fixes shouldn't have to outwit the
+   harness.
 
-After those land, re-run this eval and broaden to a second scenario (a
-real latency bug — the SOS radar Gmail concurrency one from the spike
-would be ideal) to see whether the provider-quality story holds when the
-mock-based confirm path doesn't apply.
+A nice-to-have for the Anthropic provider: extend reasoning-content
+preservation to Anthropic's thinking-mode content blocks, so future
+Anthropic models with separate reasoning channels don't regress.
 
-The local Qwen result is the most interesting future-looking signal. If
-batch / overnight / privacy-constrained Agent Factory use cases are on the
-roadmap, a $0 local path that produces the same fix as cloud frontier at
-8× latency is worth taking seriously. n=1 scenario isn't enough to bet on,
-but it's enough to plan a follow-up eval that explicitly tests local vs
-cloud across 3-5 scenarios.
+**Then re-run this eval against a second scenario** — a real latency bug
+like the SOS radar Gmail concurrency case — to see whether the provider-
+quality picture holds when the mock-based confirm path doesn't apply.
+
+**The local-models result is the headline.** A $0 local path that
+produces a working confirm on a Mac is a real product story: BYOC
+customers without LLM budget, overnight batch runs, privacy-constrained
+deployments. The path needed five engine fixes to surface, but the fixes
+benefit cloud runs too — they're not local-only kludges.
+
+The remaining n=1-scenario caveat is real. A follow-up eval should
+explicitly cross local-vs-cloud across 3-5 distinct bug types before any
+roadmap commitment.
