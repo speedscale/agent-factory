@@ -54,6 +54,9 @@ export interface CallLLMParams {
   tools: ToolDef[];
   messages: ConvMessage[];
   maxTokens: number;
+  /** When set, force the next response to call exactly this tool. Used by the
+   * agent loop to terminate weaker models that ignore the forced-emit nudge. */
+  forceToolName?: string;
 }
 
 export async function callLLM(params: CallLLMParams): Promise<AssistantTurn> {
@@ -119,7 +122,10 @@ async function callAnthropic(params: CallLLMParams): Promise<AssistantTurn> {
     max_tokens: params.maxTokens,
     system: params.system,
     tools,
-    messages
+    messages,
+    ...(params.forceToolName
+      ? { tool_choice: { type: "tool" as const, name: params.forceToolName } }
+      : {})
   });
 
   const textBlocks: TextBlock[] = response.content
@@ -218,6 +224,9 @@ async function callOpenAICompatible(client: OpenAI, params: CallLLMParams): Prom
     temperature,
     tools,
     messages,
+    ...(params.forceToolName
+      ? { tool_choice: { type: "function" as const, function: { name: params.forceToolName } } }
+      : {}),
     // reasoning_effort isn't in the official OpenAI SDK types yet; cast through.
     ...({ reasoning_effort: reasoningEffort } as object)
   });

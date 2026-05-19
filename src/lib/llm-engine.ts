@@ -335,6 +335,9 @@ async function agentLoop(
   // models that bail on end_turn before the nudge ever fires.
   const nudgeAt = Math.floor(maxLoops * 0.6);
   let nudgeSent = false;
+  // When set, the next callLLM forces the terminal tool via tool_choice.
+  // Weaker models ignore the inline nudge text; the API-level force does not.
+  let forceNextTurn = false;
 
   if (verbose) console.error(`[engine] provider=${provider} model=${model}`);
 
@@ -349,6 +352,7 @@ async function agentLoop(
     // Inject a forced-emit nudge into the message stream at the scheduled budget point.
     if (loops === nudgeAt && !nudgeSent) {
       nudgeSent = true;
+      forceNextTurn = true;
       messages.push({ role: "user", content: nudgeMessage() });
     }
 
@@ -358,8 +362,10 @@ async function agentLoop(
       system: systemPrompt,
       tools: TOOLS,
       messages,
-      maxTokens: MAX_TOKENS
+      maxTokens: MAX_TOKENS,
+      forceToolName: forceNextTurn ? terminalToolName : undefined
     });
+    forceNextTurn = false;
 
     if (verbose) console.error(`[engine] stop_reason=${turn.stopReason}`);
 
@@ -386,6 +392,7 @@ async function agentLoop(
       }
       messages.push({ role: "user", content: nudgeMessage() });
       nudgeSent = true;
+      forceNextTurn = true;
       continue;
     }
 

@@ -30,6 +30,16 @@ The engine proposes. Tools execute. Humans approve.
 - `QualityReport` — Validate phase output (before/after metric, regression diff)
 - Artifact filenames in `artifacts/<run-name>/`
 
+## Development setup
+
+After cloning, activate the pre-commit hook that checks for sensitive data (internal ticket IDs, secrets, person names):
+
+```bash
+git config core.hooksPath .githooks
+```
+
+The hook runs automatically on every commit. If it fires on a false positive, remove the flagged content or add a `nocheck` comment on that line.
+
 ## Development workflow
 
 ```bash

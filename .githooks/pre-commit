@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Blocks commits that contain patterns likely to leak internal/sensitive data.
+# To install: git config core.hooksPath .githooks
+
+set -euo pipefail
+
+STAGED=$(git diff --cached --name-only)
+[ -z "$STAGED" ] && exit 0
+
+DIFF=$(git diff --cached -U0 | grep '^+' | grep -v '^+++' || true)
+[ -z "$DIFF" ] && echo "OK - no sensitive data detected." && exit 0
+
+python3 - "$DIFF" <<'PYEOF'
+import sys, re
+
+diff = sys.argv[1]
+
+checks = [
+    ("ticket-id",    r'(?<![A-Za-z])(S|SPD)-\d{4,6}(?!\d)'),
+    ("person-name",  r'(?<![A-Za-z])(Shaun)(?![A-Za-z])'),  # nocheck
+    ("aws-key",      r'(AKIA|ASIA)[A-Z0-9]{16}'),
+    ("private-key",  r'BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY'),
+    ("hex-secret",   r'[0-9a-f]{40,}'),
+]
+
+failed = False
+for label, pattern in checks:
+    for line in diff.splitlines():
+        if 'nocheck' in line:
+            continue
+        m = re.search(pattern, line)
+        if m:
+            preview = line[:120]
+            print(f"  [{label}] {preview}")
+            failed = True
+            break
+
+if failed:
+    print("\nBLOCKED: sensitive data detected above.")
+    print("Remove the flagged content, or add '# nocheck' on the line if it is a false positive.")
+    sys.exit(1)
+
+print("OK - no sensitive data detected.")
+PYEOF

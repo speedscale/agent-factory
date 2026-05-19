@@ -10,31 +10,31 @@ The SOS manual spike (2026-05-17) proved the loop works end-to-end. The outstand
 
 ---
 
-## Active: complete the SOS spike
+## Active: complete the internal spike
 
-### S-10885 observe step
+### Observe step — Gmail concurrency fix
 
-MR-356 (Gmail concurrency fix) is open. After merge:
+Post-deploy validation after the Gmail concurrency MR merges:
 
 1. Pull a new prod snapshot 24–72h post-deploy with `--filter '(cluster IS "prod")'`
-2. Confirm Gmail 429 rate on `gmail.googleapis.com/messages.get` dropped to near zero
+2. Confirm Gmail 429 rate on the messages API dropped to near zero
 3. Store the post-deploy snapshot as the new evidence baseline
 
 Exit criteria: 429 rate ≤ 1% in the post-deploy snapshot.
 
-### S-10886 API performance
+### API performance — pipeline and directory endpoints
 
-Radar `/api/pipeline/opportunities` and `/api/directory` endpoints are slow. Work this using the same reproduce → fix → confirm workflow:
+Radar `/api/pipeline/opportunities` and `/api/users/directory` endpoints are slow. Work this using the same reproduce → fix → confirm workflow:
 
-1. Pull fresh radar prod snapshot
+1. Pull fresh prod snapshot
 2. Identify P95 latency baseline for the affected endpoints
 3. Reproduce the latency in a harness
 4. Implement caching or query optimization
 5. Confirm P95 dropped below threshold
 
-### S-10884 usr-mgmt unblock
+### usr-mgmt unblock
 
-Waiting on Shaun to instrument `usr-mgmt` in the prod cluster. Once done:
+Waiting on prod cluster instrumentation for `usr-mgmt`. Once done:
 
 1. Pull prod snapshot with `--filter '(cluster IS "prod")'`
 2. Run data survey (originally planned)
@@ -70,9 +70,22 @@ Given a named metric and the source code context, the LLM should generate the re
 
 Write a dedicated prompt for harness generation, separate from the main Planner prompt.
 
-### 4 — Design review
+### 4 — Ticketing system intake
 
-Half-day session: Ken + Matt + one customer-facing person. Review SOS spike learnings, confirm §12 priority order, decide BYOC Helm chart scope and timeline.
+The intake API currently requires a hand-crafted `AgentApp` manifest. The Planner should be able to accept a ticket ID from a supported system (Linear, Jira, Google Sheets) and pull title, description, acceptance criteria, and labels automatically to seed the `AgentRun`.
+
+Required:
+- Pluggable intake adapter interface: `resolveTicket(source, id) → AgentRunSeed`
+- Linear adapter (first): fetch issue by ID via Linear API, map title/description/labels to `AgentRunSeed`
+- `AgentApp.spec.intake.source` field: `linear | jira | gsheet | manual` (default: `manual`)
+- On run create, if source ≠ `manual`, fetch ticket and populate `AgentRun.spec` before enqueueing
+- After MR merges, mark the source ticket Done (write-back)
+
+Jira and Google Sheets adapters deferred until Linear adapter is validated in production.
+
+### 5 — Design review
+
+Half-day session: engineering lead + product + one customer-facing person. Review spike learnings, confirm near-term priority order, decide BYOC Helm chart scope and timeline.
 
 ---
 
