@@ -29,6 +29,11 @@ export interface ToolDef {
     }>;
     required?: string[];
   };
+  /** Tools that must have been called at least once in this run before this
+   * tool can dispatch. Engine returns a soft error (no error-budget hit) if
+   * any are unmet. Used to catch blind-edit patterns like write_file before
+   * read_file. Optional — most tools have no prerequisites. */
+  requires?: string[];
 }
 
 export interface ToolUse {

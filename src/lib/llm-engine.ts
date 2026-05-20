@@ -32,11 +32,32 @@ import {
 } from "./llm-providers.js";
 import { validateBaselineEvidence, type BaselineEvidence } from "./source-mode-validation.js";
 import { diffDeclarations } from "./declaration-diff.js";
+import {
+  rescueToolCall,
+  validateToolArgs,
+  checkPrerequisites,
+  nudgeTierFor,
+  buildNudgeMessage,
+  compactMessages,
+  estimateChars,
+  chooseCompactionPhase,
+  ToolResolutionError,
+  type NudgeTier,
+  type CompactionPhase
+} from "./engine-hardening.js";
 
 const execAsync = promisify(exec);
 
 const MAX_TOKENS = 8192;
 const MAX_LOOPS = parseInt(process.env.ENGINE_MAX_LOOPS ?? "50", 10);
+/** Abort the run after this many CONSECUTIVE execution errors. Resolution
+ * errors (missing args, etc.) and prereq soft-errors do NOT count — the
+ * model can self-correct those cheaply. Override with ENGINE_MAX_CONSECUTIVE_ERRORS. */
+const MAX_CONSECUTIVE_ERRORS = parseInt(process.env.ENGINE_MAX_CONSECUTIVE_ERRORS ?? "5", 10);
+/** When the message history estimate exceeds 70% of this budget, compaction
+ * fires. 0 disables compaction. Default sized for ~200k-token windows
+ * (4 chars/token * 200k ≈ 800k). Override with ENGINE_CONTEXT_BUDGET_CHARS. */
+const CONTEXT_BUDGET_CHARS = parseInt(process.env.ENGINE_CONTEXT_BUDGET_CHARS ?? "800000", 10);
 
 export interface EmitPlanResult {
   plan: AgentPlan;
@@ -537,7 +558,13 @@ const TOOLS: ToolDef[] = [
 
 // ---------- tool dispatch ----------
 
-async function dispatchTool(name: string, input: Record<string, string>): Promise<string> {
+/**
+ * Raw tool dispatch — same switch as before, returns the tool's string output.
+ * Individual tools already catch their own runtime errors and return strings
+ * prefixed with "error:" on failure, which dispatchToolHardened uses to
+ * classify the call as an execution error for budget accounting.
+ */
+async function dispatchToolRaw(name: string, input: Record<string, string>): Promise<string> {
   switch (name) {
     case "read_file": return toolReadFile(input.path);
     case "search_code": return toolSearchCode(input.pattern, input.dir);
@@ -547,8 +574,66 @@ async function dispatchTool(name: string, input: Record<string, string>): Promis
     case "run_script": return toolRunScript(input.path);
     case "run_shell": return toolRunShell(input.command, input.cwd);
     case "compare_file_declarations": return toolCompareFileDeclarations(input.path);
-    default: return `unknown tool: ${name}`;
+    default: throw new ToolResolutionError(`unknown tool: ${name}`);
   }
+}
+
+export type DispatchOutcome =
+  /** Tool ran and returned useful output. Does not increment the error budget. */
+  | { kind: "ok"; content: string }
+  /** The call was malformed (unknown tool, missing/wrong args) or a prereq was unmet.
+   * The model can self-correct without burning the consecutive-error budget. */
+  | { kind: "softError"; content: string }
+  /** The tool dispatched but its underlying operation failed. Counts toward the
+   * consecutive-error budget that aborts a run that's gotten stuck. */
+  | { kind: "executionError"; content: string };
+
+/**
+ * Hardened tool dispatch. Validates args, checks per-tool prerequisites, runs
+ * the tool, and classifies the outcome so the agent loop can make sensible
+ * decisions about the error budget. Pure dispatch concerns live here; nudges
+ * and compaction live in the loop.
+ */
+async function dispatchToolHardened(
+  toolUse: { name: string; input: Record<string, string> },
+  toolDefs: ToolDef[],
+  calledTools: Set<string>
+): Promise<DispatchOutcome> {
+  const toolDef = toolDefs.find((t) => t.name === toolUse.name);
+  if (!toolDef) {
+    return { kind: "softError", content: `unknown tool: ${toolUse.name}` };
+  }
+  try {
+    validateToolArgs(toolDef, toolUse.input);
+  } catch (err) {
+    if (err instanceof ToolResolutionError) {
+      return { kind: "softError", content: err.message };
+    }
+    throw err;
+  }
+  const prereqError = checkPrerequisites(toolDef, calledTools);
+  if (prereqError) {
+    return { kind: "softError", content: prereqError };
+  }
+  let content: string;
+  try {
+    content = await dispatchToolRaw(toolUse.name, toolUse.input);
+  } catch (err) {
+    if (err instanceof ToolResolutionError) {
+      return { kind: "softError", content: err.message };
+    }
+    return {
+      kind: "executionError",
+      content: `error: ${err instanceof Error ? err.message : String(err)}`
+    };
+  }
+  // Individual tool impls catch their own errors and return "error: ..." strings.
+  // Treat that as an execution error for budget purposes — same behavior as if
+  // the tool had thrown.
+  if (content.startsWith("error:")) {
+    return { kind: "executionError", content };
+  }
+  return { kind: "ok", content };
 }
 
 // ---------- agentic loop ----------
@@ -565,30 +650,61 @@ async function agentLoop(
 ): Promise<Record<string, string>> {
   const messages: ConvMessage[] = [{ role: "user", content: userMessage }];
   let loops = 0;
-  // Inject a "you must emit now" nudge when 60% of budget is used.
-  // Earlier than 60% wastes budget; later (e.g. 80%) is too late for weaker
-  // models that bail on end_turn before the nudge ever fires.
-  const nudgeAt = Math.floor(maxLoops * 0.6);
-  let nudgeSent = false;
+  // Tracks every tool name that has been successfully dispatched in this run.
+  // Used by checkPrerequisites (per-tool prereqs catch blind-edit patterns
+  // like write_file before read_file).
+  const calledTools = new Set<string>();
+  // Highest nudge tier that has fired so far. Nudges escalate: 0 → 1 (gentle)
+  // → 2 (sharp + history) → 3 (hard force via tool_choice). Tier 3 was the
+  // historical single nudge at 60% budget; the lower tiers give weaker models
+  // a chance to self-terminate before we have to API-force them.
+  let nudgeTierFired: NudgeTier = 0;
   // When set, the next callLLM forces the terminal tool via tool_choice.
   // Weaker models ignore the inline nudge text; the API-level force does not.
   let forceNextTurn = false;
+  // Consecutive ToolExecutionError count. Resets on any successful tool
+  // dispatch. Aborts the run when MAX_CONSECUTIVE_ERRORS is hit — the model
+  // is stuck and more loops won't help.
+  let consecutiveErrors = 0;
 
   if (verbose) console.error(`[engine] provider=${provider} model=${model}`);
-
-  function nudgeMessage(): string {
-    return `[SYSTEM] You have used ${loops} of ${maxLoops} allowed loops. You MUST call ${terminalToolName} now with whatever findings you have. Do not read any more files or call any other tools first.`;
-  }
 
   while (loops < maxLoops) {
     loops++;
     if (verbose) console.error(`[engine] loop ${loops}/${maxLoops}`);
 
-    // Inject a forced-emit nudge into the message stream at the scheduled budget point.
-    if (loops === nudgeAt && !nudgeSent) {
-      nudgeSent = true;
-      forceNextTurn = true;
-      messages.push({ role: "user", content: nudgeMessage() });
+    // Escalating nudges — each tier fires once at its threshold. tier3
+    // additionally forces the terminal tool via tool_choice next turn,
+    // matching the original single-nudge behavior.
+    const dueTier = nudgeTierFor(loops, maxLoops);
+    if (dueTier > nudgeTierFired) {
+      const msg = buildNudgeMessage(dueTier, loops, maxLoops, terminalToolName, [...calledTools]);
+      if (msg) messages.push({ role: "user", content: msg });
+      nudgeTierFired = dueTier;
+      if (dueTier === 3) forceNextTurn = true;
+      if (verbose) console.error(`[engine] nudge tier ${dueTier} fired at loop ${loops}`);
+    }
+
+    // Deterministic compaction before each call when the history is large.
+    // Pure function — no LLM call. Phases escalate: drop nudges → drop old
+    // tool_results → strip reasoning. The first user message is always preserved.
+    if (CONTEXT_BUDGET_CHARS > 0) {
+      const chars = estimateChars(messages);
+      const phase = chooseCompactionPhase(chars, CONTEXT_BUDGET_CHARS);
+      if (phase !== 0) {
+        const compacted = compactMessages(messages, phase as CompactionPhase);
+        if (verbose) {
+          console.error(
+            `[engine] compaction phase=${phase} chars ${chars}→${compacted.chars} ` +
+            `(dropped ${compacted.stats.nudgesDropped} nudges, ` +
+            `${compacted.stats.toolResultsDropped} tool_results, ` +
+            `truncated ${compacted.stats.toolResultsTruncated}, ` +
+            `stripped ${compacted.stats.reasoningBlocksStripped} reasoning blocks)`
+          );
+        }
+        messages.length = 0;
+        messages.push(...compacted.messages);
+      }
     }
 
     const turn: AssistantTurn = await callLLM({
@@ -608,6 +724,17 @@ async function agentLoop(
       console.error(`[engine] ${turn.textBlocks.map((b) => b.text.slice(0, 200)).join(" ")}`);
     }
 
+    // Rescue parsing — some models emit a tool call as fenced markdown JSON
+    // instead of a structured tool_use block. Extract those before treating
+    // the turn as a no-op, saving a loop iteration on a re-prompt.
+    if (turn.toolUses.length === 0 && turn.textBlocks.length > 0) {
+      const rescuedAll = turn.textBlocks.flatMap((tb) => rescueToolCall(tb.text, tools));
+      if (rescuedAll.length > 0) {
+        if (verbose) console.error(`[engine] rescued ${rescuedAll.length} tool call(s) from fenced text`);
+        turn.toolUses = rescuedAll;
+      }
+    }
+
     // Check if the terminal tool was called
     const terminal = turn.toolUses.find((t) => t.name === terminalToolName);
     if (terminal) {
@@ -616,17 +743,18 @@ async function agentLoop(
     }
 
     if (turn.stopReason === "end_turn" && turn.toolUses.length === 0) {
-      // Weaker models reach a hypothesis and then just stop without calling the
-      // terminal tool. Don't fail — record the model's parting text, inject a
-      // forced-emit nudge, and continue. If we've already nudged, we let the
-      // loop budget catch this (throwing only on max-iterations).
-      if (verbose) console.error(`[engine] end_turn without ${terminalToolName} — injecting forced-emit nudge`);
+      // Weaker models reach a hypothesis and then just stop without calling
+      // the terminal tool. Inject a tier3 nudge and force the terminal tool
+      // next turn. If we've already nudged at tier3, let the loop budget
+      // catch this on the next iteration.
+      if (verbose) console.error(`[engine] end_turn without ${terminalToolName} — forcing terminal tool next turn`);
       if (turn.textBlocks.length > 0) {
         // Keep the assistant's reasoning in history so the next turn can build on it.
         messages.push({ role: "assistant", turn });
       }
-      messages.push({ role: "user", content: nudgeMessage() });
-      nudgeSent = true;
+      const msg = buildNudgeMessage(3, loops, maxLoops, terminalToolName, [...calledTools]);
+      messages.push({ role: "user", content: msg });
+      nudgeTierFired = 3;
       forceNextTurn = true;
       continue;
     }
@@ -634,17 +762,33 @@ async function agentLoop(
     // Add assistant turn to history
     messages.push({ role: "assistant", turn });
 
-    // Execute all non-terminal tool calls and add results
+    // Execute all non-terminal tool calls, classify outcomes, and gate on
+    // the consecutive-error budget.
     const toolResults: { toolUseId: string; content: string }[] = [];
     for (const toolUse of turn.toolUses) {
       if (toolUse.name === terminalToolName) continue;
       if (verbose) console.error(`[engine] tool: ${toolUse.name}(${JSON.stringify(toolUse.input).slice(0, 100)})`);
-      const result = await dispatchTool(toolUse.name, toolUse.input);
-      if (verbose) console.error(`[engine] result: ${result.slice(0, 150)}`);
-      toolResults.push({ toolUseId: toolUse.id, content: result });
+      const outcome = await dispatchToolHardened(toolUse, tools, calledTools);
+      if (verbose) console.error(`[engine] result(${outcome.kind}): ${outcome.content.slice(0, 150)}`);
+      toolResults.push({ toolUseId: toolUse.id, content: outcome.content });
+      if (outcome.kind === "ok") {
+        calledTools.add(toolUse.name);
+        consecutiveErrors = 0;
+      } else if (outcome.kind === "executionError") {
+        consecutiveErrors++;
+      }
+      // softError: don't count toward budget, don't add to calledTools. The
+      // model gets the error in tool_result content and can self-correct.
     }
 
     messages.push({ role: "user", toolResults });
+
+    if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+      throw new Error(
+        `agent loop aborted after ${consecutiveErrors} consecutive tool execution errors ` +
+        `(MAX_CONSECUTIVE_ERRORS=${MAX_CONSECUTIVE_ERRORS}). The model is not making progress.`
+      );
+    }
   }
 
   throw new Error(`agent loop exceeded ${maxLoops} iterations`);
