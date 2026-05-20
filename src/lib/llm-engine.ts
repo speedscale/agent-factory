@@ -31,6 +31,7 @@ import {
   type ToolDef
 } from "./llm-providers.js";
 import { validateBaselineEvidence, type BaselineEvidence } from "./source-mode-validation.js";
+import { diffDeclarations } from "./declaration-diff.js";
 
 const execAsync = promisify(exec);
 
@@ -235,6 +236,94 @@ async function toolRunScript(scriptPath: string): Promise<string> {
 }
 
 /**
+ * Compare top-level declarations in a file vs. its pre-patch version on the
+ * base branch. Used by the Evaluator to detect destructive Worker rewrites
+ * (functions silently dropped during a full-file write_file overwrite).
+ *
+ * Input: an absolute path to a file in the post-patch worktree.
+ *
+ * The tool resolves the git worktree root from the path, determines the base
+ * branch (origin/HEAD, falling back to master then main), and runs
+ * `git show <base>:<rel-path>` to obtain the pre-patch content. It then
+ * diffs the two sets of top-level declarations.
+ *
+ * Returns a JSON blob the Evaluator can read directly:
+ *   { added: [...], removed: [...], preserved_count: N }
+ *
+ * `removed` is the load-bearing signal — non-empty on a patch that didn't
+ * ask for deletions = destructive rewrite. The Evaluator's prompt instructs
+ * it to fail-verdict in that case.
+ */
+async function toolCompareFileDeclarations(filePath: string): Promise<string> {
+  try {
+    const { stdout: rootOut } = await execAsync(
+      `git -C ${JSON.stringify(path.dirname(filePath))} rev-parse --show-toplevel`
+    );
+    const repoRoot = rootOut.trim();
+    const relPath = path.relative(repoRoot, filePath);
+
+    // Detect base branch — try origin/HEAD first, then master, then main.
+    let baseRef = "";
+    try {
+      const { stdout } = await execAsync(
+        `git -C ${JSON.stringify(repoRoot)} symbolic-ref --short refs/remotes/origin/HEAD`
+      );
+      baseRef = stdout.trim().split("/").pop() ?? "";
+    } catch { /* fall through */ }
+    if (!baseRef) {
+      for (const candidate of ["master", "main"]) {
+        try {
+          await execAsync(`git -C ${JSON.stringify(repoRoot)} rev-parse --verify ${candidate}`);
+          baseRef = candidate;
+          break;
+        } catch { /* try next */ }
+      }
+    }
+    if (!baseRef) {
+      return `error: could not determine base branch for ${filePath}`;
+    }
+
+    let originalContent: string;
+    try {
+      const { stdout } = await execAsync(
+        `git -C ${JSON.stringify(repoRoot)} show ${JSON.stringify(baseRef + ":" + relPath)}`,
+        { maxBuffer: 8 * 1024 * 1024 }
+      );
+      originalContent = stdout;
+    } catch (err) {
+      // File didn't exist on the base branch — it's a new file. Report this
+      // as added=<all>, removed=[].
+      const e = err as { stderr?: string };
+      if (e.stderr && /exists on disk, but not in|does not exist/.test(e.stderr)) {
+        const patchedContent = await readFile(filePath, "utf8");
+        const diff = diffDeclarations("", patchedContent);
+        return JSON.stringify({
+          file: relPath,
+          baseRef,
+          note: "file is new — not present on base branch",
+          added: diff.added,
+          removed: diff.removed,
+          preserved_count: diff.preserved.length
+        });
+      }
+      return `error: failed to read ${baseRef}:${relPath} — ${e.stderr ?? String(err)}`;
+    }
+
+    const patchedContent = await readFile(filePath, "utf8");
+    const diff = diffDeclarations(originalContent, patchedContent);
+    return JSON.stringify({
+      file: relPath,
+      baseRef,
+      added: diff.added,
+      removed: diff.removed,
+      preserved_count: diff.preserved.length
+    });
+  } catch (err) {
+    return `error: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
+/**
  * Run an arbitrary shell command. Used in source mode where the confirm
  * harness is a native unit test runner (`go test`, `npm test`, `pytest`).
  * 90s timeout — short enough that the model has to write focused tests, long
@@ -314,6 +403,17 @@ const TOOLS: ToolDef[] = [
     inputSchema: {
       type: "object" as const,
       properties: { path: { type: "string", description: "Absolute path to the .mjs or .js script to run" } },
+      required: ["path"]
+    }
+  },
+  {
+    name: "compare_file_declarations",
+    description: "Diff the top-level declarations (functions, types, classes, exports) of a file against its pre-patch version on the git base branch. Returns JSON with added[] and removed[] lists. Use this in the Evaluator phase to detect destructive Worker rewrites: a non-empty `removed` list on a patch that didn't explicitly ask for deletions means the Worker silently dropped functions during a full-file overwrite. Call this on every file the Worker modified.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        path: { type: "string", description: "Absolute path to the patched file (in the Worker's worktree)" }
+      },
       required: ["path"]
     }
   },
@@ -446,6 +546,7 @@ async function dispatchTool(name: string, input: Record<string, string>): Promis
     case "write_file": return toolWriteFile(input.path, input.content);
     case "run_script": return toolRunScript(input.path);
     case "run_shell": return toolRunShell(input.command, input.cwd);
+    case "compare_file_declarations": return toolCompareFileDeclarations(input.path);
     default: return `unknown tool: ${name}`;
   }
 }
@@ -640,21 +741,24 @@ A Planner has produced a plan and a Worker has produced a patch with a confirm h
 
 Tasks:
 1. Read the spec carefully. Enumerate every distinct requirement — numbered items, bulleted items, sentences with "should/must/needs to". Quote them.
-2. For each requirement, decide whether the patch reflects it. Use read_file on the patched source and search_code to verify. The patch field in the input shows what changed, but check the file directly — agents sometimes describe a change differently than the actual diff.
-3. Read the confirm harness (if a path was provided) and decide whether it actually exercises the planned signal. Grade the harness by its shape:
+2. **Destructive-rewrite check (MANDATORY).** Call compare_file_declarations on every file the Worker modified (from the patch "Target file" field). The tool returns JSON with added[] and removed[] arrays listing top-level declarations that appeared or disappeared between the base branch and the patched file. Rules:
+   - removed[] MUST be empty unless the spec explicitly asked to delete those declarations. Any unexplained name in removed[] is a destructive rewrite (Worker silently dropped code while overwriting the whole file with write_file). Fail-verdict.
+   - added[] is normally OK — new tests, new helpers for the fix. But check that added names belong to the fix and aren't unrelated.
+3. For each spec requirement, decide whether the patch reflects it. Use read_file on the patched source and search_code to verify. The patch field in the input shows what changed, but check the file directly — agents sometimes describe a change differently than the actual diff.
+4. Read the confirm harness (if a path was provided) and decide whether it actually exercises the planned signal. Grade the harness by its shape:
    - Wire harness (traffic mode): a Node script that mocks the upstream and measures a metric. Trustworthy = the metric variable is computed from observed calls, not hardcoded, and the assertion compares to the planned threshold.
    - Unit test (source mode): a *_test.go / .test.ts / test_*.py file. Trustworthy = the assertion exercises the patched code branch, fails on the unpatched code, and doesn't just assert on a constant.
    - Source-grep / log-line / behavior-check (source mode): a small shell or node script. Trustworthy = it actually invokes/reads the patched code path and the assertion fails if the fix is removed.
    - In ALL shapes, a harness that "passes" by checking string equality on a hardcoded value or by reading the source instead of running it is NOT trustworthy.
-4. Call emit_eval_report with your findings.
+5. Call emit_eval_report with your findings.
 
 Rules:
 - You have READ-ONLY tools. Do not modify any files.
 - Be strict about missed requirements. If the spec says "add a --dry-run flag" and you can't find a --dry-run flag in the patch or source, that's a missed requirement, not a "minor gap."
-- "pass" verdict requires ALL spec requirements addressed AND confirm harness trustworthy.
+- "pass" verdict requires ALL spec requirements addressed AND confirm harness trustworthy AND no unjustified deletions in compare_file_declarations.
 - "partial" = core fix landed but some requirements missing OR harness is weak (e.g. mocks the thing being tested).
-- "fail" = the core fix doesn't address the central bug, or the patch is plainly wrong.
-- Do not call emit_eval_report until you have actually read the patched source file.
+- "fail" = the core fix doesn't address the central bug, the patch is plainly wrong, OR compare_file_declarations reports removed declarations the spec didn't authorize.
+- Do not call emit_eval_report until you have actually read the patched source file AND called compare_file_declarations on every file the Worker modified.
 
 STOPPING RULE:
 By loop 15, emit the report with whatever findings you have. Do not keep exploring once the question is answered.
@@ -674,9 +778,11 @@ export async function runEvaluator(
   patchResult: EmitPatchResult,
   opts: LLMRunOptions
 ): Promise<EmitEvalReportResult> {
-  // Read-only subset of tools — no write_file, no run_script.
+  // Read-only subset of tools — no write_file, no run_script. Plus
+  // compare_file_declarations, which is read-only (git show + regex) and
+  // catches destructive Worker rewrites.
   const evalTools: ToolDef[] = TOOLS.filter((t) =>
-    ["read_file", "search_code", "list_snapshot_dir", "read_rrpair", "emit_eval_report"].includes(t.name)
+    ["read_file", "search_code", "list_snapshot_dir", "read_rrpair", "compare_file_declarations", "emit_eval_report"].includes(t.name)
   );
 
   const isSource = "failingAssertion" in planResult;
