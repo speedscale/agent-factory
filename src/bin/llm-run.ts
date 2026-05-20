@@ -29,9 +29,11 @@
 
 import path from "node:path";
 import { exec } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, writeFile, readdir, stat } from "node:fs/promises";
 import { promisify } from "node:util";
-import { runPlanner, runWorker, runEvaluator } from "../lib/llm-engine.js";
+import { runPlanner, runWorker, runPlannerSource, runWorkerSource, runEvaluator } from "../lib/llm-engine.js";
+import type { EmitPlanResult, EmitPlanSourceResult, AnyPlanResult } from "../lib/llm-engine.js";
+import { classifySpec } from "../lib/spec-classifier.js";
 
 const execAsync = promisify(exec);
 
@@ -59,6 +61,19 @@ function slugify(title: string): string {
   return title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 50);
 }
 
+async function snapshotHasContent(dir: string | undefined): Promise<boolean> {
+  if (!dir) return false;
+  try {
+    const stats = await stat(dir);
+    if (!stats.isDirectory()) return false;
+    const entries = await readdir(dir);
+    // Any non-hidden entry is enough — the directory contains *something*.
+    return entries.some((e) => !e.startsWith("."));
+  } catch {
+    return false;
+  }
+}
+
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
 
@@ -79,23 +94,52 @@ async function main(): Promise<void> {
   const provider = providerArg as "anthropic" | "openrouter" | "ds4" | "omlx";
   const model = getArg(argv, ["--model", "-m"]);
 
-  if (!snapshotDir) {
-    console.error("usage: llm-run --snapshot <dir> [--source <dir>] [--repo <dir>] [--branch <name>] [--title <str>] [--body <str>] [--workdir <dir>] [--provider anthropic|openrouter|ds4|omlx] [--model <id>] [--verbose]");
+  const modeArg = (getArg(argv, ["--mode"]) ?? "auto").toLowerCase();
+  if (modeArg !== "auto" && modeArg !== "traffic" && modeArg !== "source") {
+    console.error(`unknown mode: ${modeArg}. Expected one of: auto, traffic, source`);
+    process.exit(1);
+  }
+  const labelsArg = getArg(argv, ["--labels"]);
+  const labels = labelsArg ? labelsArg.split(",").map((s) => s.trim()).filter(Boolean) : undefined;
+
+  // Decide mode. In traffic mode a snapshot is required; in source mode it's optional.
+  let mode: "traffic" | "source";
+  let classifierRationale: string[] | undefined;
+  let classifierScores: { traffic: number; source: number } | undefined;
+  if (modeArg === "traffic" || modeArg === "source") {
+    mode = modeArg;
+  } else {
+    const snapshotAvailable = await snapshotHasContent(snapshotDir);
+    const c = classifySpec({ title, body, labels, snapshotAvailable });
+    classifierRationale = c.rationale;
+    classifierScores = c.scores;
+    // "mixed" today picks the dominant signal and emits a warning; future work
+    // is to split into two child runs. The operator can override with --mode.
+    mode = c.mode === "mixed"
+      ? (c.scores.traffic >= c.scores.source ? "traffic" : "source")
+      : c.mode;
+    if (c.mode === "mixed") {
+      console.warn(`[classifier] mixed-shape spec detected (traffic=${c.scores.traffic}, source=${c.scores.source}); picking ${mode} for this run. Consider splitting into two dispatches.`);
+    }
+  }
+
+  if (mode === "traffic" && !snapshotDir) {
+    console.error("traffic mode requires --snapshot <dir>. Use --mode source (or omit and let the classifier choose) for tickets without wire evidence.");
+    console.error("usage: llm-run [--mode auto|traffic|source] [--snapshot <dir>] [--source <dir>] [--labels a,b,c] [--repo <dir>] [--branch <name>] [--title <str>] [--body <str>] [--workdir <dir>] [--provider anthropic|openrouter|ds4|omlx] [--model <id>] [--verbose]");
     process.exit(1);
   }
 
   await mkdir(workDir, { recursive: true });
 
-  console.log(JSON.stringify({ phase: "start", title, snapshotDir, sourceDir, repoDir, branchName, workDir, provider, model }, null, 2));
+  console.log(JSON.stringify({ phase: "start", title, mode, snapshotDir, sourceDir, repoDir, branchName, workDir, provider, model, classifierRationale, classifierScores }, null, 2));
 
   // ---- Planner phase ----
   const plannerStart = Date.now();
-  console.log("\n=== PLANNER PHASE ===");
+  console.log(`\n=== PLANNER PHASE (${mode}) ===`);
 
-  const planResult = await runPlanner(
-    { title, body },
-    { snapshotDir, sourceDir, workDir, verbose, provider, model }
-  );
+  const planResult: AnyPlanResult = mode === "traffic"
+    ? await runPlanner({ title, body }, { snapshotDir, sourceDir, workDir, verbose, provider, model })
+    : { ...await runPlannerSource({ title, body }, { snapshotDir, sourceDir, workDir, verbose, provider, model }), mode: "source" as const };
 
   const plannerMs = Date.now() - plannerStart;
   const planOutput = path.join(workDir, "plan.json");
@@ -104,21 +148,23 @@ async function main(): Promise<void> {
   console.log(JSON.stringify({
     phase: "planned",
     durationMs: plannerMs,
+    mode,
     summary: planResult.plan.spec.summary,
     hypothesis: planResult.plan.spec.hypothesis,
-    metric: planResult.metric,
-    baseline: planResult.baseline,
+    metric: mode === "traffic" ? (planResult as EmitPlanResult).metric : undefined,
+    baseline: mode === "traffic" ? (planResult as EmitPlanResult).baseline : undefined,
+    failingAssertion: mode === "source" ? (planResult as EmitPlanSourceResult).failingAssertion : undefined,
+    assertionShape: mode === "source" ? (planResult as EmitPlanSourceResult).assertionShape : undefined,
     planFile: planOutput
   }, null, 2));
 
   // ---- Worker phase ----
   const workerStart = Date.now();
-  console.log("\n=== WORKER PHASE ===");
+  console.log(`\n=== WORKER PHASE (${mode}) ===`);
 
-  const patchResult = await runWorker(
-    planResult,
-    { snapshotDir, sourceDir, workDir, verbose, repoDir, branchName, provider, model }
-  );
+  const patchResult = mode === "traffic"
+    ? await runWorker(planResult as EmitPlanResult, { snapshotDir, sourceDir, workDir, verbose, repoDir, branchName, provider, model })
+    : await runWorkerSource(planResult as EmitPlanSourceResult, { snapshotDir, sourceDir, workDir, verbose, repoDir, branchName, provider, model });
 
   const workerMs = Date.now() - workerStart;
   const patchOutput = path.join(workDir, "patch.json");
@@ -208,8 +254,11 @@ async function main(): Promise<void> {
     workerMs,
     evaluatorMs: evaluatorMs || undefined,
     totalMs: plannerMs + workerMs + evaluatorMs,
-    metric: planResult.metric,
-    baseline: planResult.baseline,
+    mode,
+    metric: mode === "traffic" ? (planResult as EmitPlanResult).metric : undefined,
+    baseline: mode === "traffic" ? (planResult as EmitPlanResult).baseline : undefined,
+    failingAssertion: mode === "source" ? (planResult as EmitPlanSourceResult).failingAssertion : undefined,
+    assertionShape: mode === "source" ? (planResult as EmitPlanSourceResult).assertionShape : undefined,
     fix: patchResult.rationale,
     confirmResult: patchResult.confirmResult ?? "(not run)",
     evalVerdict: evalResult?.overallVerdict ?? (skipEval ? "(skipped)" : "(not run)"),

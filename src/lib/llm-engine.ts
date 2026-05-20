@@ -54,6 +54,17 @@ export interface EmitPatchResult {
   branchName?: string;
 }
 
+/**
+ * Source-mode plan result. Unlike traffic mode, there's no wire metric — the
+ * Planner names an assertion that is false today and must be true after the fix.
+ */
+export interface EmitPlanSourceResult {
+  plan: AgentPlan;
+  failingAssertion: string;
+  assertionShape: "unit-test" | "source-grep" | "log-line" | "behavior-check";
+  rationale: string;
+}
+
 export interface EmitEvalReportResult {
   addressedRequirements: string[];
   missedRequirements: string[];
@@ -217,6 +228,26 @@ async function toolRunScript(scriptPath: string): Promise<string> {
   }
 }
 
+/**
+ * Run an arbitrary shell command. Used in source mode where the confirm
+ * harness is a native unit test runner (`go test`, `npm test`, `pytest`).
+ * 90s timeout — short enough that the model has to write focused tests, long
+ * enough for go test compilation. Output is truncated to keep prompts small.
+ */
+async function toolRunShell(command: string, cwd?: string): Promise<string> {
+  const opts: { timeout: number; cwd?: string } = { timeout: 90_000 };
+  if (cwd) opts.cwd = cwd;
+  try {
+    const { stdout, stderr } = await execAsync(command, opts);
+    const out = [stdout, stderr].filter(Boolean).join("\n").trim();
+    return out.length > 8000 ? `[truncated to 8000 chars]\n${out.slice(0, 8000)}` : out;
+  } catch (err: unknown) {
+    const e = err as { stdout?: string; stderr?: string; message?: string };
+    const out = [e.stdout, e.stderr, e.message].filter(Boolean).join("\n").trim();
+    return out.length > 8000 ? `[truncated to 8000 chars]\n${out.slice(0, 8000)}` : out;
+  }
+}
+
 // ---------- tool definitions for the API ----------
 
 const TOOLS: ToolDef[] = [
@@ -281,6 +312,18 @@ const TOOLS: ToolDef[] = [
     }
   },
   {
+    name: "run_shell",
+    description: "Execute an arbitrary shell command (e.g. `go test ./internal/foo/...`, `npm test`, `pytest -k mytest`). 90s timeout. Use this in source mode to run native unit tests as the confirm harness.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        command: { type: "string", description: "Shell command to execute" },
+        cwd: { type: "string", description: "Working directory. Defaults to the workDir." }
+      },
+      required: ["command"]
+    }
+  },
+  {
     name: "emit_plan",
     description: "Terminal tool: emit the structured AgentPlan. Call this when you have identified the bug metric, confirmed it is reproducible, and have a hypothesis. This ends the Planner phase.",
     inputSchema: {
@@ -309,6 +352,30 @@ const TOOLS: ToolDef[] = [
         confirmResult: { type: "string", description: "Output of running the confirm harness against the patched code" }
       },
       required: ["targetFile", "patch", "rationale"]
+    }
+  },
+  {
+    name: "emit_plan_source",
+    description: "Terminal tool (source mode): emit the structured AgentPlan when the bug has no wire signal — telemetry, CLI flags, log lines, init ordering, schema migrations, etc. The plan names a source-level assertion the Worker will satisfy. This ends the Planner phase.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        summary: { type: "string", description: "One-sentence summary of the issue" },
+        hypothesis: { type: "string", description: "Root cause hypothesis grounded in the code you read" },
+        targetFile: { type: "string", description: "Absolute path to the source file that needs to change" },
+        targetFunction: { type: "string", description: "Name of the function, branch, or code section to fix" },
+        failingAssertion: {
+          type: "string",
+          description: "A concrete, checkable assertion that is false today and must be true after the fix. Examples: 'indexer.extractEvent inserts events whose TestReportID tag is empty into report_events' (false today), 'speedmgmt tenant update --dry-run prints METHOD/URL/body and exits before calling the API' (false today)."
+        },
+        assertionShape: {
+          type: "string",
+          enum: ["unit-test", "source-grep", "log-line", "behavior-check"],
+          description: "How the Worker should confirm: unit-test = run a language-native test (go test, npm test, pytest); source-grep = grep the patched file for a required token/branch; log-line = run the binary and check stdout/stderr for a specific line; behavior-check = run a small script that exercises the code path."
+        },
+        rationale: { type: "string", description: "Evidence trail — which files, lines, log messages, or code branches led to this conclusion" }
+      },
+      required: ["summary", "hypothesis", "targetFile", "targetFunction", "failingAssertion", "assertionShape", "rationale"]
     }
   },
   {
@@ -360,6 +427,7 @@ async function dispatchTool(name: string, input: Record<string, string>): Promis
     case "read_rrpair": return toolReadRRPair(input.path);
     case "write_file": return toolWriteFile(input.path, input.content);
     case "run_script": return toolRunScript(input.path);
+    case "run_shell": return toolRunShell(input.command, input.cwd);
     default: return `unknown tool: ${name}`;
   }
 }
@@ -555,7 +623,11 @@ A Planner has produced a plan and a Worker has produced a patch with a confirm h
 Tasks:
 1. Read the spec carefully. Enumerate every distinct requirement — numbered items, bulleted items, sentences with "should/must/needs to". Quote them.
 2. For each requirement, decide whether the patch reflects it. Use read_file on the patched source and search_code to verify. The patch field in the input shows what changed, but check the file directly — agents sometimes describe a change differently than the actual diff.
-3. Read the confirm harness (if a path was provided) and decide whether it actually exercises the metric named in the plan. A harness that "passes" by checking string equality on a hardcoded value, or by reading the source rather than running it, is NOT trustworthy.
+3. Read the confirm harness (if a path was provided) and decide whether it actually exercises the planned signal. Grade the harness by its shape:
+   - Wire harness (traffic mode): a Node script that mocks the upstream and measures a metric. Trustworthy = the metric variable is computed from observed calls, not hardcoded, and the assertion compares to the planned threshold.
+   - Unit test (source mode): a *_test.go / .test.ts / test_*.py file. Trustworthy = the assertion exercises the patched code branch, fails on the unpatched code, and doesn't just assert on a constant.
+   - Source-grep / log-line / behavior-check (source mode): a small shell or node script. Trustworthy = it actually invokes/reads the patched code path and the assertion fails if the fix is removed.
+   - In ALL shapes, a harness that "passes" by checking string equality on a hardcoded value or by reading the source instead of running it is NOT trustworthy.
 4. Call emit_eval_report with your findings.
 
 Rules:
@@ -570,9 +642,17 @@ STOPPING RULE:
 By loop 15, emit the report with whatever findings you have. Do not keep exploring once the question is answered.
 `;
 
+/**
+ * Polymorphic plan shape accepted by the Evaluator. The Evaluator renders
+ * the plan into prompt text, so it just needs the fields it will display.
+ */
+export type AnyPlanResult =
+  | (EmitPlanResult & { mode?: "traffic" })
+  | (EmitPlanSourceResult & { mode: "source" });
+
 export async function runEvaluator(
   issueSpec: { title: string; body: string },
-  planResult: EmitPlanResult,
+  planResult: AnyPlanResult,
   patchResult: EmitPatchResult,
   opts: LLMRunOptions
 ): Promise<EmitEvalReportResult> {
@@ -581,6 +661,8 @@ export async function runEvaluator(
     ["read_file", "search_code", "list_snapshot_dir", "read_rrpair", "emit_eval_report"].includes(t.name)
   );
 
+  const isSource = "failingAssertion" in planResult;
+
   const parts = [
     `=== Original spec ===`,
     `Title: ${issueSpec.title}`,
@@ -588,10 +670,15 @@ export async function runEvaluator(
     issueSpec.body,
     ``,
     `=== Planner output ===`,
+    `Mode: ${isSource ? "source" : "traffic"}`,
     `Summary: ${planResult.plan.spec.summary}`,
     `Hypothesis: ${planResult.plan.spec.hypothesis}`,
-    `Metric: ${planResult.metric}`,
-    `Baseline: ${planResult.baseline}`,
+    isSource
+      ? `Failing assertion (false today, must be true after fix): ${(planResult as EmitPlanSourceResult).failingAssertion}`
+      : `Metric: ${(planResult as EmitPlanResult).metric}`,
+    isSource
+      ? `Assertion shape: ${(planResult as EmitPlanSourceResult).assertionShape}`
+      : `Baseline: ${(planResult as EmitPlanResult).baseline}`,
     `Rationale: ${planResult.rationale}`,
     ``,
     `=== Worker output ===`,
@@ -675,6 +762,177 @@ export async function runWorker(
   const provider = opts.provider ?? "anthropic";
   const model = opts.model ?? defaultModelFor(provider);
   const result = await agentLoop(WORKER_SYSTEM, parts.join("\n"), "emit_patch", opts.verbose ?? false, WORKER_MAX_LOOPS, provider, model);
+
+  return {
+    filePath: result.targetFile,
+    patch: result.patch,
+    rationale: result.rationale,
+    harnessPath: result.harnessPath,
+    confirmResult: result.confirmResult,
+    worktreePath: worktree?.worktreePath,
+    branchName: worktree?.branchName,
+  };
+}
+
+// ---------- Source-mode Planner ----------
+
+const PLANNER_SOURCE_SYSTEM = `You are the Planner for the Speedscale Agent Factory, running in SOURCE mode.
+
+Source mode is for bugs that have no wire signal — telemetry/logging pipeline gaps, CLI ergonomics (--dry-run, output formatting), init/migration ordering, structural code paths not exercised by the captured snapshot. There is no RRPair evidence to grep through.
+
+Your job is to:
+1. Read the source code paths the ticket implicates (search_code first to find them, then read_file for full context).
+2. Identify the smallest concrete code branch / function / line that is wrong.
+3. Formulate a "failing assertion": a single sentence that is FALSE about the unpatched code today and must be TRUE after the fix. The assertion must be checkable by a unit test, a grep of the patched file, a log-line check on a run, or a small behavior probe.
+4. Call emit_plan_source with your findings.
+
+Rules:
+- Use search_code and read_file. The snapshot tools (list_snapshot_dir, read_rrpair) may have nothing useful — ignore them if so.
+- The failing assertion must be concrete and falsifiable. "The code should log better" is NOT good — "responder/cmd/root.go does not abort startup when TestReportID is empty; the assertion 'when TEST_REPORT_ID is unset, runLive returns an error before constructing the firehose reporter' is false today" IS good.
+- Pick an assertionShape that matches the bug: unit-test for logic in a function, source-grep for a required guard/branch presence, log-line for stdout/stderr behavior, behavior-check for a small end-to-end probe.
+- Do NOT write any fix. Your job ends at emit_plan_source.
+
+STOPPING RULE — CRITICAL:
+By loop 18, you must have identified the suspect file/function and a falsifiable assertion. Call emit_plan_source IMMEDIATELY once you have those. Do not keep correlating more code after the assertion is concrete.
+`;
+
+export async function runPlannerSource(
+  issueSpec: { title: string; body: string },
+  opts: LLMRunOptions
+): Promise<EmitPlanSourceResult> {
+  const parts = [
+    `Issue: ${issueSpec.title}`,
+    `Description: ${issueSpec.body}`
+  ];
+  if (opts.sourceDir) parts.push(`Source directory: ${opts.sourceDir}`);
+  if (opts.snapshotDir) parts.push(`Snapshot directory (may be empty/irrelevant in source mode): ${opts.snapshotDir}`);
+  if (opts.workDir) parts.push(`Work directory: ${opts.workDir}`);
+
+  // Source planner uses the same read-only data tools but no snapshot helpers
+  // in the listed tools — keep them present for compatibility but the prompt
+  // tells the model to ignore them.
+  const sourceTools: ToolDef[] = TOOLS.filter((t) =>
+    ["read_file", "search_code", "list_snapshot_dir", "read_rrpair", "emit_plan_source"].includes(t.name)
+  );
+
+  const PLANNER_MAX_LOOPS = parseInt(process.env.ENGINE_PLANNER_MAX_LOOPS ?? "30", 10);
+  const provider = opts.provider ?? "anthropic";
+  const model = opts.model ?? defaultModelFor(provider);
+  const result = await agentLoop(
+    PLANNER_SOURCE_SYSTEM,
+    parts.join("\n"),
+    "emit_plan_source",
+    opts.verbose ?? false,
+    PLANNER_MAX_LOOPS,
+    provider,
+    model,
+    sourceTools
+  );
+
+  const shape = (result.assertionShape ?? "unit-test") as EmitPlanSourceResult["assertionShape"];
+
+  const plan: AgentPlan = {
+    apiVersion: "agents.speedscale.io/v1alpha1",
+    kind: "AgentPlan",
+    metadata: { name: `plan-source-${Date.now()}` },
+    spec: {
+      runRef: { name: "llm-run" },
+      summary: result.summary,
+      hypothesis: result.hypothesis,
+      steps: [
+        { id: "reproduce", action: "inspect", description: `Assertion (false today): ${result.failingAssertion}` },
+        { id: "fix", action: "edit", description: `Fix ${result.targetFunction} in ${result.targetFile}` },
+        { id: "confirm", action: "validate", description: `Confirm shape: ${shape}` },
+        { id: "report", action: "inspect", description: "Emit QualityReport" }
+      ],
+      validation: {
+        command: shape === "unit-test" ? "go test ./... || npm test || pytest" : "true",
+        successCriteria: `Assertion '${result.failingAssertion}' is true on the patched code`
+      }
+    }
+  };
+
+  return {
+    plan,
+    failingAssertion: result.failingAssertion,
+    assertionShape: shape,
+    rationale: result.rationale
+  };
+}
+
+// ---------- Source-mode Worker ----------
+
+const WORKER_SOURCE_SYSTEM = `You are the Worker for the Speedscale Agent Factory, running in SOURCE mode.
+
+You have received a plan from the source-mode Planner. The plan names a "failing assertion" — a concrete statement that is FALSE about today's code and must be TRUE after your fix. There is no wire metric to chase.
+
+Your job is to:
+1. Read the target source file (use the worktree paths if the input gives them).
+2. Write the minimal fix that makes the failing assertion true.
+3. Write a confirm test/script appropriate to the assertionShape:
+   - unit-test: write a language-native test (e.g. *_test.go for Go, .test.ts for TS, test_*.py for Python) that asserts the new behavior. Run it with run_shell.
+   - source-grep: write a small shell or node script that greps the patched file for the required token/branch and exits 0 only when found. Run with run_shell.
+   - log-line: write a script that invokes the binary or function and checks stdout/stderr for the expected line. Run with run_shell.
+   - behavior-check: write a small probe (Node, shell, or language-native) that drives the affected code path and asserts the behavior. Run with run_shell or run_script.
+4. Run the confirm via run_shell (preferred) or run_script. Put the trimmed output into confirmResult.
+5. Call emit_patch with the fix and confirm output.
+
+Rules:
+- Use write_file to apply the minimal fix to the target file. No cleanup, no refactoring beyond the fix.
+- The confirm must FAIL on the unpatched code (mentally walk it through) and PASS on the patched code. If you cannot demonstrate the failing-then-passing transition, the confirm is not trustworthy.
+- For Go targets: prefer table-driven tests in the existing _test.go file alongside the function. Run \`go test -run TestNewlyWritten ./path/to/package\` via run_shell.
+- For TS/JS targets: prefer node:test alongside the source. Run \`npx tsx --test path/to/file.test.ts\` via run_shell.
+- If the confirm fails, read the output, fix the issue, re-run. Do not emit_patch until confirm passes.
+`;
+
+export async function runWorkerSource(
+  planResult: EmitPlanSourceResult,
+  opts: LLMRunOptions
+): Promise<EmitPatchResult> {
+  let worktree: WorktreeResult | undefined;
+
+  if (opts.repoDir && opts.branchName && opts.sourceDir && opts.workDir) {
+    worktree = await setupWorktree(opts.repoDir, opts.workDir, opts.branchName, opts.sourceDir);
+    console.log(`[engine] worktree: ${worktree.worktreePath} (branch: ${worktree.branchName})`);
+  }
+
+  const effectiveSourceDir = worktree?.sourceDir ?? opts.sourceDir;
+
+  function remapPaths(s: string): string {
+    if (!worktree || !opts.sourceDir) return s;
+    return s.replaceAll(opts.sourceDir, worktree.sourceDir);
+  }
+
+  const parts = [
+    `Plan summary: ${remapPaths(planResult.plan.spec.summary)}`,
+    `Hypothesis: ${remapPaths(planResult.plan.spec.hypothesis)}`,
+    `Failing assertion (FALSE today, must be TRUE after fix): ${planResult.failingAssertion}`,
+    `Assertion shape: ${planResult.assertionShape}`,
+    `Target file: ${remapPaths(planResult.plan.spec.steps.find((s) => s.action === "edit")?.description ?? "")}`,
+    `Rationale from Planner: ${remapPaths(planResult.rationale)}`
+  ];
+  if (effectiveSourceDir) parts.push(`Source directory: ${effectiveSourceDir}`);
+  if (opts.workDir) parts.push(`Work directory: ${opts.workDir}`);
+  if (worktree) {
+    parts.push(
+      `WORKTREE: Source files are in an isolated worktree at ${worktree.worktreePath}. ` +
+      `For ALL read_file and write_file calls that touch source code, use paths under ${worktree.sourceDir}. ` +
+      `Do NOT read from or write to ${opts.sourceDir} — that directory is off-limits for this run.`
+    );
+  }
+
+  const WORKER_MAX_LOOPS = parseInt(process.env.ENGINE_WORKER_MAX_LOOPS ?? "25", 10);
+  const provider = opts.provider ?? "anthropic";
+  const model = opts.model ?? defaultModelFor(provider);
+  const result = await agentLoop(
+    WORKER_SOURCE_SYSTEM,
+    parts.join("\n"),
+    "emit_patch",
+    opts.verbose ?? false,
+    WORKER_MAX_LOOPS,
+    provider,
+    model
+  );
 
   return {
     filePath: result.targetFile,
