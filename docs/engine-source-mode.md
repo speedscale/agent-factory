@@ -51,6 +51,9 @@ System prompt: `PLANNER_SOURCE_SYSTEM` (`src/lib/llm-engine.ts`). Differences vs
 - No requirement to list the snapshot directory or read RRPairs.
 - Required output is a "failing assertion": a single sentence that is FALSE about today's code and must be TRUE after the fix. The assertion must be falsifiable — checkable by a real test or grep, not a fuzzy goal like "the code should log better".
 - Required `assertionShape`: `unit-test` | `source-grep` | `log-line` | `behavior-check`. This tells the Worker what shape of confirm to build.
+- **Reproduce gate (mandatory).** The Planner must write a harness exercising the failing assertion, run it against the unpatched worktree with `run_shell`, and observe a non-zero exit. The harness path, exit code, and output go into `emit_plan_source` as `baselineHarnessPath` / `baselineExitCode` / `baselineOutput`. The same harness is reused by the Worker after the fix.
+
+The Planner phase has `write_file` and `run_shell` available (the read-only constraint relaxed for source mode so the Planner can run a harness).
 
 Output (`EmitPlanSourceResult`):
 
@@ -60,24 +63,41 @@ Output (`EmitPlanSourceResult`):
   failingAssertion: string;  // false today, true after fix
   assertionShape: "unit-test" | "source-grep" | "log-line" | "behavior-check";
   rationale: string;
+  baselineEvidence: {
+    harnessPath: string;   // absolute path to the harness the Planner wrote
+    exitCode: number;      // non-zero — gate rejects exit 0
+    output: string;        // stdout/stderr, truncated
+  };
 }
 ```
 
-The synthesized `AgentPlan` has the same shape as in traffic mode but its `validation.command` defaults to `go test ./... || npm test || pytest` for `unit-test` shape, or `true` for the others (the Worker will set up something specific via `run_shell`).
+The synthesized `AgentPlan.spec.validation.command` is the harness path itself — the contract the Worker must satisfy.
+
+## Reproduce gate
+
+After `emit_plan_source` returns, `runPlannerSource` calls `validateBaselineEvidence` (`src/lib/source-mode-validation.ts`). Rules:
+
+- Missing `harnessPath` → reject (Planner skipped the step).
+- `exitCode === 0` → reject (asserted bug doesn't exist; refuse to write a fix for a non-existent issue).
+- `exitCode` not a finite number → reject (malformed).
+- Any other non-zero → accept.
+
+On reject, the runner throws with a message that quotes the assertion, the harness path, and the failing output. The Worker phase never starts.
+
+This is the source-mode equivalent of traffic mode's "no metric = no fix" rule. Validator has 10 unit tests in `src/lib/source-mode-validation.test.ts`.
+
+**Why this exists:** the first real source-mode dispatch wrote a confident fix for a bug that had been resolved months earlier. The Planner emitted a `failingAssertion`, the Worker satisfied it, the Evaluator graded "partial." No part of the chain checked whether the assertion was actually false on real code. The reproduce gate plugs that hole.
 
 ## Source-mode Worker
 
 System prompt: `WORKER_SOURCE_SYSTEM`. Differences vs the traffic Worker:
 
 - Reads the target file in the worktree and applies the minimal fix.
-- Writes a confirm matching the planned shape:
-  - `unit-test`: a `*_test.go` / `*.test.ts` / `test_*.py` alongside the source.
-  - `source-grep`: a small shell or node script that greps the patched file for a required token and exits non-zero if absent.
-  - `log-line`: a script that invokes the binary or function and asserts on stdout/stderr.
-  - `behavior-check`: a small end-to-end probe via `run_shell` or `run_script`.
-- Runs the confirm via the new `run_shell` tool (90s timeout, arbitrary shell command). `run_script` (Node-only) remains for traffic harnesses.
+- **Reuses the Planner's baseline harness verbatim.** The harness already exists at `baselineEvidence.harnessPath` and already failed (non-zero exit) on unpatched code. The Worker's job is to make that exact same harness pass — not to write a new harness.
+- Runs the harness via `run_shell`. The exit code must be 0 after the fix. If still failing, the Worker iterates on the source until it passes.
+- Prompt explicitly forbids deleting unrelated code from the target file. `write_file` is full-content overwrite — preserve every pre-existing function, import, and declaration.
 
-The terminal tool is still `emit_patch` — the same shape works for both modes.
+The terminal tool is still `emit_patch` — the same shape works for both modes. The Worker's `harnessPath` in the patch result MUST match the Planner's `baselineHarnessPath`; the Evaluator checks this.
 
 ## Source-mode Evaluator
 
@@ -140,3 +160,4 @@ Evaluator:
 - `mixed` mode doesn't yet split into two child runs; it picks one and warns. Future work.
 - Source-mode Worker doesn't auto-format the patch as a unified diff like traffic-mode does. The patch field carries the new content; reviewers should pull the worktree to see the actual diff.
 - No telemetry yet on per-mode success rates. Add to `quality-report.ts` once we have a few real runs.
+- Evaluator-side deletion check (file size / declaration count before vs after) — separate ticket. Today the Worker is instructed not to delete unrelated code but nothing enforces it past the prompt.

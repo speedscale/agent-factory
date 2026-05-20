@@ -145,18 +145,26 @@ async function main(): Promise<void> {
   const planOutput = path.join(workDir, "plan.json");
   await writeFile(planOutput, JSON.stringify(planResult, null, 2), "utf8");
 
-  console.log(JSON.stringify({
+  const planLog: Record<string, unknown> = {
     phase: "planned",
     durationMs: plannerMs,
     mode,
     summary: planResult.plan.spec.summary,
     hypothesis: planResult.plan.spec.hypothesis,
-    metric: mode === "traffic" ? (planResult as EmitPlanResult).metric : undefined,
-    baseline: mode === "traffic" ? (planResult as EmitPlanResult).baseline : undefined,
-    failingAssertion: mode === "source" ? (planResult as EmitPlanSourceResult).failingAssertion : undefined,
-    assertionShape: mode === "source" ? (planResult as EmitPlanSourceResult).assertionShape : undefined,
     planFile: planOutput
-  }, null, 2));
+  };
+  if (mode === "traffic") {
+    planLog.metric = (planResult as EmitPlanResult).metric;
+    planLog.baseline = (planResult as EmitPlanResult).baseline;
+  } else {
+    const sp = planResult as EmitPlanSourceResult;
+    planLog.failingAssertion = sp.failingAssertion;
+    planLog.assertionShape = sp.assertionShape;
+    planLog.baselineHarnessPath = sp.baselineEvidence.harnessPath;
+    planLog.baselineExitCode = sp.baselineEvidence.exitCode;
+    planLog.baselineOutputPreview = sp.baselineEvidence.output.slice(0, 200);
+  }
+  console.log(JSON.stringify(planLog, null, 2));
 
   // ---- Worker phase ----
   const workerStart = Date.now();
