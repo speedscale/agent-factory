@@ -29,7 +29,8 @@
 
 import path from "node:path";
 import { exec } from "node:child_process";
-import { mkdir, writeFile, readdir, stat } from "node:fs/promises";
+import { mkdir, writeFile, readdir, stat, unlink } from "node:fs/promises";
+import os from "node:os";
 import { promisify } from "node:util";
 import { runPlanner, runWorker, runPlannerSource, runWorkerSource, runEvaluator } from "../lib/llm-engine.js";
 import type { EmitPlanResult, EmitPlanSourceResult, AnyPlanResult } from "../lib/llm-engine.js";
@@ -246,11 +247,17 @@ async function main(): Promise<void> {
       ].join("\n\n");
 
       const mrTitle = title.length > 70 ? title.slice(0, 67) + "..." : title;
-      const { stdout } = await execAsync(
-        `cd ${JSON.stringify(patchResult.worktreePath)} && glab mr create --title ${JSON.stringify(mrTitle)} --description ${JSON.stringify(mrBody)} --source-branch ${JSON.stringify(patchResult.branchName)} --no-editor 2>&1 || gh pr create --title ${JSON.stringify(mrTitle)} --body ${JSON.stringify(mrBody)} --head ${JSON.stringify(patchResult.branchName)} 2>&1`
-      );
-      mrUrl = stdout.trim().split("\n").find(l => l.startsWith("http")) ?? stdout.trim();
-      console.log(`MR created: ${mrUrl}`);
+      const tmpBodyFile = path.join(os.tmpdir(), `mr-body-${Date.now()}.md`);
+      await writeFile(tmpBodyFile, mrBody, "utf8");
+      try {
+        const { stdout } = await execAsync(
+          `cd ${JSON.stringify(patchResult.worktreePath)} && glab mr create --title ${JSON.stringify(mrTitle)} --description-file ${JSON.stringify(tmpBodyFile)} --source-branch ${JSON.stringify(patchResult.branchName)} --no-editor 2>&1 || gh pr create --title ${JSON.stringify(mrTitle)} --body-file ${JSON.stringify(tmpBodyFile)} --head ${JSON.stringify(patchResult.branchName)} 2>&1`
+        );
+        mrUrl = stdout.trim().split("\n").find(l => l.startsWith("http")) ?? stdout.trim();
+        console.log(`MR created: ${mrUrl}`);
+      } finally {
+        await unlink(tmpBodyFile).catch(() => {});
+      }
     } catch (err) {
       console.warn(`MR creation failed (create manually): ${err instanceof Error ? err.message : String(err)}`);
     }
