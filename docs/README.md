@@ -9,6 +9,7 @@
 
 - `docs/architecture.md` — full system design: loop phases, planes, deployment models, contracts
 - `docs/engine.md` — LLM engine: tool catalog, agent loop, Planner/Worker phases, configuration
+- `docs/engine-hardening.md` — tool-call hardening: rescue, escalating nudges, prereqs, compaction, error classification
 - `docs/plan.md` — active roadmap and next steps
 
 ## Deployment

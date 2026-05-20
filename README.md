@@ -56,6 +56,7 @@ npm run gate:check -- --run <run-name>
 
 - **[docs/architecture.md](docs/architecture.md)** — full system design, planes, deployment models
 - **[docs/engine.md](docs/engine.md)** — LLM engine: tool catalog, agent loop, Planner/Worker phases
+- **[docs/engine-hardening.md](docs/engine-hardening.md)** — tool-call hardening: rescue, escalating nudges, prereqs, compaction, error classification
 - **[docs/plan.md](docs/plan.md)** — active roadmap and next steps
 - **[docs/users.md](docs/users.md)** — operators: deployment, run submission, operations
 - **[docs/developers.md](docs/developers.md)** — contributors: development workflow, contracts, release
