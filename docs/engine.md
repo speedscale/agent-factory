@@ -182,6 +182,15 @@ npm run llm-run -- \
 
 Terminal tools (`emit_*`) follow the same pattern but are detected by name in the loop and cause early return rather than dispatch.
 
+## Modes
+
+The engine has two intake modes:
+
+- **Traffic mode** (described in this doc): wire-grounded, metric-driven. The default for tickets with a captured snapshot and observable failure on the wire.
+- **Source mode** (see [`engine-source-mode.md`](./engine-source-mode.md)): code-grounded, assertion-driven. For bugs with no wire signal — telemetry/logging gaps, CLI ergonomics, init ordering, structural fixes outside the snapshot's reach.
+
+The CLI's `--mode auto|traffic|source` flag (default `auto`) picks the right path. In `auto`, a classifier reads the title/body/labels/snapshot to decide. Operators can override.
+
 ## Spec shape: what the engine handles, what it drops
 
 The engine is built around a metric-driven Planner → Worker loop. A spec succeeds when the agent can derive a measurable metric from snapshot evidence, write a reproduce harness measuring the baseline, apply a fix, and write a confirm harness measuring the new value.
@@ -191,19 +200,12 @@ The engine is built around a metric-driven Planner → Worker loop. A spec succe
 - Bugs visible in captured traffic: wrong status codes, malformed request/response bodies, latency, concurrency bursts, missing fields.
 - Anything where the difference between buggy and fixed is observable on the wire.
 
-**Drops or fails:**
+**Drops or fails in traffic mode:**
 
 - Requirements with no wire signal — new CLI flags, dry-run modes, ergonomics, output formatting, log messages.
 - Multi-requirement specs where some items are wire-shaped and others aren't. Example seen in practice: a spec asked for (1) gate request body fields with a CLI-flag check — wire-shaped — and (2) add a `--dry-run` mode — no wire signal. Run 1 delivered item 1 cleanly with a passing confirm harness, then ignored item 2 despite both being explicit in the body.
 
-**Workaround: split multi-shape work into separate dispatches.**
-
-- Run 1: the wire-driven item. Reproduce harness reads the snapshot and measures the baseline metric; confirm harness asserts the new metric value.
-- Run 2: the non-wire item, narrower spec scoped just to the remaining work. Confirm harness asserts on stdout text / "no API call made" / "flag registered" / similar source-level signals. The engine accepts non-traffic confirmation when the spec doesn't promise wire evidence.
-
-This is more reliable than fighting the engine with a single broad spec that contains both shapes. Each run does what it's good at and stops.
-
-In practice, the split approach has cost ~7 min total engine time across both runs, plus ~10–15 min of human time around the runs (build, smoke test, commit). Single bundled MR, no scope inflation.
+**Route non-wire requirements to source mode.** See [`engine-source-mode.md`](./engine-source-mode.md). The classifier picks automatically when `--mode auto` is set (the default); operators can override with `--mode source`. For mixed specs, the classifier returns `mixed` and the runner picks the dominant signal — re-run the residual with the other mode explicitly. This replaces the older "split into two narrower dispatches" workaround.
 
 ## SOS spike results (2026-05-17)
 
