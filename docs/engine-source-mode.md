@@ -107,6 +107,24 @@ The input prompt also includes a `Mode: source|traffic` field so the Evaluator k
 
 `runEvaluator` accepts either plan shape via a polymorphic `AnyPlanResult` union — no separate evaluator runner.
 
+### Destructive-rewrite check (`compare_file_declarations`)
+
+The Worker uses full-content `write_file` to apply fixes, which means it has to reproduce every existing function, type, and import in the file from memory. Anything it forgets disappears — and the resulting code may not compile. This actually happened on the first real source-mode dispatch: a 4-line behavioral change shipped with two unrelated helper functions silently deleted.
+
+The Evaluator now has a `compare_file_declarations(path)` tool that:
+
+1. Resolves the git worktree containing the file
+2. Detects the base branch (`origin/HEAD` → `master` → `main`)
+3. Runs `git show <base>:<rel-path>` to read the pre-patch content
+4. Diffs top-level declarations (Go funcs / TS classes / Python defs / Rust fns / …) using the regex-based extractor in `src/lib/declaration-diff.ts`
+5. Returns JSON: `{ file, baseRef, added: [], removed: [], preserved_count }`
+
+The Evaluator prompt makes this check **mandatory**: it must be called on every file the Worker modified. A non-empty `removed` list on a patch that didn't explicitly authorize deletions is a destructive rewrite — fail-verdict, even if the intentional change is correct.
+
+The declaration extractor is intentionally permissive (covers Go, TS/JS, Python, Rust top-level patterns). False positives — extra names in the output — are harmless. False negatives — missed names — would leak destructive rewrites past the gate, so the patterns are biased toward matching.
+
+11 unit tests in `src/lib/declaration-diff.test.ts` covering each language, CRLF handling, nested-function rejection, and the worked-example failure mode this gate is designed to catch.
+
 ## New tool: `run_shell`
 
 `run_shell({ command, cwd? })` executes an arbitrary shell command with a 90s timeout. Used by the source-mode Worker to invoke `go test`, `npm test`, `pytest`, or custom shell probes. Output is truncated to 8000 chars to keep the prompt manageable.
@@ -160,4 +178,3 @@ Evaluator:
 - `mixed` mode doesn't yet split into two child runs; it picks one and warns. Future work.
 - Source-mode Worker doesn't auto-format the patch as a unified diff like traffic-mode does. The patch field carries the new content; reviewers should pull the worktree to see the actual diff.
 - No telemetry yet on per-mode success rates. Add to `quality-report.ts` once we have a few real runs.
-- Evaluator-side deletion check (file size / declaration count before vs after) — separate ticket. Today the Worker is instructed not to delete unrelated code but nothing enforces it past the prompt.
