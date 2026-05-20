@@ -30,6 +30,7 @@ import {
   type LLMProvider,
   type ToolDef
 } from "./llm-providers.js";
+import { validateBaselineEvidence, type BaselineEvidence } from "./source-mode-validation.js";
 
 const execAsync = promisify(exec);
 
@@ -57,12 +58,17 @@ export interface EmitPatchResult {
 /**
  * Source-mode plan result. Unlike traffic mode, there's no wire metric — the
  * Planner names an assertion that is false today and must be true after the fix.
+ *
+ * baselineEvidence is mandatory: the Planner must have written a harness and
+ * run it against the unpatched worktree, observing a non-zero exit. Without
+ * that proof, the run aborts before the Worker phase starts.
  */
 export interface EmitPlanSourceResult {
   plan: AgentPlan;
   failingAssertion: string;
   assertionShape: "unit-test" | "source-grep" | "log-line" | "behavior-check";
   rationale: string;
+  baselineEvidence: BaselineEvidence;
 }
 
 export interface EmitEvalReportResult {
@@ -356,7 +362,7 @@ const TOOLS: ToolDef[] = [
   },
   {
     name: "emit_plan_source",
-    description: "Terminal tool (source mode): emit the structured AgentPlan when the bug has no wire signal — telemetry, CLI flags, log lines, init ordering, schema migrations, etc. The plan names a source-level assertion the Worker will satisfy. This ends the Planner phase.",
+    description: "Terminal tool (source mode): emit the structured AgentPlan when the bug has no wire signal — telemetry, CLI flags, log lines, init ordering, schema migrations, etc. The plan names a source-level assertion the Worker will satisfy AND attaches baseline evidence proving the bug reproduces today. This ends the Planner phase.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -373,9 +379,21 @@ const TOOLS: ToolDef[] = [
           enum: ["unit-test", "source-grep", "log-line", "behavior-check"],
           description: "How the Worker should confirm: unit-test = run a language-native test (go test, npm test, pytest); source-grep = grep the patched file for a required token/branch; log-line = run the binary and check stdout/stderr for a specific line; behavior-check = run a small script that exercises the code path."
         },
-        rationale: { type: "string", description: "Evidence trail — which files, lines, log messages, or code branches led to this conclusion" }
+        rationale: { type: "string", description: "Evidence trail — which files, lines, log messages, or code branches led to this conclusion" },
+        baselineHarnessPath: {
+          type: "string",
+          description: "Absolute path to the harness script you wrote and ran against the UNPATCHED worktree. This same harness will be re-run by the Worker after the fix is applied. For unit-test shape, a *_test.go / .test.ts / test_*.py file (the test asserts the new behavior and fails on unpatched code). For source-grep, a small shell or node script. The file must already exist on disk."
+        },
+        baselineExitCode: {
+          type: "integer",
+          description: "Exit code observed when you ran the baseline harness against the unpatched worktree. MUST be non-zero — a zero exit means the bug doesn't reproduce and the run will be rejected by the reproduce gate. If you got exit 0, your assertion is wrong; re-investigate before emitting this plan."
+        },
+        baselineOutput: {
+          type: "string",
+          description: "Trimmed stdout/stderr from running the baseline harness. The Evaluator will use this to grade that the failure was of the expected kind. Paste it verbatim; truncate at ~2000 chars if needed."
+        }
       },
-      required: ["summary", "hypothesis", "targetFile", "targetFunction", "failingAssertion", "assertionShape", "rationale"]
+      required: ["summary", "hypothesis", "targetFile", "targetFunction", "failingAssertion", "assertionShape", "rationale", "baselineHarnessPath", "baselineExitCode", "baselineOutput"]
     }
   },
   {
@@ -679,7 +697,22 @@ export async function runEvaluator(
     isSource
       ? `Assertion shape: ${(planResult as EmitPlanSourceResult).assertionShape}`
       : `Baseline: ${(planResult as EmitPlanResult).baseline}`,
-    `Rationale: ${planResult.rationale}`,
+    `Rationale: ${planResult.rationale}`
+  ];
+
+  if (isSource) {
+    const ev = (planResult as EmitPlanSourceResult).baselineEvidence;
+    parts.push(
+      ``,
+      `=== Baseline reproduce evidence (Planner ran this against UNPATCHED code) ===`,
+      `Harness path: ${ev.harnessPath}`,
+      `Baseline exit code: ${ev.exitCode} (non-zero = bug reproduces)`,
+      `Baseline output:`,
+      ev.output.slice(0, 2000)
+    );
+  }
+
+  parts.push(
     ``,
     `=== Worker output ===`,
     `Target file: ${patchResult.filePath}`,
@@ -689,7 +722,16 @@ export async function runEvaluator(
     patchResult.harnessPath ? `Confirm harness path: ${patchResult.harnessPath}` : `Confirm harness path: (not provided)`,
     `Confirm result (Worker self-report):`,
     patchResult.confirmResult ?? "(none)"
-  ];
+  );
+
+  if (isSource) {
+    parts.push(
+      ``,
+      `=== Source-mode trustworthiness check ===`,
+      `For this run, the harness path in the Worker's output MUST match the Planner's baseline harness path. If it doesn't, the Worker rewrote the harness — that's NOT trustworthy (the Worker can write a passing harness for anything). Set confirmHarnessTrustworthy=false in that case.`,
+      `The Worker's confirm result MUST indicate success (exit 0, "PASS", "ok", etc. depending on harness shape). If it shows failure or the Worker skipped the run, set confirmHarnessTrustworthy=false.`
+    );
+  }
 
   if (opts.sourceDir) parts.push(``, `Source directory (read patched files from here): ${opts.sourceDir}`);
   if (opts.workDir) parts.push(`Work directory (harness scripts live here): ${opts.workDir}`);
@@ -784,16 +826,20 @@ Your job is to:
 1. Read the source code paths the ticket implicates (search_code first to find them, then read_file for full context).
 2. Identify the smallest concrete code branch / function / line that is wrong.
 3. Formulate a "failing assertion": a single sentence that is FALSE about the unpatched code today and must be TRUE after the fix. The assertion must be checkable by a unit test, a grep of the patched file, a log-line check on a run, or a small behavior probe.
-4. Call emit_plan_source with your findings.
+4. **REPRODUCE THE BUG.** Write a harness that exercises the failing assertion. Run it via run_shell against the UNPATCHED worktree. It MUST fail (non-zero exit). This is the reproduce gate — without it, the run will be rejected.
+5. Call emit_plan_source with your findings AND the baseline harness path + exit code + output.
 
 Rules:
 - Use search_code and read_file. The snapshot tools (list_snapshot_dir, read_rrpair) may have nothing useful — ignore them if so.
 - The failing assertion must be concrete and falsifiable. "The code should log better" is NOT good — "responder/cmd/root.go does not abort startup when TestReportID is empty; the assertion 'when TEST_REPORT_ID is unset, runLive returns an error before constructing the firehose reporter' is false today" IS good.
 - Pick an assertionShape that matches the bug: unit-test for logic in a function, source-grep for a required guard/branch presence, log-line for stdout/stderr behavior, behavior-check for a small end-to-end probe.
-- Do NOT write any fix. Your job ends at emit_plan_source.
+- The baseline harness MUST be the same script the Worker will run after the fix. Write it as the Worker would: for unit-test shape, a real *_test.go / .test.ts / test_*.py file colocated with the source; for source-grep, a small shell script; for log-line/behavior-check, a script that drives the code path. Write the harness with write_file, run it with run_shell.
+- The baseline harness MUST fail on the unpatched worktree. If it passes (exit 0), your assertion is refuted — the bug does not exist. Stop and re-investigate; do not emit a plan for a bug that isn't real.
+- The baseline failure must be of the asserted kind, not an unrelated error. A harness that fails with "file not found" when the asserted bug is "function returns wrong value" is NOT proof — it's noise. Read the failure output and confirm it matches your assertion before emitting.
+- Do NOT write any fix. Your job ends at emit_plan_source. The Worker applies the fix.
 
 STOPPING RULE — CRITICAL:
-By loop 18, you must have identified the suspect file/function and a falsifiable assertion. Call emit_plan_source IMMEDIATELY once you have those. Do not keep correlating more code after the assertion is concrete.
+By loop 22, you must have the assertion AND a failing harness with the failure output captured. Call emit_plan_source IMMEDIATELY once you have those. The reproduce step expanded the loop budget — don't waste it on extra investigation after the harness fails the right way.
 `;
 
 export async function runPlannerSource(
@@ -808,11 +854,10 @@ export async function runPlannerSource(
   if (opts.snapshotDir) parts.push(`Snapshot directory (may be empty/irrelevant in source mode): ${opts.snapshotDir}`);
   if (opts.workDir) parts.push(`Work directory: ${opts.workDir}`);
 
-  // Source planner uses the same read-only data tools but no snapshot helpers
-  // in the listed tools — keep them present for compatibility but the prompt
-  // tells the model to ignore them.
+  // Source planner gets write_file + run_shell so it can write a harness and
+  // run it against the unpatched worktree — required by the reproduce gate.
   const sourceTools: ToolDef[] = TOOLS.filter((t) =>
-    ["read_file", "search_code", "list_snapshot_dir", "read_rrpair", "emit_plan_source"].includes(t.name)
+    ["read_file", "search_code", "list_snapshot_dir", "read_rrpair", "write_file", "run_shell", "emit_plan_source"].includes(t.name)
   );
 
   const PLANNER_MAX_LOOPS = parseInt(process.env.ENGINE_PLANNER_MAX_LOOPS ?? "30", 10);
@@ -831,6 +876,25 @@ export async function runPlannerSource(
 
   const shape = (result.assertionShape ?? "unit-test") as EmitPlanSourceResult["assertionShape"];
 
+  // Reproduce gate: the Planner attested that the bug reproduces today. Verify
+  // the evidence is coherent (non-zero exit, harness path present) before
+  // letting the Worker burn time on a non-existent bug.
+  const baselineEvidence: BaselineEvidence = {
+    harnessPath: (result.baselineHarnessPath ?? "") as string,
+    exitCode: Number((result as unknown as { baselineExitCode: number }).baselineExitCode),
+    output: (result.baselineOutput ?? "") as string
+  };
+  const validation = validateBaselineEvidence(baselineEvidence);
+  if (!validation.ok) {
+    throw new Error(
+      `source-mode reproduce gate rejected the plan: ${validation.reason}\n\n` +
+      `Planner's failing assertion: ${result.failingAssertion}\n` +
+      `Planner's baseline harness path: ${baselineEvidence.harnessPath || "(missing)"}\n` +
+      `Planner's baseline exit code: ${baselineEvidence.exitCode}\n` +
+      `Planner's baseline output (truncated):\n${baselineEvidence.output.slice(0, 500)}`
+    );
+  }
+
   const plan: AgentPlan = {
     apiVersion: "agents.speedscale.io/v1alpha1",
     kind: "AgentPlan",
@@ -840,14 +904,14 @@ export async function runPlannerSource(
       summary: result.summary,
       hypothesis: result.hypothesis,
       steps: [
-        { id: "reproduce", action: "inspect", description: `Assertion (false today): ${result.failingAssertion}` },
+        { id: "reproduce", action: "inspect", description: `Reproduced: ${baselineEvidence.harnessPath} (exit ${baselineEvidence.exitCode})` },
         { id: "fix", action: "edit", description: `Fix ${result.targetFunction} in ${result.targetFile}` },
-        { id: "confirm", action: "validate", description: `Confirm shape: ${shape}` },
+        { id: "confirm", action: "validate", description: `Re-run ${baselineEvidence.harnessPath} (must pass)` },
         { id: "report", action: "inspect", description: "Emit QualityReport" }
       ],
       validation: {
-        command: shape === "unit-test" ? "go test ./... || npm test || pytest" : "true",
-        successCriteria: `Assertion '${result.failingAssertion}' is true on the patched code`
+        command: baselineEvidence.harnessPath,
+        successCriteria: `Harness ${baselineEvidence.harnessPath} exits 0 after the fix`
       }
     }
   };
@@ -856,7 +920,8 @@ export async function runPlannerSource(
     plan,
     failingAssertion: result.failingAssertion,
     assertionShape: shape,
-    rationale: result.rationale
+    rationale: result.rationale,
+    baselineEvidence
   };
 }
 
@@ -864,25 +929,23 @@ export async function runPlannerSource(
 
 const WORKER_SOURCE_SYSTEM = `You are the Worker for the Speedscale Agent Factory, running in SOURCE mode.
 
-You have received a plan from the source-mode Planner. The plan names a "failing assertion" — a concrete statement that is FALSE about today's code and must be TRUE after your fix. There is no wire metric to chase.
+You have received a plan from the source-mode Planner. The plan names a "failing assertion" — a concrete statement that is FALSE about today's code and must be TRUE after your fix. The Planner has ALREADY:
+- Written a harness at the path given as "Baseline harness path"
+- Run that harness against the unpatched worktree, observing a non-zero exit (the bug reproduces)
 
 Your job is to:
 1. Read the target source file (use the worktree paths if the input gives them).
-2. Write the minimal fix that makes the failing assertion true.
-3. Write a confirm test/script appropriate to the assertionShape:
-   - unit-test: write a language-native test (e.g. *_test.go for Go, .test.ts for TS, test_*.py for Python) that asserts the new behavior. Run it with run_shell.
-   - source-grep: write a small shell or node script that greps the patched file for the required token/branch and exits 0 only when found. Run with run_shell.
-   - log-line: write a script that invokes the binary or function and checks stdout/stderr for the expected line. Run with run_shell.
-   - behavior-check: write a small probe (Node, shell, or language-native) that drives the affected code path and asserts the behavior. Run with run_shell or run_script.
-4. Run the confirm via run_shell (preferred) or run_script. Put the trimmed output into confirmResult.
-5. Call emit_patch with the fix and confirm output.
+2. Read the Planner's baseline harness so you understand exactly what the post-fix assertion looks like. Do NOT modify it. The harness IS the contract.
+3. Write the minimal fix to the target file so that re-running the SAME harness passes (exit 0).
+4. Run the Planner's harness via run_shell — same path, same command. The exit code MUST be 0 after your fix.
+5. Call emit_patch with the fix, the harness path (must match what the Planner wrote), and the harness output.
 
 Rules:
-- Use write_file to apply the minimal fix to the target file. No cleanup, no refactoring beyond the fix.
-- The confirm must FAIL on the unpatched code (mentally walk it through) and PASS on the patched code. If you cannot demonstrate the failing-then-passing transition, the confirm is not trustworthy.
-- For Go targets: prefer table-driven tests in the existing _test.go file alongside the function. Run \`go test -run TestNewlyWritten ./path/to/package\` via run_shell.
-- For TS/JS targets: prefer node:test alongside the source. Run \`npx tsx --test path/to/file.test.ts\` via run_shell.
-- If the confirm fails, read the output, fix the issue, re-run. Do not emit_patch until confirm passes.
+- The harness was written by the Planner. Use it as-is. If you find a bug IN the harness, that means the Planner's reproduce step was bogus — abort by re-emitting a Worker note rather than silently rewriting the harness.
+- Use write_file to apply the minimal fix to the TARGET file (the source file under test). No cleanup, no refactoring beyond the fix.
+- Re-run the same harness command the Planner used. For unit-test shape: \`go test -run <PlannerWroteThisTest> ./<pkg>...\` or \`npx tsx --test <path>\` — whichever the Planner ran. The command is in the plan's "Baseline harness path" field; if the Planner stored only a script path, invoke that script directly.
+- The confirm result must show exit 0. If the harness still fails, read the output, fix the issue in the source, re-run. Do not emit_patch until the harness passes.
+- Do NOT delete unrelated code in the target file. write_file overwrites the whole file — preserve every function, import, and declaration that existed before. Only the lines your fix changes may be modified.
 `;
 
 export async function runWorkerSource(
@@ -909,7 +972,15 @@ export async function runWorkerSource(
     `Failing assertion (FALSE today, must be TRUE after fix): ${planResult.failingAssertion}`,
     `Assertion shape: ${planResult.assertionShape}`,
     `Target file: ${remapPaths(planResult.plan.spec.steps.find((s) => s.action === "edit")?.description ?? "")}`,
-    `Rationale from Planner: ${remapPaths(planResult.rationale)}`
+    `Rationale from Planner: ${remapPaths(planResult.rationale)}`,
+    ``,
+    `=== Baseline reproduce evidence (from Planner) ===`,
+    `Harness path: ${remapPaths(planResult.baselineEvidence.harnessPath)}`,
+    `Baseline exit code (unpatched): ${planResult.baselineEvidence.exitCode} (non-zero = bug reproduces today)`,
+    `Baseline output (truncated):`,
+    planResult.baselineEvidence.output.slice(0, 2000),
+    ``,
+    `Re-run this exact harness after applying your fix. It MUST exit 0. Do not rewrite the harness — it is the contract you must satisfy.`
   ];
   if (effectiveSourceDir) parts.push(`Source directory: ${effectiveSourceDir}`);
   if (opts.workDir) parts.push(`Work directory: ${opts.workDir}`);
