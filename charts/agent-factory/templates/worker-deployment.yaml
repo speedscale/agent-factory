@@ -26,16 +26,6 @@ spec:
       securityContext:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- if .Values.worker.demoFixture.enabled }}
-      initContainers:
-        - name: create-demo-fixture
-          image: {{ include "agent-factory.image" . }}
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
-          command: ["node", "dist/bin/create-demo-fixture.js"]
-          volumeMounts:
-            - { name: agent-data, mountPath: /app/artifacts, subPath: artifacts }
-            - { name: agent-data, mountPath: /app/.work,     subPath: work }
-      {{- end }}
       containers:
         - name: worker
           image: {{ include "agent-factory.image" . }}
@@ -44,11 +34,7 @@ spec:
             - /bin/sh
             - -lc
             - |
-              {{- if .Values.worker.demoFixture.enabled }}
-              PATH="/app/.work/demo-fixture/bin:$PATH" node dist/bin/worker.js --source /app/.work/demo-fixture --poll-ms {{ .Values.worker.pollIntervalMs }} --claim-ttl-ms {{ .Values.worker.claimTtlMs }}
-              {{- else }}
               node dist/bin/worker.js --poll-ms {{ .Values.worker.pollIntervalMs }} --claim-ttl-ms {{ .Values.worker.claimTtlMs }}
-              {{- end }}
           env:
             - name: RUN_QUEUE_BACKEND
               value: filesystem

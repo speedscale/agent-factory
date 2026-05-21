@@ -582,7 +582,7 @@ async function qaRunsHandler(req: IncomingMessage, res: ServerResponse): Promise
   const body = await readJsonBody(req);
   if (!isQaIntakeEvent(body)) {
     sendJson(res, 400, {
-      error: "request must match schemas/qa-intake.schema.yaml"
+      error: "request body must be a valid QaIntakeEvent (source, repository, sha, requestor)"
     });
     return;
   }

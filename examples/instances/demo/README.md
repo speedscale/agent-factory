@@ -11,5 +11,3 @@ In production this tree lives in `demos/agent-factory-config/`.
 - `agentDefaults.pr-replay-check.blockMerge: false` — advisory only.
 - `engine.authSecret` references a demo-bounded API key with low quota.
 - `TrafficSource` points at a frozen sample snapshot (not a live store).
-- `worker.demoFixture.enabled: true` seeds the bundled fixture so demos
-  work in a fresh cluster with no external dependencies.

@@ -37,15 +37,6 @@ npm run llm-run -- \
 
 Artifacts land in `--workdir`: `plan.json` (Planner output), `reproduce.mjs`, `confirm.mjs`, `patch.json`.
 
-## Quick start — validation loop only
-
-Run the existing quality baseline → regression → recovery demo:
-
-```bash
-npm install
-npm run loop-demo
-```
-
 Check gate verdict for a specific run:
 
 ```bash
