@@ -17,8 +17,8 @@
  */
 
 import { exec } from "node:child_process";
-import { readFile, writeFile, mkdir } from "node:fs/promises";
-import { readdir } from "node:fs/promises";
+import { readFile, writeFile, mkdir, readdir, stat } from "node:fs/promises";
+import os from "node:os";
 import { promisify } from "node:util";
 import path from "node:path";
 import type { AgentPlan } from "../contracts/index.js";
@@ -196,30 +196,56 @@ async function toolSearchCode(pattern: string, dir: string): Promise<string> {
   }
 }
 
-async function toolListSnapshotDir(snapshotDir: string): Promise<string> {
+/** Cap on number of host lines emitted; protects the prompt from giant
+ * snapshots where the tool is correctly invoked but returns hundreds of
+ * hosts. Each host adds ~5 lines (header + 3 files + "... and N more"). */
+const LIST_SNAPSHOT_MAX_HOSTS = 100;
+
+export async function toolListSnapshotDir(snapshotDir: string): Promise<string> {
+  let entries: string[];
   try {
-    const hosts = await readdir(snapshotDir);
-    const lines: string[] = [];
-    for (const host of hosts) {
-      try {
-        const files = await readdir(path.join(snapshotDir, host));
-        const statusCounts: Record<string, number> = {};
-        for (const f of files) {
-          // Status embedded in filename is not reliable — summarise by count
-          statusCounts["total"] = (statusCounts["total"] ?? 0) + 1;
-        }
-        lines.push(`${host}: ${files.length} RRPairs`);
-        // Show first 3 filenames so agent can pick ones to read
-        lines.push(...files.slice(0, 3).map((f) => `  ${path.join(snapshotDir, host, f)}`));
-        if (files.length > 3) lines.push(`  ... and ${files.length - 3} more`);
-      } catch {
-        lines.push(`${host}: (unreadable)`);
-      }
-    }
-    return lines.join("\n");
+    entries = await readdir(snapshotDir);
   } catch (err) {
     return `error: ${String(err)}`;
   }
+
+  // Detect a misinvocation: the model passed a single host's RRPair dir
+  // instead of the top-level snapshot dir. In that case every entry is a
+  // file, not a subdir. Without this check we emit thousands of
+  // "X: (unreadable)" lines and easily OOM the prompt (~900k tokens seen).
+  let fileCount = 0;
+  let dirCount = 0;
+  for (const entry of entries) {
+    try {
+      const s = await stat(path.join(snapshotDir, entry));
+      if (s.isDirectory()) dirCount++;
+      else fileCount++;
+    } catch { /* unreadable entry, ignore for the heuristic */ }
+    if (dirCount > 0) break; // any subdir means it's plausibly a snapshot dir
+  }
+  if (dirCount === 0 && fileCount > 0) {
+    return (
+      `error: ${snapshotDir} looks like a host RRPair directory (${fileCount} files, 0 subdirs), ` +
+      `not a snapshot directory. Pass the parent (snapshot) directory, or use read_rrpair on individual files.`
+    );
+  }
+
+  const lines: string[] = [];
+  const hosts = entries.slice(0, LIST_SNAPSHOT_MAX_HOSTS);
+  for (const host of hosts) {
+    try {
+      const files = await readdir(path.join(snapshotDir, host));
+      lines.push(`${host}: ${files.length} RRPairs`);
+      lines.push(...files.slice(0, 3).map((f) => `  ${path.join(snapshotDir, host, f)}`));
+      if (files.length > 3) lines.push(`  ... and ${files.length - 3} more`);
+    } catch {
+      lines.push(`${host}: (unreadable)`);
+    }
+  }
+  if (entries.length > LIST_SNAPSHOT_MAX_HOSTS) {
+    lines.push(`... and ${entries.length - LIST_SNAPSHOT_MAX_HOSTS} more hosts (output capped at ${LIST_SNAPSHOT_MAX_HOSTS})`);
+  }
+  return lines.join("\n");
 }
 
 async function toolReadRRPair(filePath: string): Promise<string> {
@@ -350,17 +376,24 @@ async function toolCompareFileDeclarations(filePath: string): Promise<string> {
  * 90s timeout — short enough that the model has to write focused tests, long
  * enough for go test compilation. Output is truncated to keep prompts small.
  */
-async function toolRunShell(command: string, cwd?: string): Promise<string> {
+export async function toolRunShell(command: string, cwd?: string): Promise<string> {
   const opts: { timeout: number; cwd?: string } = { timeout: 90_000 };
   if (cwd) opts.cwd = cwd;
+  function cap(s: string): string {
+    return s.length > 8000 ? `[truncated to 8000 chars]\n${s.slice(0, 8000)}` : s;
+  }
   try {
     const { stdout, stderr } = await execAsync(command, opts);
-    const out = [stdout, stderr].filter(Boolean).join("\n").trim();
-    return out.length > 8000 ? `[truncated to 8000 chars]\n${out.slice(0, 8000)}` : out;
+    return cap([stdout, stderr].filter(Boolean).join("\n").trim());
   } catch (err: unknown) {
+    // Non-zero exit, signal not delivered, timeout, etc. Prefix with "error:"
+    // so dispatchToolHardened classifies this as an executionError and counts
+    // it toward MAX_CONSECUTIVE_ERRORS. Otherwise weaker models burn loop
+    // budget retrying the same broken command (e.g. BSD/GNU sed -i mismatches
+    // on macOS) without the engine ever noticing they're stuck.
     const e = err as { stdout?: string; stderr?: string; message?: string };
     const out = [e.stdout, e.stderr, e.message].filter(Boolean).join("\n").trim();
-    return out.length > 8000 ? `[truncated to 8000 chars]\n${out.slice(0, 8000)}` : out;
+    return cap(`error: ${out}`);
   }
 }
 
@@ -875,6 +908,7 @@ Rules:
 - The confirm harness must use identical methodology to the reproduce harness (same mock, same measurement).
 - Do not refactor beyond the fix. No cleanup. No new abstractions beyond what the fix requires.
 - If the confirm harness fails, read the output, fix the issue, and re-run.
+- HOST PLATFORM: ${os.platform()}. On darwin, BSD sed differs from GNU sed — \`sed -i '...'\` requires an empty backup arg (\`sed -i '' '...'\`) and \`sed -i '<line>a\\<text>'\` is rejected. Prefer write_file or \`python3 -c\` for in-place edits across platforms.
 `;
 
 // ---------- Evaluator phase ----------
@@ -1193,6 +1227,7 @@ Your job is to:
 Rules:
 - The harness was written by the Planner. Use it as-is. If you find a bug IN the harness, that means the Planner's reproduce step was bogus — abort by re-emitting a Worker note rather than silently rewriting the harness.
 - Use write_file to apply the minimal fix to the TARGET file (the source file under test). No cleanup, no refactoring beyond the fix.
+- HOST PLATFORM: ${os.platform()}. On darwin, BSD sed differs from GNU sed — \`sed -i '...'\` requires an empty backup arg (\`sed -i '' '...'\`) and \`sed -i '<line>a\\<text>'\` is rejected. Prefer write_file or \`python3 -c\` for in-place edits across platforms.
 - Re-run the same harness command the Planner used. For unit-test shape: \`go test -run <PlannerWroteThisTest> ./<pkg>...\` or \`npx tsx --test <path>\` — whichever the Planner ran. The command is in the plan's "Baseline harness path" field; if the Planner stored only a script path, invoke that script directly.
 - The confirm result must show exit 0. If the harness still fails, read the output, fix the issue in the source, re-run. Do not emit_patch until the harness passes.
 - Do NOT delete unrelated code in the target file. write_file overwrites the whole file — preserve every function, import, and declaration that existed before. Only the lines your fix changes may be modified.
