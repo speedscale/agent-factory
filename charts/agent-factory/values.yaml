@@ -1,0 +1,97 @@
+# Default values for agent-factory.
+
+# Sizing profile: small | medium | ha
+#   small  — 1 intake-api + 1 worker, minimal resources (dev/demo)
+#   medium — 2 intake-api + 2 workers (default for internal/customer)
+#   ha     — 3 intake-api + N workers, anti-affinity, PDB
+sizing: medium
+
+image:
+  repository: ghcr.io/speedscale/agent-factory
+  tag: ""  # defaults to .Chart.AppVersion
+  pullPolicy: IfNotPresent
+  pullSecrets: []
+
+# Engine configuration (which LLM the agents use).
+engine:
+  kind: claude-sdk   # claude-sdk | generic-llm | private-llm
+  model: claude-opus-4-7
+  endpoint: https://api.anthropic.com
+  # Secret holding the API key. The chart never reads the value.
+  authSecret:
+    name: anthropic-api-key
+    key: token
+
+# Traffic sources to install as TrafficSource CRs at chart-apply time.
+# Leave empty if applying TrafficSources out-of-band via GitOps.
+trafficSources: []
+#  - name: prod
+#    store:
+#      kind: speedscale-cloud
+#      endpoint: https://cloud.speedscale.com
+#      auth:
+#        secretRef: { name: speedscale-api-key, key: token }
+#    scope:
+#      clusters: [prod]
+#    dlp:
+#      profile: standard
+
+# Per-agent enablement defaults. Apps override via AgentApp.spec.agents.
+agentDefaults:
+  triage:             { enabled: true,  autoCreatePR: false }
+  bug-fix:            { enabled: true,  autoCreatePR: true,  autoMergeThreshold: 0.85 }
+  perf-investigation: { enabled: true }
+  coverage-fill:      { enabled: true,  autoCreatePR: false }
+  pr-replay-check:    { enabled: true,  blockMerge: true, ciTimeout: 15m }
+  mock-generation:    { enabled: false }
+  migration-safety:   { enabled: true }
+
+intakeApi:
+  replicas: 2
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits:   { cpu: 500m, memory: 512Mi }
+  service:
+    type: ClusterIP
+    port: 8080
+  ingress:
+    enabled: false
+    className: ""
+    annotations: {}
+    hosts: []
+    tls: []
+
+worker:
+  replicas: 2
+  pollIntervalMs: 2000
+  claimTtlMs: 900000
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits:   { cpu: 1000m, memory: 1Gi }
+  # Optional init container that seeds a demo fixture into shared storage.
+  demoFixture:
+    enabled: false
+
+persistence:
+  enabled: true
+  size: 10Gi
+  storageClassName: ""
+  accessMode: ReadWriteOnce
+
+rbac:
+  create: true
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+podSecurityContext: {}
+securityContext:
+  runAsNonRoot: true
+  readOnlyRootFilesystem: false
+  allowPrivilegeEscalation: false
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

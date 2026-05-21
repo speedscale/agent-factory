@@ -1,0 +1,94 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "agent-factory.fullname" . }}-worker
+  labels:
+    {{- include "agent-factory.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  replicas: {{ .Values.worker.replicas }}
+  selector:
+    matchLabels:
+      {{- include "agent-factory.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        {{- include "agent-factory.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: worker
+    spec:
+      serviceAccountName: {{ include "agent-factory.serviceAccountName" . }}
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.worker.demoFixture.enabled }}
+      initContainers:
+        - name: create-demo-fixture
+          image: {{ include "agent-factory.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["node", "dist/bin/create-demo-fixture.js"]
+          volumeMounts:
+            - { name: agent-data, mountPath: /app/artifacts, subPath: artifacts }
+            - { name: agent-data, mountPath: /app/.work,     subPath: work }
+      {{- end }}
+      containers:
+        - name: worker
+          image: {{ include "agent-factory.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - /bin/sh
+            - -lc
+            - |
+              {{- if .Values.worker.demoFixture.enabled }}
+              PATH="/app/.work/demo-fixture/bin:$PATH" node dist/bin/worker.js --source /app/.work/demo-fixture --poll-ms {{ .Values.worker.pollIntervalMs }} --claim-ttl-ms {{ .Values.worker.claimTtlMs }}
+              {{- else }}
+              node dist/bin/worker.js --poll-ms {{ .Values.worker.pollIntervalMs }} --claim-ttl-ms {{ .Values.worker.claimTtlMs }}
+              {{- end }}
+          env:
+            - name: RUN_QUEUE_BACKEND
+              value: filesystem
+            - name: AF_ENGINE_KIND
+              value: {{ .Values.engine.kind | quote }}
+            - name: AF_ENGINE_MODEL
+              value: {{ .Values.engine.model | quote }}
+            - name: AF_ENGINE_ENDPOINT
+              value: {{ .Values.engine.endpoint | quote }}
+            - name: AF_ENGINE_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.engine.authSecret.name }}
+                  key: {{ .Values.engine.authSecret.key }}
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - { name: agent-data, mountPath: /app/artifacts, subPath: artifacts }
+            - { name: agent-data, mountPath: /app/.work,     subPath: work }
+      volumes:
+        - name: agent-data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "agent-factory.fullname" . }}-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

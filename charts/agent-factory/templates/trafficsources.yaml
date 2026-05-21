@@ -1,0 +1,11 @@
+{{- range $idx, $ts := .Values.trafficSources }}
+---
+apiVersion: agents.speedscale.io/v1alpha1
+kind: TrafficSource
+metadata:
+  name: {{ $ts.name }}
+  labels:
+    {{- include "agent-factory.labels" $ | nindent 4 }}
+spec:
+{{- toYaml (omit $ts "name") | nindent 2 }}
+{{- end }}
