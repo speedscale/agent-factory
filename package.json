@@ -1,6 +1,6 @@
 {
   "name": "@speedscale/agent-factory",
-  "version": "0.1.36",
+  "version": "0.1.37",
   "private": true,
   "description": "Speedscale Agent Factory — traffic-context-grounded AI agents.",
   "type": "module",
