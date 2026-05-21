@@ -1,4 +1,4 @@
-name: Server Mode Smoke
+name: Build & Test
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
   pull_request:
 
 jobs:
-  server-mode-smoke:
+  build-and-test:
     runs-on: ubuntu-latest
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -27,97 +27,5 @@ jobs:
       - name: Type check
         run: npm run check
 
-      - name: Quality integration checks
-        run: npm run qa-integration
-
-      - name: Create demo fixture
-        run: npm run create-demo-fixture
-
-      - name: Start intake API
-        run: |
-          INTAKE_REPO_APP_MAP_JSON='{"speedscale/demo":"examples/apps/demo-node/agentapp.yaml","speedscale/demo-multi":"examples/apps/demo-node-multi-target/agentapp.yaml"}' \
-          INTAKE_ALLOWED_REPOS='speedscale/demo,speedscale/demo-multi' \
-          npm run intake-api > intake-api.log 2>&1 &
-          echo $! > intake-api.pid
-
-      - name: Wait for intake API health
-        run: |
-          for i in $(seq 1 30); do
-            if curl -sSf http://127.0.0.1:8080/healthz > /dev/null; then
-              exit 0
-            fi
-            sleep 1
-          done
-          echo "intake-api failed to become healthy"
-          exit 1
-
-      - name: Submit baseline run request
-        run: |
-          curl -sS -X POST http://127.0.0.1:8080/qa/runs \
-            -H "content-type: application/json" \
-            --data-binary @examples/runs/demo-node-baseline-intake.json > intake-response.json
-          node -e 'const fs=require("fs"); const payload=JSON.parse(fs.readFileSync("intake-response.json","utf8")); const run=payload.runs?.[0]; if(!run?.metadata?.name){process.exit(1)}; fs.appendFileSync(process.env.GITHUB_ENV, `RUN_NAME=${run.metadata.name}\n`); console.log(run.metadata.name);'
-
-      - name: Process run with worker
-        run: |
-          PATH="$PWD/.work/demo-fixture/bin:$PATH" npm run worker -- --source .work/demo-fixture --once > worker.log 2>&1
-
-      - name: Assert baseline run succeeded
-        run: |
-          node -e 'const fs=require("fs"); const path=require("path"); const runName=process.env.RUN_NAME; const run=JSON.parse(fs.readFileSync(path.join("artifacts", runName, "run.json"), "utf8")); if(run.status.phase !== "succeeded"){console.error(JSON.stringify(run, null, 2)); process.exit(1)}; console.log(JSON.stringify({run: runName, phase: run.status.phase, summary: run.status.summary}, null, 2));'
-
-      - name: Assert baseline report generated
-        run: |
-          node -e 'const fs=require("fs"); const path=require("path"); const runName=process.env.RUN_NAME; const report=JSON.parse(fs.readFileSync(path.join("artifacts", runName, "quality-report.json"), "utf8")); if(report.spec.mode !== "baseline"){console.error(report); process.exit(1)};'
-
-      - name: Submit comparison run request
-        run: |
-          curl -sS -X POST http://127.0.0.1:8080/qa/runs \
-            -H "content-type: application/json" \
-            --data-binary @examples/runs/demo-node-pr-quality-intake.json > comparison-response.json
-          node -e 'const fs=require("fs"); const payload=JSON.parse(fs.readFileSync("comparison-response.json","utf8")); const run=payload.runs?.[0]; if(!run?.metadata?.name){process.exit(1)}; fs.appendFileSync(process.env.GITHUB_ENV, `COMPARISON_RUN_NAME=${run.metadata.name}\n`); console.log(run.metadata.name);'
-
-      - name: Process comparison run
-        run: |
-          PATH="$PWD/.work/demo-fixture/bin:$PATH" npm run worker -- --source .work/demo-fixture --once > worker-comparison.log 2>&1
-
-      - name: Assert comparison run quality outcome
-        run: |
-          node -e 'const fs=require("fs"); const path=require("path"); const runName=process.env.COMPARISON_RUN_NAME; const report=JSON.parse(fs.readFileSync(path.join("artifacts", runName, "quality-report.json"), "utf8")); if(report.spec.mode !== "comparison" || report.spec.outcome !== "pass"){console.error(JSON.stringify(report, null, 2)); process.exit(1)};'
-
-      - name: Submit pull_request webhook event
-        run: |
-          node -e 'const fs=require("fs"); const payload={action:"opened",pull_request:{number:789,title:"QA webhook smoke",body:"",html_url:"https://github.com/speedscale/demo/pull/789",labels:[{name:"agent"},{name:"bug"}],head:{sha:"abc123",ref:"qa"},base:{sha:"def456",ref:"main"}},repository:{full_name:"speedscale/demo"}}; fs.writeFileSync("webhook-pr.json", JSON.stringify(payload));'
-          curl -sS -X POST http://127.0.0.1:8080/webhooks/github/pulls \
-            -H "content-type: application/json" \
-            -H "x-github-event: pull_request" \
-            --data-binary @webhook-pr.json > webhook-response.json
-          node -e 'const fs=require("fs"); const payload=JSON.parse(fs.readFileSync("webhook-response.json","utf8")); if(!payload.runs?.[0]?.metadata?.name){console.error(payload); process.exit(1)};'
-
-      - name: Submit multi-target intake request
-        run: |
-          curl -sS -X POST http://127.0.0.1:8080/qa/runs \
-            -H "content-type: application/json" \
-            --data-binary @examples/runs/demo-node-multi-target-pr-quality-intake.json > multi-target-response.json
-          node -e 'const fs=require("fs"); const payload=JSON.parse(fs.readFileSync("multi-target-response.json","utf8")); const runs=payload.runs||[]; if(runs.length!==2){console.error(payload); process.exit(1)}; const names=runs.map((r)=>r.metadata?.name||""); if(!names.every((name)=>name.includes("node-api")||name.includes("node-worker"))){console.error(names); process.exit(1)};'
-
-      - name: Stop intake API
-        if: always()
-        run: |
-          if [ -f intake-api.pid ]; then
-            kill "$(cat intake-api.pid)" || true
-          fi
-
-      - name: Upload debug logs
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: server-mode-smoke-logs
-          path: |
-            intake-api.log
-            worker.log
-            worker-comparison.log
-            intake-response.json
-            comparison-response.json
-            webhook-response.json
-            multi-target-response.json
+      - name: Unit tests
+        run: npm test

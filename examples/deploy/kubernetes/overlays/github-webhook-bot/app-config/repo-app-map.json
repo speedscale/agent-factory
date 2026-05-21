@@ -1,4 +1,0 @@
-{
-  "speedscale/microsvc": "./config/microsvc-user-service-agentapp.yaml",
-  "speedscale/demo": "./config/demo-node-agentapp.yaml"
-}

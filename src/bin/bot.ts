@@ -27,7 +27,10 @@ function getArg(argv: string[], flagNames: string[]): string | undefined {
 }
 
 function parseOptions(argv: string[]): BotOptions {
-  const intakePath = getArg(argv, ["--intake", "-i"]) ?? "examples/runs/demo-node-intake.json";
+  const intakePath = getArg(argv, ["--intake", "-i"]);
+  if (!intakePath) {
+    throw new Error("--intake <path-to-intake.json> is required");
+  }
   const sourceDir = getArg(argv, ["--source", "-s"]);
   const mode = getArg(argv, ["--mode"]);
   const proxymockMode = getArg(argv, ["--proxymock-mode"]) ?? "pass";

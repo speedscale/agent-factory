@@ -9,27 +9,21 @@
 
 - `docs/architecture.md` — full system design: loop phases, planes, deployment models, contracts
 - `docs/engine.md` — LLM engine: tool catalog, agent loop, Planner/Worker phases, configuration
+- `docs/engine-source-mode.md` — engine source mode for non-wire-shaped specs
 - `docs/engine-hardening.md` — tool-call hardening: rescue, escalating nudges, prereqs, compaction, error classification
 - `docs/plan.md` — active roadmap and next steps
 
 ## Deployment
 
-- `docs/users.md` — runtime modes (local, server, Docker Compose, Kubernetes)
-- `docs/server.md` — local/server runbook detail
-- `docs/kubernetes.md` — Kubernetes deployment
-- `docs/cluster-bot-runtime.md` — webhook/Slack bot runtime on Kubernetes
+- `charts/agent-factory/` — Helm chart (the supported deployment path)
+- `examples/instances/` — sample Helm values for internal / customer / demo / local flavors
 - `docs/operations.md` — metrics thresholds and remediation runbook
-
-## Autonomy and quality contracts
-
-- `docs/autonomy-mvp.md` — real-ticket intake contract and pass/fail rubric
-- `schemas/` — machine-readable YAML schemas for all contracts
 
 ## History and release
 
 - `docs/history.md` — implementation history
-- `docs/phase-b-first-run.md` — first live run record
 - `docs/release.md` — release checklist
+- `docs/eval-openrouter-2026-05-18.md` — cross-provider model eval
 
 ## Quick rule
 

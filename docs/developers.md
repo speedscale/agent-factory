@@ -17,8 +17,9 @@ The engine proposes. Tools execute. Humans approve.
 
 - architecture: `docs/architecture.md`
 - LLM engine detail: `docs/engine.md`
+- engine source mode: `docs/engine-source-mode.md`
+- engine hardening: `docs/engine-hardening.md`
 - roadmap: `docs/plan.md`
-- autonomy contract and pass/fail rubric: `docs/autonomy-mvp.md`
 - history: `docs/history.md`
 - release process: `docs/release.md`
 
@@ -45,8 +46,7 @@ The hook runs automatically on every commit. If it fires on a false positive, re
 ```bash
 npm install
 npm run check          # type-check
-npm run demo           # validation loop demo (no LLM key needed)
-npm run loop-demo      # baseline → regression → recovery sequence
+npm test               # unit tests
 ```
 
 LLM engine (requires `ANTHROPIC_API_KEY`):
@@ -62,19 +62,11 @@ npm run llm-run -- \
   --verbose
 ```
 
-Individual stage debugging:
+Worker / intake (cluster mode is via the Helm chart at `charts/agent-factory/`):
 
 ```bash
-npm run planner   -- --run <run-name>
-npm run runner    -- --run <run-name> --source .work/demo-fixture
-npm run validator -- --run <run-name>
-```
-
-Service-mode checks:
-
-```bash
+npm run worker -- --once
 npm run intake-api
-PATH="$(pwd)/.work/demo-fixture/bin:$PATH" npm run worker -- --source .work/demo-fixture --once
 ```
 
 ## Key source files
@@ -82,6 +74,7 @@ PATH="$(pwd)/.work/demo-fixture/bin:$PATH" npm run worker -- --source .work/demo
 | File | Purpose |
 |---|---|
 | `src/lib/llm-engine.ts` | LLM agent loop, tool implementations, Planner/Worker phases |
+| `src/agents/` | Per-agent modules (triage, bug-fix, perf, coverage, replay-check, mocks, migration) |
 | `src/lib/planner.ts` | Deterministic planner stub (used when no LLM key is set) |
 | `src/lib/runner.ts` | Build stage execution |
 | `src/lib/validator.ts` | proxymock replay stage |

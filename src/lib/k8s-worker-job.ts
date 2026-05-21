@@ -120,18 +120,6 @@ function buildJobManifest(runName: string, config: JobSpecConfig): Record<string
         spec: {
           restartPolicy: "Never",
           serviceAccountName: config.serviceAccountName,
-          initContainers: [
-            {
-              name: "create-demo-fixture",
-              image: config.image,
-              imagePullPolicy: "IfNotPresent",
-              command: ["node", "dist/bin/create-demo-fixture.js"],
-              volumeMounts: [
-                { name: "agent-data", mountPath: "/app/artifacts", subPath: "artifacts" },
-                { name: "agent-data", mountPath: "/app/.work", subPath: "work" }
-              ]
-            }
-          ],
           containers: [
             {
               name: "postgres",
@@ -152,7 +140,7 @@ function buildJobManifest(runName: string, config: JobSpecConfig): Record<string
               command: [
                 "/bin/sh",
                 "-lc",
-                "PATH=\"/app/.work/demo-fixture/bin:$PATH\" node dist/bin/worker.js --once --poll-ms 2000 --claim-ttl-ms 900000"
+                "node dist/bin/worker.js --once --poll-ms 2000 --claim-ttl-ms 900000"
               ],
               env: runQueueEnv(config),
               volumeMounts: [

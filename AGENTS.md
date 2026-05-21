@@ -42,10 +42,12 @@ The code is identical. Configuration differs:
 
 - `src/lib/llm-engine.ts` — LLM agent loop, tool implementations, Planner/Worker phases
 - `src/lib/planner.ts` — deterministic planner stub (fallback when no LLM key configured)
-- `src/contracts/` — typed contracts: AgentRun, AgentApp, AgentPlan, QualityReport
+- `src/agents/` — per-agent modules (triage, bug-fix, perf-investigation, coverage-fill, pr-replay-check, mock-generation, migration-safety)
+- `src/contracts/` — typed contracts: AgentRun, AgentApp, AgentPlan, QualityReport, TrafficSource/Slice/Fingerprint/Evidence
+- `crds/` — CustomResourceDefinitions (AgentRun, AgentApp, TrafficSource)
+- `charts/agent-factory/` — Helm chart (supported deployment path)
+- `examples/instances/` — sample Helm values (internal / customer / demo / local)
 - `docs/` — reference docs; update when behavior changes
-- `examples/apps/` — sample AgentApp manifests
-- `schemas/` — machine-readable YAML schemas for contracts
 
 ## Multi-repo instruction resolution
 

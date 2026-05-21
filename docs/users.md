@@ -4,76 +4,48 @@ This guide is for operators and integrators who run Agent Factory.
 
 ## What Agent Factory Does
 
-Agent Factory executes a repeatable run loop:
+Agent Factory executes the **Spec → Generate → Validate → Deploy → Observe** loop, driven by an LLM grounded in real captured traffic (RRPairs via proxymock). Every fix is validated against production evidence before a human approves it.
 
-1. intake validation request (PR/manual/agent) + app manifest
-2. resolve baseline scope for the repo/workdir target
-3. run build/test/validation checks in isolated workspace
-4. compare outputs against baseline
-5. emit quality reports for operator/developer decision
-
-## Choose a Runtime Mode
-
-- **Local demo:** fastest way to verify installation
-- **Server mode (API + worker):** long-running local/VM process model
-- **Docker Compose always-on:** easiest persistent setup
-- **Kubernetes:** multi-worker cluster deployment
-
-## Fast Start
-
-### Local demo
+## Quick start — local LLM fix loop
 
 ```bash
 npm install
-npm run demo
+export ANTHROPIC_API_KEY=<your-key>
+
+npm run llm-run -- \
+  --title "Service X returning 429 errors on /api/sync" \
+  --body  "Errors cluster in short bursts suggesting a concurrency problem." \
+  --snapshot /path/to/snapshot/inner-dir \
+  --source  /path/to/service/src \
+  --workdir /tmp/llm-run-work \
+  --verbose
 ```
 
-### Always-on Docker Compose
+Artifacts land in `--workdir`: `plan.json`, `reproduce.mjs`, `confirm.mjs`, `patch.json`.
+
+## Cluster deployment — Helm
+
+Install via the Helm chart at `charts/agent-factory/`. Sample values per flavor live in `examples/instances/`:
+
+- `examples/instances/internal/` — Speedscale internal dogfood install
+- `examples/instances/customer/` — template for customer BYOC installs
+- `examples/instances/demo/` — public demo with frozen sample data
+- `examples/instances/local/` — local CLI mode (no chart needed)
 
 ```bash
-cp .env.server.example .env.server
-docker compose --env-file .env.server -f docker-compose.server.yml up -d
-docker compose --env-file .env.server -f docker-compose.server.yml ps
+helm install agent-factory ./charts/agent-factory \
+  --values ./examples/instances/internal/values/base.yaml
 ```
 
-### Kubernetes
+See `charts/agent-factory/README.md` for full chart options and CRDs.
 
-```bash
-kubectl apply -k examples/deploy/kubernetes/base
-kubectl apply -k examples/deploy/kubernetes/overlays/redis
-```
+## CRDs
 
-## Submit and Track Runs
+Agent Factory installs three CustomResourceDefinitions (see `crds/`):
 
-Submit:
-
-```bash
-curl -sS -X POST http://127.0.0.1:8080/qa/runs \
-  -H "content-type: application/json" \
-  --data-binary @examples/runs/demo-node-pr-quality-intake.json
-```
-
-Multi-target example (queues one run per target):
-
-```bash
-curl -sS -X POST http://127.0.0.1:8080/qa/runs \
-  -H "content-type: application/json" \
-  --data-binary @examples/runs/demo-node-multi-target-pr-quality-intake.json
-```
-
-Queue onboarding baseline from manifest:
-
-```bash
-npm run runs -- baseline examples/apps/demo-node/agentapp.yaml --target demo-node
-```
-
-List/query:
-
-```bash
-curl -sS "http://127.0.0.1:8080/runs?phase=queued&limit=20&offset=0"
-curl -sS "http://127.0.0.1:8080/runs/<run-name>"
-curl -sS "http://127.0.0.1:8080/metrics"
-```
+- `TrafficSource` — binding to an RRPair store (cluster scope, DLP policy, auth)
+- `AgentApp` — service manifest (repo, build, validate, engine config, quality policy)
+- `AgentRun` — lifecycle state and artifact pointers
 
 ## Required Evidence Quality
 
@@ -94,7 +66,6 @@ For real PR requests, treat successful command execution as necessary but not su
 
 ## Where to Go Deeper
 
-- detailed server steps: `docs/server.md`
-- Kubernetes specifics: `docs/kubernetes.md`
+- LLM engine internals: `docs/engine.md`
 - metrics/remediation playbook: `docs/operations.md`
-- microsvc walkthrough: `docs/microsvc.md`
+- roadmap: `docs/plan.md`
