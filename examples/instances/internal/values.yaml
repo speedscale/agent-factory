@@ -1,0 +1,52 @@
+sizing: ha
+
+image:
+  repository: ghcr.io/speedscale/agent-factory
+  tag: ""  # pin per release
+
+engine:
+  kind: claude-sdk
+  model: claude-opus-4-7
+  endpoint: https://api.anthropic.com
+  authSecret:
+    name: anthropic-api-key
+    key: token
+
+# TrafficSources can be installed via this chart or applied separately;
+# the dogfood instance applies them separately from trafficsources/.
+trafficSources: []
+
+agentDefaults:
+  triage:             { enabled: true,  autoCreatePR: false }
+  bug-fix:            { enabled: true,  autoCreatePR: true,  autoMergeThreshold: 0.85 }
+  perf-investigation: { enabled: true }
+  coverage-fill:      { enabled: true,  autoCreatePR: false }
+  pr-replay-check:    { enabled: true,  blockMerge: true, ciTimeout: 15m }
+  mock-generation:    { enabled: false }
+  migration-safety:   { enabled: true }
+
+intakeApi:
+  replicas: 3
+  resources:
+    requests: { cpu: 200m, memory: 256Mi }
+    limits:   { cpu: 1000m, memory: 1Gi }
+
+worker:
+  replicas: 4
+  resources:
+    requests: { cpu: 200m, memory: 512Mi }
+    limits:   { cpu: 2000m, memory: 4Gi }
+
+persistence:
+  enabled: true
+  size: 50Gi
+
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          topologyKey: kubernetes.io/hostname
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: agent-factory

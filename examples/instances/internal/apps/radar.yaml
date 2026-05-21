@@ -1,0 +1,26 @@
+apiVersion: agents.speedscale.io/v1alpha1
+kind: AgentApp
+metadata:
+  name: radar
+  namespace: agent-factory
+spec:
+  repo:
+    provider: github
+    url: https://github.com/speedscale/radar
+    defaultBranch: main
+    workdir: .
+  trafficSources:
+    - name: prod-speedscale
+      services: [radar]
+  agents:
+    triage:             { enabled: true,  autoCreatePR: false }
+    bug-fix:            { enabled: true,  autoCreatePR: true,  autoMergeThreshold: 0.85 }
+    perf-investigation: { enabled: true }
+    coverage-fill:      { enabled: true,  autoCreatePR: false }
+    pr-replay-check:    { enabled: true,  blockMerge: true, ciTimeout: 15m }
+    migration-safety:   { enabled: true }
+  approvers:
+    groups: [eng-radar, eng-platform]
+  scm:
+    branchPrefix: "agent-factory/"
+    prLabels: [agent-factory, needs-review]

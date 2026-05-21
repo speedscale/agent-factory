@@ -1,0 +1,41 @@
+sizing: medium
+
+image:
+  repository: ghcr.io/speedscale/agent-factory
+  tag: ""  # pin per release for reproducibility
+
+engine:
+  kind: claude-sdk          # claude-sdk | generic-llm | private-llm
+  model: claude-opus-4-7
+  endpoint: https://api.anthropic.com
+  authSecret:
+    name: anthropic-api-key
+    key: token
+
+trafficSources: []          # apply separately from trafficsources/
+
+agentDefaults:
+  triage:             { enabled: true,  autoCreatePR: false }
+  bug-fix:            { enabled: true,  autoCreatePR: true,  autoMergeThreshold: 0.85 }
+  perf-investigation: { enabled: true }
+  coverage-fill:      { enabled: true,  autoCreatePR: false }
+  pr-replay-check:    { enabled: true,  blockMerge: true, ciTimeout: 15m }
+  mock-generation:    { enabled: false }
+  migration-safety:   { enabled: true }
+
+intakeApi:
+  replicas: 2
+
+worker:
+  replicas: 2
+
+persistence:
+  enabled: true
+  size: 20Gi
+  # storageClassName: ""    # set to your cluster's class if needed
+
+rbac:
+  create: true
+
+serviceAccount:
+  create: true

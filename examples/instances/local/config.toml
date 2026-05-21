@@ -1,0 +1,32 @@
+# Example ~/.agent-factory/config.toml
+# Global defaults. Per-project .agent-factory.yaml overrides these.
+
+[engine]
+kind       = "claude-sdk"
+model      = "claude-opus-4-7"
+endpoint   = "https://api.anthropic.com"
+auth_file  = "~/.agent-factory/secrets/anthropic.key"
+
+[traffic.default]
+kind            = "speedscale-cloud"
+endpoint        = "https://cloud.speedscale.com"
+auth_file       = "~/.agent-factory/secrets/speedscale.key"
+default_cluster = "prod"
+dlp_profile     = "standard"
+
+[agents]
+enabled = [
+  "triage",
+  "bug-fix",
+  "perf-investigation",
+  "coverage-fill",
+]
+
+[scm]
+# Default to dry-run for local mode — never auto-create PRs without explicit opt-in
+auto_create_pr = false
+branch_prefix  = "agent-factory/"
+
+[runs]
+# Where run artifacts go when not running inside an app's repo
+default_dir = "~/.agent-factory/runs"

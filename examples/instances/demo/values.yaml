@@ -1,0 +1,53 @@
+sizing: small
+
+image:
+  repository: ghcr.io/speedscale/agent-factory
+  tag: ""
+
+engine:
+  kind: claude-sdk
+  model: claude-opus-4-7
+  endpoint: https://api.anthropic.com
+  authSecret:
+    name: anthropic-demo-key   # low-quota demo-only key
+    key: token
+
+# Guard rails: every agent runs in advisory mode, no SCM writes.
+agentDefaults:
+  triage:             { enabled: true,  autoCreatePR: false }
+  bug-fix:            { enabled: true,  autoCreatePR: false }
+  perf-investigation: { enabled: true,  autoCreatePR: false }
+  coverage-fill:      { enabled: true,  autoCreatePR: false }
+  pr-replay-check:    { enabled: true,  blockMerge: false }
+  mock-generation:    { enabled: false }
+  migration-safety:   { enabled: true,  autoCreatePR: false }
+
+trafficSources:
+  - name: demo-snapshot
+    store:
+      kind: local-fs
+      path: /app/.work/demo-fixture/snapshots/sample
+    scope:
+      clusters: [demo]
+    dlp:
+      profile: standard
+    tags:
+      environment: demo
+
+intakeApi:
+  replicas: 1
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits:   { cpu: 250m, memory: 256Mi }
+
+worker:
+  replicas: 1
+  demoFixture:
+    enabled: true
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits:   { cpu: 500m, memory: 512Mi }
+
+persistence:
+  enabled: true
+  size: 2Gi

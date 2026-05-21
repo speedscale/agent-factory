@@ -1,0 +1,21 @@
+apiVersion: agents.speedscale.io/v1alpha1
+kind: TrafficSource
+metadata:
+  name: prod
+  namespace: agent-factory
+spec:
+  store:
+    kind: speedscale-onprem
+    endpoint: http://proxymock.speedscale-system.svc.cluster.local:8080
+    auth:
+      secretRef:
+        name: proxymock-api-key
+        key: token
+  scope:
+    clusters: [prod]
+    # services: []           # omit to allow all services in the cluster
+    retention: 30d
+  dlp:
+    profile: standard         # never `none` for prod — webhook rejects it
+  tags:
+    environment: prod
