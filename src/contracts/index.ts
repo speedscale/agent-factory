@@ -7,3 +7,7 @@ export type { AgentRunResult } from "./run-result.js";
 export type { QualityBaseline } from "./quality-baseline.js";
 export type { QualityReport } from "./quality-report.js";
 export type { GateReport, GateVerdict } from "./gate-report.js";
+export type { TrafficSource } from "./traffic-source.js";
+export type { TrafficSlice } from "./traffic-slice.js";
+export type { TrafficFingerprint } from "./traffic-fingerprint.js";
+export type { TrafficEvidence } from "./traffic-evidence.js";
