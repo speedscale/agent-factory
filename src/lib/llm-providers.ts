@@ -166,7 +166,7 @@ async function callAnthropic(params: CallLLMParams): Promise<AssistantTurn> {
 // ---------- OpenAI-compatible providers (OpenRouter, local DS4, etc.) ----------
 
 const openrouterClient = new OpenAI({
-  apiKey: process.env.OPENROUTER_API_KEY,
+  apiKey: process.env.OPENROUTER_API_KEY || "openrouter-unset",
   baseURL: "https://openrouter.ai/api/v1"
 });
 
