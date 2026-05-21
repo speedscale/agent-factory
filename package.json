@@ -35,6 +35,9 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.96.0",
+    "@kubernetes/client-node": "^1.4.0",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
     "openai": "^6.38.0",
     "redis": "^5.8.2",
     "yaml": "^2.8.3"
