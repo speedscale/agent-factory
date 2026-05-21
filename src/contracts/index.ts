@@ -1,4 +1,6 @@
 export type { AgentApp } from "./agent-app.js";
+export type { AgentKind, AgentEnablement } from "./agent-kind.js";
+export { AGENT_KINDS } from "./agent-kind.js";
 export type { AgentEvidence } from "./agent-evidence.js";
 export type { AgentPlan, AgentPlanAction } from "./agent-plan.js";
 export type { AgentRun, AgentRunPhase } from "./agent-run.js";
