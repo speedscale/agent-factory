@@ -61,6 +61,14 @@ intakeApi:
     hosts: []
     tls: []
 
+controller:
+  enabled: true
+  # Empty = cluster-scoped (watch all namespaces); set to scope to one.
+  watchNamespace: ""
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits:   { cpu: 500m, memory: 512Mi }
+
 worker:
   replicas: 2
   pollIntervalMs: 2000
@@ -68,9 +76,6 @@ worker:
   resources:
     requests: { cpu: 100m, memory: 256Mi }
     limits:   { cpu: 1000m, memory: 1Gi }
-  # Optional init container that seeds a demo fixture into shared storage.
-  demoFixture:
-    enabled: false
 
 persistence:
   enabled: true
