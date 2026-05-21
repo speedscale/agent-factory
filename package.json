@@ -9,6 +9,7 @@
     "check": "tsc --noEmit -p tsconfig.json",
     "test": "tsx --test src/lib/*.test.ts",
     "intake-api": "tsx src/bin/intake-api.ts",
+    "controller": "tsx src/bin/controller.ts",
     "worker": "tsx src/bin/worker.ts",
     "pr-poller": "tsx src/bin/github-pr-poller.ts",
     "bot": "tsx src/bin/bot.ts",
