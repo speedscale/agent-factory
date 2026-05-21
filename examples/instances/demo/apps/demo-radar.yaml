@@ -1,0 +1,20 @@
+apiVersion: agents.speedscale.io/v1alpha1
+kind: AgentApp
+metadata:
+  name: demo-radar
+  namespace: agent-factory
+spec:
+  repo:
+    provider: github
+    url: https://github.com/speedscale/demo-radar
+    defaultBranch: main
+    workdir: .
+  trafficSources:
+    - name: demo-snapshot
+      services: [demo-radar]
+  agents:
+    triage:             { enabled: true,  autoCreatePR: false }
+    bug-fix:            { enabled: true,  autoCreatePR: false }
+    perf-investigation: { enabled: true }
+    coverage-fill:      { enabled: true,  autoCreatePR: false }
+    pr-replay-check:    { enabled: true,  blockMerge: false }

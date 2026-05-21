@@ -1,0 +1,26 @@
+apiVersion: agents.speedscale.io/v1alpha1
+kind: AgentApp
+metadata:
+  name: example-app
+  namespace: agent-factory
+spec:
+  repo:
+    provider: github
+    url: https://github.com/your-org/example-app
+    defaultBranch: main
+    workdir: .
+  trafficSources:
+    - name: prod
+      services: [example-app]
+  agents:
+    triage:             { enabled: true,  autoCreatePR: false }
+    bug-fix:            { enabled: true,  autoCreatePR: true,  autoMergeThreshold: 0.9 }
+    perf-investigation: { enabled: true }
+    coverage-fill:      { enabled: true,  autoCreatePR: false }
+    pr-replay-check:    { enabled: true,  blockMerge: true, ciTimeout: 20m }
+    migration-safety:   { enabled: true }
+  approvers:
+    groups: [eng-platform]
+  scm:
+    branchPrefix: "agent-factory/"
+    prLabels: [agent-factory, needs-review]

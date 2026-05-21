@@ -1,8 +1,13 @@
+import type { AgentKind } from "./agent-kind.js";
+
 export type AgentRunPhase =
   | "queued"
   | "planned"
   | "building"
   | "validating"
+  | "generating"
+  | "deploying"
+  | "reporting"
   | "succeeded"
   | "failed";
 
@@ -16,6 +21,18 @@ export interface AgentRun {
   spec: {
     appRef: {
       name: string;
+    };
+    agent?: AgentKind;
+    input?: unknown;
+    engine?: {
+      kind: "claude-sdk" | "generic-llm" | "private-llm";
+      model?: string;
+      endpoint?: string;
+    };
+    pinnedSpec?: {
+      binaryVersion: string;
+      agentDefVersion?: string;
+      chartValuesHash?: string;
     };
     request?: {
       source: "pull_request" | "manual" | "agent" | "developer";

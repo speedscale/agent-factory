@@ -1,0 +1,22 @@
+apiVersion: agents.speedscale.io/v1alpha1
+kind: TrafficSource
+metadata:
+  name: prod-speedscale
+  namespace: agent-factory
+spec:
+  store:
+    kind: speedscale-cloud
+    endpoint: https://cloud.speedscale.com
+    auth:
+      secretRef:
+        name: speedscale-api-key
+        key: token
+  scope:
+    clusters: [prod]
+    services: [radar, usr-mgmt, ds4, kraken]
+    retention: 30d
+  dlp:
+    profile: standard
+  tags:
+    environment: prod
+    region: us-east-1

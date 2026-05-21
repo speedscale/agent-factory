@@ -1,3 +1,5 @@
+import type { AgentEnablement, AgentKind } from "./agent-kind.js";
+
 export interface AgentApp {
   apiVersion: "agents.speedscale.io/v1alpha1";
   kind: "AgentApp";
@@ -11,6 +13,25 @@ export interface AgentApp {
       url: string;
       defaultBranch: string;
       workdir: string;
+      dependencies?: Array<{
+        provider: "github" | "gitlab";
+        url: string;
+      }>;
+    };
+    trafficSources?: Array<{
+      name: string;
+      services?: string[];
+    }>;
+    agents?: Partial<Record<AgentKind, AgentEnablement>>;
+    approvers?: {
+      groups?: string[];
+      users?: string[];
+    };
+    scm?: {
+      branchPrefix?: string;
+      prLabels?: string[];
+      prTemplate?: string;
+      autoMergeThreshold?: number;
     };
     issue?: {
       labels?: {

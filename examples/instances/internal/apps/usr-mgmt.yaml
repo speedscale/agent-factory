@@ -1,0 +1,23 @@
+apiVersion: agents.speedscale.io/v1alpha1
+kind: AgentApp
+metadata:
+  name: usr-mgmt
+  namespace: agent-factory
+spec:
+  repo:
+    provider: gitlab
+    url: https://gitlab.com/speedscale/speedscale
+    defaultBranch: main
+    workdir: services/usr-mgmt
+  trafficSources:
+    - name: prod-speedscale
+      services: [usr-mgmt]
+  agents:
+    triage:             { enabled: true }
+    bug-fix:            { enabled: true, autoCreatePR: true, autoMergeThreshold: 0.85 }
+    perf-investigation: { enabled: true }
+    pr-replay-check:    { enabled: true, blockMerge: true }
+  approvers:
+    groups: [eng-platform]
+  scm:
+    branchPrefix: "agent-factory/"

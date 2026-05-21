@@ -1,0 +1,124 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: agentapps.agents.speedscale.io
+spec:
+  group: agents.speedscale.io
+  scope: Namespaced
+  names:
+    kind: AgentApp
+    listKind: AgentAppList
+    singular: agentapp
+    plural: agentapps
+    shortNames: [aapp]
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Repo
+          type: string
+          jsonPath: .spec.repo.url
+        - name: Branch
+          type: string
+          jsonPath: .spec.repo.defaultBranch
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          type: object
+          required: [spec]
+          properties:
+            spec:
+              type: object
+              required: [repo]
+              properties:
+                repo:
+                  type: object
+                  required: [provider, url, defaultBranch, workdir]
+                  properties:
+                    provider:
+                      type: string
+                      enum: [github, gitlab]
+                    url: { type: string }
+                    defaultBranch: { type: string }
+                    workdir: { type: string }
+                    dependencies:
+                      type: array
+                      items:
+                        type: object
+                        required: [provider, url]
+                        properties:
+                          provider:
+                            type: string
+                            enum: [github, gitlab]
+                          url: { type: string }
+                trafficSources:
+                  type: array
+                  items:
+                    type: object
+                    required: [name]
+                    properties:
+                      name: { type: string }
+                      services:
+                        type: array
+                        items: { type: string }
+                agents:
+                  type: object
+                  additionalProperties:
+                    type: object
+                    required: [enabled]
+                    properties:
+                      enabled: { type: boolean }
+                      autoCreatePR: { type: boolean }
+                      autoMergeThreshold: { type: number, minimum: 0, maximum: 1 }
+                      blockMerge: { type: boolean }
+                      ciTimeout: { type: string }
+                approvers:
+                  type: object
+                  properties:
+                    groups:
+                      type: array
+                      items: { type: string }
+                    users:
+                      type: array
+                      items: { type: string }
+                scm:
+                  type: object
+                  properties:
+                    branchPrefix: { type: string }
+                    prLabels:
+                      type: array
+                      items: { type: string }
+                    prTemplate: { type: string }
+                    autoMergeThreshold: { type: number, minimum: 0, maximum: 1 }
+                issue:
+                  type: object
+                  properties:
+                    labels:
+                      type: object
+                      properties:
+                        include:
+                          type: array
+                          items: { type: string }
+                quality:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                build:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                validate:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                policy:
+                  type: object
+                  properties:
+                    autoBranch: { type: boolean }
+                    autoMr: { type: boolean }
+                    autoMerge: { type: boolean }
+            status:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true

@@ -1,0 +1,134 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: agentruns.agents.speedscale.io
+spec:
+  group: agents.speedscale.io
+  scope: Namespaced
+  names:
+    kind: AgentRun
+    listKind: AgentRunList
+    singular: agentrun
+    plural: agentruns
+    shortNames: [arun]
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: App
+          type: string
+          jsonPath: .spec.appRef.name
+        - name: Agent
+          type: string
+          jsonPath: .spec.agent
+        - name: Phase
+          type: string
+          jsonPath: .status.phase
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          type: object
+          required: [spec]
+          properties:
+            spec:
+              type: object
+              required: [appRef]
+              properties:
+                appRef:
+                  type: object
+                  required: [name]
+                  properties:
+                    name: { type: string }
+                agent:
+                  type: string
+                  enum:
+                    - triage
+                    - bug-fix
+                    - perf-investigation
+                    - coverage-fill
+                    - pr-replay-check
+                    - mock-generation
+                    - migration-safety
+                input:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                engine:
+                  type: object
+                  required: [kind]
+                  properties:
+                    kind:
+                      type: string
+                      enum: [claude-sdk, generic-llm, private-llm]
+                    model: { type: string }
+                    endpoint: { type: string }
+                pinnedSpec:
+                  type: object
+                  required: [binaryVersion]
+                  properties:
+                    binaryVersion: { type: string }
+                    agentDefVersion: { type: string }
+                    chartValuesHash: { type: string }
+                request:
+                  type: object
+                  required: [source, mode]
+                  properties:
+                    source:
+                      type: string
+                      enum: [pull_request, manual, agent, developer]
+                    mode:
+                      type: string
+                      enum: [comparison, baseline]
+                    url: { type: string }
+                    pullRequest:
+                      type: object
+                      required: [repository, number]
+                      properties:
+                        repository: { type: string }
+                        number: { type: integer, minimum: 1 }
+                        headSha: { type: string }
+                        baseSha: { type: string }
+                issue:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                qualityTarget:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                workspace:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+            status:
+              type: object
+              properties:
+                phase:
+                  type: string
+                  enum:
+                    - queued
+                    - planned
+                    - building
+                    - validating
+                    - generating
+                    - deploying
+                    - reporting
+                    - succeeded
+                    - failed
+                summary: { type: string }
+                lastTransitionAt: { type: string }
+                artifacts:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                conditions:
+                  type: array
+                  items:
+                    type: object
+                    required: [type, status]
+                    properties:
+                      type: { type: string }
+                      status: { type: string, enum: ["True", "False", "Unknown"] }
+                      reason: { type: string }
+                      message: { type: string }
+                      lastTransitionTime: { type: string }

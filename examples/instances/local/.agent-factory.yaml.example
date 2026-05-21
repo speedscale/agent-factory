@@ -1,0 +1,20 @@
+# Example per-project override.
+# Drop into the app's repo root as `.agent-factory.yaml` (gitignored).
+# Overrides ~/.agent-factory/config.toml for runs invoked from this directory.
+
+app: radar
+
+traffic:
+  trafficSourceRef: default
+  service: radar
+  defaultCluster: prod
+
+agents:
+  triage:
+    autoCreatePR: false
+  bug-fix:
+    branchPrefix: "kahrens/agent-factory/"
+    # Override the global default; require manual review before opening a PR
+    autoCreatePR: false
+  pr-replay-check:
+    blockMerge: false   # advisory mode for local dev

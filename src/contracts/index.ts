@@ -1,4 +1,6 @@
 export type { AgentApp } from "./agent-app.js";
+export type { AgentKind, AgentEnablement } from "./agent-kind.js";
+export { AGENT_KINDS } from "./agent-kind.js";
 export type { AgentEvidence } from "./agent-evidence.js";
 export type { AgentPlan, AgentPlanAction } from "./agent-plan.js";
 export type { AgentRun, AgentRunPhase } from "./agent-run.js";
@@ -7,3 +9,7 @@ export type { AgentRunResult } from "./run-result.js";
 export type { QualityBaseline } from "./quality-baseline.js";
 export type { QualityReport } from "./quality-report.js";
 export type { GateReport, GateVerdict } from "./gate-report.js";
+export type { TrafficSource } from "./traffic-source.js";
+export type { TrafficSlice } from "./traffic-slice.js";
+export type { TrafficFingerprint } from "./traffic-fingerprint.js";
+export type { TrafficEvidence } from "./traffic-evidence.js";
