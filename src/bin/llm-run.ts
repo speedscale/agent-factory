@@ -17,6 +17,7 @@
  *     [--model <id>]                              (default per provider: claude-sonnet-4-6 / openai/gpt-5.4 / deepseek-v4-flash / Qwen3.6-27B-4bit) \
  *     [--no-triage]                               (skip the pre-dispatch fitness check) \
  *     [--no-context-check]                        (skip the repro-context safety net; use when an artifact format is the deliverable, not the input) \
+ *     [--no-checklist-check]                      (skip the multi-deliverable gate; use when N parallel asks share enough scaffolding for one dispatch) \
  *     [--no-eval]                                 (skip the post-Worker Evaluator phase) \
  *     [--verbose]
  *
@@ -39,6 +40,7 @@ import { runPlanner, runWorker, runPlannerSource, runWorkerSource, runEvaluator 
 import type { EmitPlanResult, EmitPlanSourceResult, AnyPlanResult } from "../lib/llm-engine.js";
 import { classifySpec } from "../lib/spec-classifier.js";
 import { detectReproContext } from "../lib/repro-context-detector.js";
+import { detectChecklist, formatChecklistReport } from "../lib/checklist-detector.js";
 import { runTriage, formatTriageReport } from "../lib/triage.js";
 import { MR_CHECKLIST } from "../lib/mr-checklist.js";
 
@@ -88,6 +90,7 @@ async function main(): Promise<void> {
   const skipEval = hasFlag(argv, ["--no-eval"]);
   const skipTriage = hasFlag(argv, ["--no-triage"]);
   const skipContextCheck = hasFlag(argv, ["--no-context-check"]);
+  const skipChecklistCheck = hasFlag(argv, ["--no-checklist-check"]);
   const providerArg = getArg(argv, ["--provider", "-p"]) ?? "anthropic";
   if (providerArg !== "anthropic" && providerArg !== "openrouter" && providerArg !== "ds4" && providerArg !== "omlx") {
     console.error(`unknown provider: ${providerArg}. Expected one of: anthropic, openrouter, ds4, omlx`);
@@ -127,7 +130,7 @@ async function main(): Promise<void> {
 
   if (mode === "traffic" && !snapshotDir) {
     console.error("traffic mode requires --snapshot <dir>. Use --mode source (or omit and let the classifier choose) for tickets without wire evidence.");
-    console.error("usage: llm-run [--mode auto|traffic|source] [--snapshot <dir>] [--source <dir>] [--labels a,b,c] [--repo <dir>] [--branch <name>] [--title <str>] [--body <str>] [--workdir <dir>] [--provider anthropic|openrouter|ds4|omlx] [--model <id>] [--no-triage] [--no-context-check] [--no-eval] [--verbose]");
+    console.error("usage: llm-run [--mode auto|traffic|source] [--snapshot <dir>] [--source <dir>] [--labels a,b,c] [--repo <dir>] [--branch <name>] [--title <str>] [--body <str>] [--workdir <dir>] [--provider anthropic|openrouter|ds4|omlx] [--model <id>] [--no-triage] [--no-context-check] [--no-checklist-check] [--no-eval] [--verbose]");
     process.exit(1);
   }
 
@@ -168,6 +171,28 @@ async function main(): Promise<void> {
   await mkdir(workDir, { recursive: true });
 
   console.log(JSON.stringify({ phase: "start", title, mode, snapshotDir, sourceDir, repoDir, branchName, workDir, provider, model, classifierRationale, classifierScores }, null, 2));
+
+  // ---- Checklist phase (pre-Planner) ----
+  // The Planner emits one failing assertion per dispatch and the Worker may
+  // deliver only the first item from a multi-deliverable spec. Refuse here
+  // with a reviewer-ready report so the operator can split the ticket in
+  // Linear before re-dispatching. Deterministic pattern check — runs before
+  // the (more expensive) triage LLM call so obvious split cases skip it.
+  // Skipped via --no-checklist-check.
+  if (!skipChecklistCheck) {
+    const checklist = detectChecklist({ title, body });
+    if (checklist.verdict === "needs-split") {
+      console.log(JSON.stringify({ phase: "checklist", verdict: checklist.verdict, signal: checklist.signal, subDeliverables: checklist.subDeliverables }, null, 2));
+      const checklistOutput = path.join(workDir, "checklist.json");
+      await writeFile(checklistOutput, JSON.stringify(checklist, null, 2), "utf8");
+      console.error("\n" + formatChecklistReport(checklist));
+      console.error("\nDispatch aborted — the spec lists multiple parallel deliverables; the engine produces one fix per dispatch.");
+      console.error("Split into one Linear ticket per sub-deliverable and re-dispatch each; pass --no-checklist-check to bypass.");
+      process.exit(2);
+    }
+  } else {
+    console.warn("[checklist] gate bypassed by --no-checklist-check at operator's request");
+  }
 
   // ---- Triage phase (pre-Planner) ----
   // Decides whether the engine has enough information to attempt the ticket.
