@@ -1,0 +1,31 @@
+{{- if .Values.dashboards.enabled -}}
+{{- /*
+  Grafana dashboard ConfigMap.
+
+  Loaded via the kube-prometheus-stack convention: any ConfigMap carrying
+  the configurable `dashboards.label` (default `grafana_dashboard: "1"`)
+  is auto-discovered by the Grafana sidecar (kiwigrid/k8s-sidecar) and
+  written into Grafana's dashboard provisioning path. No restart needed.
+
+  Stacks without the sidecar can still import the JSON manually via the
+  Grafana HTTP API or UI — the source of truth is
+  `charts/agent-factory/dashboards/agent-factory.json`.
+
+  Default off so the chart still deploys on clusters without Grafana.
+*/ -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "agent-factory.fullname" . }}-dashboards
+  {{- with .Values.dashboards.namespace }}
+  namespace: {{ . }}
+  {{- end }}
+  labels:
+    {{- include "agent-factory.labels" . | nindent 4 }}
+    {{- range $k, $v := .Values.dashboards.labels }}
+    {{ $k }}: {{ $v | quote }}
+    {{- end }}
+data:
+  agent-factory.json: |-
+{{ .Files.Get "dashboards/agent-factory.json" | indent 4 }}
+{{- end -}}
