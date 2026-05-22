@@ -1,0 +1,139 @@
+{
+  "annotations": { "list": [] },
+  "description": "Pipeline-state view of the agent-factory engine: run counts by phase, queue depth, derived rates. Metric source: prom-client exposition from intake-api /metrics (see docs/CONFIG.md). Note: when scraped via the OTel Collector's prometheus receiver, the AF_INSTANCE label arrives as `exported_instance` because Prometheus renames it to avoid colliding with the scrape-target `instance`. The dashboard variable resolves this transparently.",
+  "editable": true,
+  "graphTooltip": 1,
+  "schemaVersion": 39,
+  "tags": ["agent-factory"],
+  "templating": {
+    "list": [
+      {
+        "name": "ds",
+        "label": "Datasource",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {},
+        "hide": 0,
+        "refresh": 1
+      },
+      {
+        "name": "instance",
+        "label": "Instance",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "${ds}" },
+        "query": { "query": "label_values(agent_factory_runs_total, exported_instance)", "refId": "instance" },
+        "regex": "",
+        "current": { "text": "All", "value": "$__all" },
+        "includeAll": true,
+        "multi": true,
+        "refresh": 2,
+        "sort": 1
+      }
+    ]
+  },
+  "time": { "from": "now-1h", "to": "now" },
+  "refresh": "30s",
+  "title": "Agent Factory",
+  "uid": "agent-factory",
+  "version": 1,
+  "panels": [
+    { "type": "row", "id": 100, "title": "Current state — runs by phase", "gridPos": { "x": 0, "y": 0, "w": 24, "h": 1 }, "collapsed": false, "panels": [] },
+
+    {
+      "type": "stat", "id": 1, "title": "Queued", "gridPos": { "x": 0, "y": 1, "w": 4, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "${ds}" },
+      "targets": [{ "expr": "sum(agent_factory_runs_total{exported_instance=~\"$instance\",phase=\"queued\"})", "refId": "A" }],
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 5 }, { "color": "red", "value": 20 }] }, "unit": "short" } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "" }, "textMode": "value_and_name", "colorMode": "background" }
+    },
+    {
+      "type": "stat", "id": 2, "title": "Planned", "gridPos": { "x": 4, "y": 1, "w": 4, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "${ds}" },
+      "targets": [{ "expr": "sum(agent_factory_runs_total{exported_instance=~\"$instance\",phase=\"planned\"})", "refId": "A" }],
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] }, "unit": "short" } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "" }, "textMode": "value_and_name", "colorMode": "background" }
+    },
+    {
+      "type": "stat", "id": 3, "title": "Building", "gridPos": { "x": 8, "y": 1, "w": 4, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "${ds}" },
+      "targets": [{ "expr": "sum(agent_factory_runs_total{exported_instance=~\"$instance\",phase=\"building\"})", "refId": "A" }],
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "purple", "value": null }] }, "unit": "short" } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "" }, "textMode": "value_and_name", "colorMode": "background" }
+    },
+    {
+      "type": "stat", "id": 4, "title": "Validating", "gridPos": { "x": 12, "y": 1, "w": 4, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "${ds}" },
+      "targets": [{ "expr": "sum(agent_factory_runs_total{exported_instance=~\"$instance\",phase=\"validating\"})", "refId": "A" }],
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "orange", "value": null }] }, "unit": "short" } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "" }, "textMode": "value_and_name", "colorMode": "background" }
+    },
+    {
+      "type": "stat", "id": 5, "title": "Succeeded", "gridPos": { "x": 16, "y": 1, "w": 4, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "${ds}" },
+      "targets": [{ "expr": "sum(agent_factory_runs_total{exported_instance=~\"$instance\",phase=\"succeeded\"})", "refId": "A" }],
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }, "unit": "short" } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "" }, "textMode": "value_and_name", "colorMode": "background" }
+    },
+    {
+      "type": "stat", "id": 6, "title": "Failed", "gridPos": { "x": 20, "y": 1, "w": 4, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "${ds}" },
+      "targets": [{ "expr": "sum(agent_factory_runs_total{exported_instance=~\"$instance\",phase=\"failed\"})", "refId": "A" }],
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }] }, "unit": "short" } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "" }, "textMode": "value_and_name", "colorMode": "background" }
+    },
+
+    { "type": "row", "id": 101, "title": "Queue", "gridPos": { "x": 0, "y": 5, "w": 24, "h": 1 }, "collapsed": false, "panels": [] },
+
+    {
+      "type": "stat", "id": 10, "title": "Queue depth", "gridPos": { "x": 0, "y": 6, "w": 6, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "${ds}" },
+      "targets": [{ "expr": "sum(agent_factory_queue_depth{exported_instance=~\"$instance\"})", "refId": "A" }],
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 10 }, { "color": "red", "value": 50 }] }, "unit": "short" } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "" }, "textMode": "value", "colorMode": "background" }
+    },
+    {
+      "type": "timeseries", "id": 11, "title": "Queue depth over time", "gridPos": { "x": 6, "y": 6, "w": 18, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "${ds}" },
+      "targets": [{ "expr": "sum by (backend) (agent_factory_queue_depth{exported_instance=~\"$instance\"})", "legendFormat": "{{backend}}", "refId": "A" }],
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "spanNulls": true }, "unit": "short" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "single", "sort": "none" } }
+    },
+
+    { "type": "row", "id": 102, "title": "Pipeline — runs by phase over time", "gridPos": { "x": 0, "y": 14, "w": 24, "h": 1 }, "collapsed": false, "panels": [] },
+
+    {
+      "type": "timeseries", "id": 20, "title": "Runs by phase", "gridPos": { "x": 0, "y": 15, "w": 24, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "${ds}" },
+      "targets": [{ "expr": "sum by (phase) (agent_factory_runs_total{exported_instance=~\"$instance\"})", "legendFormat": "{{phase}}", "refId": "A" }],
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "spanNulls": true, "stacking": { "mode": "none" } }, "unit": "short" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+
+    { "type": "row", "id": 103, "title": "Worker activity (when WORKER_METRICS_PORT is set)", "gridPos": { "x": 0, "y": 23, "w": 24, "h": 1 }, "collapsed": false, "panels": [] },
+
+    {
+      "type": "timeseries", "id": 30, "title": "Worker loop rate (loops / s)", "gridPos": { "x": 0, "y": 24, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "${ds}" },
+      "targets": [{ "expr": "rate(agent_factory_worker_loops_total{exported_instance=~\"$instance\"}[5m])", "legendFormat": "loops/s", "refId": "A" }],
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "spanNulls": true }, "unit": "ops" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "single", "sort": "none" } }
+    },
+    {
+      "type": "timeseries", "id": 31, "title": "Runs processed (rate)", "gridPos": { "x": 8, "y": 24, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "${ds}" },
+      "targets": [{ "expr": "sum by (result) (rate(agent_factory_worker_runs_processed_total{exported_instance=~\"$instance\"}[5m]))", "legendFormat": "{{result}}", "refId": "A" }],
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "spanNulls": true }, "unit": "ops" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "single", "sort": "none" } }
+    },
+    {
+      "type": "timeseries", "id": 32, "title": "Stale runs failed + claim skips (rate)", "gridPos": { "x": 16, "y": 24, "w": 8, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "${ds}" },
+      "targets": [
+        { "expr": "rate(agent_factory_worker_stale_runs_failed_total{exported_instance=~\"$instance\"}[5m])", "legendFormat": "stale failed", "refId": "A" },
+        { "expr": "rate(agent_factory_worker_run_claims_skipped_total{exported_instance=~\"$instance\"}[5m])", "legendFormat": "claim skipped", "refId": "B" }
+      ],
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "spanNulls": true }, "unit": "ops" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "single", "sort": "none" } }
+    }
+  ]
+}

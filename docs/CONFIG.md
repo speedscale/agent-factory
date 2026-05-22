@@ -139,6 +139,23 @@ serviceMonitor:
 
 Renders a `ServiceMonitor` CR scoped to the intake-api `Service` on its `http` port. The worker's `/metrics` is not yet fronted by a `Service` — separate follow-up if you want to scrape it too.
 
+### Helm: Grafana dashboard
+
+The chart ships a starter Grafana dashboard at `charts/agent-factory/dashboards/agent-factory.json`. Enable it to render a ConfigMap discoverable by kube-prometheus-stack's Grafana sidecar:
+
+```yaml
+# values.yaml
+dashboards:
+  enabled: true
+  namespace: ""   # empty = release namespace
+  labels:
+    grafana_dashboard: "1"   # default; matches kube-prometheus-stack sidecar
+```
+
+Panels: stat-per-phase (queued/planned/building/validating/succeeded/failed), queue depth + time-series, worker activity (loop rate, runs-processed rate, claim-skip + stale-fail rate). Variables: datasource (Prometheus type) + instance (`exported_instance` label, picks up multi-instance deployments).
+
+For Grafana setups without the sidecar, import the JSON via the Grafana UI (Dashboards → Import → Upload JSON) or HTTP API (`POST /api/dashboards/db`). The dashboard's `uid` is `agent-factory` — reimporting upgrades in place.
+
 ## CLI flags (llm-run only)
 
 | Flag | Notes |

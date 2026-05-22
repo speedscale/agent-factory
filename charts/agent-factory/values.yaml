@@ -121,3 +121,19 @@ serviceMonitor:
   # use a label selector (e.g. `release: kube-prometheus-stack`) to pick
   # which ServiceMonitors they scrape.
   labels: {}
+
+# Grafana dashboard ConfigMap. Default off so the chart deploys on
+# clusters without Grafana. Flip enabled=true to ship the dashboard
+# alongside the engine — see `dashboards/agent-factory.json` for the
+# source JSON. Designed for kube-prometheus-stack's sidecar discovery
+# pattern (the `grafana_dashboard: "1"` label below); operators with a
+# different Grafana setup can still import the JSON via API or UI.
+dashboards:
+  enabled: false
+  # Override the namespace if Grafana is scoped to a single namespace
+  # other than the release namespace. Empty = same as release.
+  namespace: ""
+  # Labels for sidecar / Grafana provisioning discovery. The default
+  # matches kube-prometheus-stack's sidecar config.
+  labels:
+    grafana_dashboard: "1"
