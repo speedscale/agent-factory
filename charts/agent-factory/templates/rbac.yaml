@@ -1,8 +1,51 @@
 {{- if .Values.rbac.create -}}
+{{- /*
+  When controller.watchNamespace is empty the controller watches CRs
+  cluster-wide and needs ClusterRole/ClusterRoleBinding. When it is set
+  to a specific namespace, a namespaced Role/RoleBinding is sufficient
+  and avoids granting cluster-wide permission.
+*/ -}}
+{{- if eq (.Values.controller.watchNamespace | toString) "" }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "agent-factory.fullname" . }}
+  labels:
+    {{- include "agent-factory.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["agents.speedscale.io"]
+    resources: [trafficsources, agentapps, agentruns]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: ["agents.speedscale.io"]
+    resources: [agentruns/status, agentapps/status, trafficsources/status]
+    verbs: [get, update, patch]
+  - apiGroups: [""]
+    resources: [configmaps, secrets]
+    verbs: [get, list, watch]
+  - apiGroups: ["batch"]
+    resources: [jobs]
+    verbs: [get, list, watch, create, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "agent-factory.fullname" . }}
+  labels:
+    {{- include "agent-factory.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "agent-factory.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "agent-factory.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- else }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: {{ include "agent-factory.fullname" . }}
+  namespace: {{ .Values.controller.watchNamespace }}
   labels:
     {{- include "agent-factory.labels" . | nindent 4 }}
 rules:
@@ -23,6 +66,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: {{ include "agent-factory.fullname" . }}
+  namespace: {{ .Values.controller.watchNamespace }}
   labels:
     {{- include "agent-factory.labels" . | nindent 4 }}
 roleRef:
@@ -33,4 +77,5 @@ subjects:
   - kind: ServiceAccount
     name: {{ include "agent-factory.serviceAccountName" . }}
     namespace: {{ .Release.Namespace }}
+{{- end }}
 {{- end -}}
