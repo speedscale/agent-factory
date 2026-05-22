@@ -7,6 +7,7 @@ import type { AgentRunPhase } from "../contracts/index.js";
 import type { AgentApp } from "../contracts/index.js";
 import type { IntakeRequest } from "../lib/run-store.js";
 import { parsePollerIntervalMs, startIssuePollerLoop } from "../lib/issue-poller.js";
+import { startLinearPollerLoop } from "../lib/linear-poller.js";
 import { triggerWorkerJobForRun } from "../lib/k8s-worker-job.js";
 import { listRuns, loadRun } from "../lib/run-admin.js";
 import { createRunQueueFromEnv } from "../lib/run-queue.js";
@@ -719,8 +720,16 @@ async function main(): Promise<void> {
 
   if (embeddedPollerEnabled) {
     const intervalMs = parsePollerIntervalMs(process.env.POLLER_INTERVAL_MS);
-    startIssuePollerLoop(intervalMs);
-    console.log(`embedded quality poller enabled (intervalMs=${intervalMs})`);
+    const source = (process.env.POLLER_SOURCE ?? "github").toLowerCase();
+    if (source === "linear") {
+      startLinearPollerLoop(intervalMs);
+      console.log(`embedded Linear poller enabled (intervalMs=${intervalMs})`);
+    } else if (source === "github") {
+      startIssuePollerLoop(intervalMs);
+      console.log(`embedded GitHub poller enabled (intervalMs=${intervalMs})`);
+    } else {
+      throw new Error(`unknown POLLER_SOURCE: ${source} (expected "github" or "linear")`);
+    }
   }
 
   createServer((req, res) => {
