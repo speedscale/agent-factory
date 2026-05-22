@@ -7,6 +7,15 @@ export const AGENTS_API_VERSION = `${AGENTS_GROUP}/${AGENTS_VERSION}`;
 export interface K8sClients {
   kc: k8s.KubeConfig;
   objects: k8s.KubernetesObjectApi;
+  /**
+   * For status-subresource updates. The high-level `objects.patch()` API
+   * targets the main resource path and silently drops the `status` field
+   * when the CRD has `subresources: { status: {} }` enabled (which the
+   * AgentRun CRD does). CustomObjectsApi exposes
+   * `patchNamespacedCustomObjectStatus` which hits the `/status`
+   * subresource endpoint correctly.
+   */
+  customObjects: k8s.CustomObjectsApi;
   watch: k8s.Watch;
 }
 
@@ -24,6 +33,7 @@ export function makeClients(kc: k8s.KubeConfig = loadKubeConfig()): K8sClients {
   return {
     kc,
     objects: k8s.KubernetesObjectApi.makeApiClient(kc),
+    customObjects: kc.makeApiClient(k8s.CustomObjectsApi),
     watch: new k8s.Watch(kc),
   };
 }
