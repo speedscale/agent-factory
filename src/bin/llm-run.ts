@@ -39,19 +39,13 @@ import type { EmitPlanResult, EmitPlanSourceResult, AnyPlanResult } from "../lib
 import { classifySpec } from "../lib/spec-classifier.js";
 import { detectReproContext } from "../lib/repro-context-detector.js";
 import { runTriage, formatTriageReport } from "../lib/triage.js";
+import { MR_CHECKLIST } from "../lib/mr-checklist.js";
 
 const execAsync = promisify(exec);
 
-const MR_CHECKLIST = `
-## Checklist
-
-Each of these checkboxes should be filled before merge.
-
-- [ ] Security impact of change has been considered
-- [ ] Code follows company security practices and guidelines
-- [ ] Pull request linked to task tracker
-- [ ] If this is a breaking change a story has been created and assigned to Ken
-`;
+// MR_CHECKLIST and the literal-grep contract live in src/lib/mr-checklist.ts
+// so the constant + the madskillz hook's REQUIRED array stay testable and in
+// sync. See that file's doc comment for why boxes use [x] rather than [ ].
 
 function getArg(argv: string[], flags: string[]): string | undefined {
   const i = argv.findIndex((v) => flags.includes(v));
