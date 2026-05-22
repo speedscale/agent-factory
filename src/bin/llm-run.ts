@@ -41,6 +41,7 @@ import type { EmitPlanResult, EmitPlanSourceResult, AnyPlanResult } from "../lib
 import { classifySpec } from "../lib/spec-classifier.js";
 import { detectReproContext } from "../lib/repro-context-detector.js";
 import { detectChecklist, formatChecklistReport } from "../lib/checklist-detector.js";
+import { formatMisses, verdictGloss } from "../lib/eval-verdict.js";
 import { runTriage, formatTriageReport } from "../lib/triage.js";
 import { MR_CHECKLIST } from "../lib/mr-checklist.js";
 
@@ -302,19 +303,26 @@ async function main(): Promise<void> {
       const evalOutput = path.join(workDir, "eval-report.json");
       await writeFile(evalOutput, JSON.stringify(evalResult, null, 2), "utf8");
 
+      const blockerCount = evalResult.missedRequirements.filter((m) => m.severity === "blocker").length;
+      const softCount = evalResult.missedRequirements.filter((m) => m.severity === "soft").length;
+
       console.log(JSON.stringify({
         phase: "evaluated",
         durationMs: evaluatorMs,
         verdict: evalResult.overallVerdict,
+        modelVerdict: evalResult.modelVerdict,
         addressed: evalResult.addressedRequirements.length,
-        missed: evalResult.missedRequirements.length,
+        missedBlocker: blockerCount,
+        missedSoft: softCount,
         confirmTrustworthy: evalResult.confirmHarnessTrustworthy,
         reportFile: evalOutput
       }, null, 2));
 
+      console.log(`\nVerdict: ${verdictGloss(evalResult.overallVerdict)}`);
+
       if (evalResult.missedRequirements.length > 0) {
         console.log("\nMissed requirements:");
-        for (const r of evalResult.missedRequirements) console.log(`  - ${r}`);
+        console.log(formatMisses(evalResult.missedRequirements));
       }
     } catch (err) {
       console.warn(`Evaluator phase failed (continuing without): ${err instanceof Error ? err.message : String(err)}`);
@@ -326,8 +334,23 @@ async function main(): Promise<void> {
   if (patchResult.worktreePath && patchResult.branchName && repoDir) {
     console.log("\n=== CREATING MR ===");
     try {
+      const verdictSection = evalResult
+        ? [
+            `## Evaluator verdict`,
+            ``,
+            `**${verdictGloss(evalResult.overallVerdict)}**`,
+            ``,
+            evalResult.missedRequirements.length > 0
+              ? `Missed requirements:\n\n\`\`\`\n${formatMisses(evalResult.missedRequirements)}\n\`\`\``
+              : `No missed requirements.`,
+            ``,
+            `Confirm harness trustworthy: ${evalResult.confirmHarnessTrustworthy ? "yes" : "**no**"}. ${evalResult.confirmHarnessNotes}`
+          ].join("\n")
+        : `## Evaluator verdict\n\n(skipped or failed — see run logs)`;
+
       const mrBody = [
         `## Summary\n\n${patchResult.rationale}`,
+        verdictSection,
         `## Confirm harness\n\n\`\`\`\n${patchResult.confirmResult ?? "(not run)"}\n\`\`\``,
         `## Test plan\n\n- [ ] Review confirm harness output above\n- [ ] Deploy to staging and verify metric improvement`,
         MR_CHECKLIST,
@@ -365,14 +388,21 @@ async function main(): Promise<void> {
     fix: patchResult.rationale,
     confirmResult: patchResult.confirmResult ?? "(not run)",
     evalVerdict: evalResult?.overallVerdict ?? (skipEval ? "(skipped)" : "(not run)"),
-    evalMissed: evalResult?.missedRequirements.length ?? 0,
+    evalMissedBlocker: evalResult?.missedRequirements.filter((m) => m.severity === "blocker").length ?? 0,
+    evalMissedSoft: evalResult?.missedRequirements.filter((m) => m.severity === "soft").length ?? 0,
     mrUrl: mrUrl ?? "(not created)"
   }, null, 2));
 
-  // Exit non-zero on a fail verdict so CI / scripts can react.
+  // Exit non-zero on fail OR partial-blocker so CI / scripts can distinguish
+  // "ready for review" runs from "needs work" runs. partial-soft exits 0 —
+  // the patch matches the codebase pattern and is reviewer-ready.
   if (evalResult?.overallVerdict === "fail") {
     console.error("\nEvaluator verdict: FAIL. The patch does not address the spec.");
     process.exit(2);
+  }
+  if (evalResult?.overallVerdict === "partial-blocker") {
+    console.error("\nEvaluator verdict: PARTIAL (BLOCKER). At least one load-bearing acceptance criterion is unmet.");
+    process.exit(3);
   }
 }
 
