@@ -1,6 +1,9 @@
 import { open, stat, unlink } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { Server } from "node:http";
+import { getInstanceConfig, formatInstanceBanner } from "../lib/instance-config.js";
+
+const instanceCfg = getInstanceConfig();
 import { buildPlan, loadPlannerContext, writePlanArtifact, writeTriageArtifact } from "../lib/planner.js";
 import { loadRunnerContext, runBuildStage } from "../lib/runner.js";
 import { loadValidatorContext, runValidationStage } from "../lib/validator.js";
@@ -403,7 +406,7 @@ async function runWorker(queue: RunQueue, options: WorkerOptions): Promise<void>
 
   const metricsServer = startWorkerMetricsServer(metrics);
 
-  console.log(JSON.stringify({ message: "worker started", queueBackend: queue.backend }, null, 2));
+  console.log(JSON.stringify({ message: "worker started", instance: instanceCfg.instance, queueBackend: queue.backend }, null, 2));
   const useFilesystemClaim = queue.backend === "filesystem";
 
   try {
@@ -465,6 +468,7 @@ async function runWorker(queue: RunQueue, options: WorkerOptions): Promise<void>
 }
 
 async function main(): Promise<void> {
+  console.log(formatInstanceBanner(instanceCfg, "worker"));
   const options = parseOptions(process.argv.slice(2));
   const queue = createRunQueueFromEnv();
 

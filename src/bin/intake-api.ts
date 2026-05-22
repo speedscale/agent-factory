@@ -8,6 +8,7 @@ import type { AgentApp } from "../contracts/index.js";
 import type { IntakeRequest } from "../lib/run-store.js";
 import { parsePollerIntervalMs, startIssuePollerLoop } from "../lib/issue-poller.js";
 import { triggerWorkerJobForRun } from "../lib/k8s-worker-job.js";
+import { getInstanceConfig, formatInstanceBanner } from "../lib/instance-config.js";
 import { listRuns, loadRun } from "../lib/run-admin.js";
 import { createRunQueueFromEnv } from "../lib/run-queue.js";
 import { createRunFromRequest } from "../lib/run-store.js";
@@ -715,6 +716,9 @@ async function handler(req: IncomingMessage, res: ServerResponse): Promise<void>
 const port = Number(process.env.PORT ?? "8080");
 
 async function main(): Promise<void> {
+  const instanceCfg = getInstanceConfig();
+  console.log(formatInstanceBanner(instanceCfg, "intake-api"));
+
   await initializeRepoAppMap();
 
   if (embeddedPollerEnabled) {

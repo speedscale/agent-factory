@@ -19,6 +19,7 @@
  *     [--no-context-check]                        (skip the repro-context safety net; use when an artifact format is the deliverable, not the input) \
  *     [--no-checklist-check]                      (skip the multi-deliverable gate; use when N parallel asks share enough scaffolding for one dispatch) \
  *     [--no-eval]                                 (skip the post-Worker Evaluator phase) \
+ *     [--instance <name>]                         (override AF_INSTANCE for this run; tags logs so multi-instance deployments stay distinguishable) \
  *     [--verbose]
  *
  * When --repo is provided, the Worker creates a git worktree at <workdir>/repo
@@ -42,6 +43,7 @@ import { classifySpec } from "../lib/spec-classifier.js";
 import { detectReproContext } from "../lib/repro-context-detector.js";
 import { detectChecklist, formatChecklistReport } from "../lib/checklist-detector.js";
 import { formatMisses, verdictGloss } from "../lib/eval-verdict.js";
+import { getInstanceConfig, formatInstanceBanner } from "../lib/instance-config.js";
 import { runTriage, formatTriageReport } from "../lib/triage.js";
 import { MR_CHECKLIST } from "../lib/mr-checklist.js";
 
@@ -92,6 +94,8 @@ async function main(): Promise<void> {
   const skipTriage = hasFlag(argv, ["--no-triage"]);
   const skipContextCheck = hasFlag(argv, ["--no-context-check"]);
   const skipChecklistCheck = hasFlag(argv, ["--no-checklist-check"]);
+  const instanceOverride = getArg(argv, ["--instance"]);
+  const instanceCfg = getInstanceConfig(process.env, { instance: instanceOverride });
   const providerArg = getArg(argv, ["--provider", "-p"]) ?? "anthropic";
   if (providerArg !== "anthropic" && providerArg !== "openrouter" && providerArg !== "ds4" && providerArg !== "omlx") {
     console.error(`unknown provider: ${providerArg}. Expected one of: anthropic, openrouter, ds4, omlx`);
@@ -171,7 +175,8 @@ async function main(): Promise<void> {
 
   await mkdir(workDir, { recursive: true });
 
-  console.log(JSON.stringify({ phase: "start", title, mode, snapshotDir, sourceDir, repoDir, branchName, workDir, provider, model, classifierRationale, classifierScores }, null, 2));
+  console.log(formatInstanceBanner(instanceCfg, "llm-run"));
+  console.log(JSON.stringify({ phase: "start", instance: instanceCfg.instance, title, mode, snapshotDir, sourceDir, repoDir, branchName, workDir, provider, model, classifierRationale, classifierScores }, null, 2));
 
   // ---- Checklist phase (pre-Planner) ----
   // The Planner emits one failing assertion per dispatch and the Worker may

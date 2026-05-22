@@ -2,6 +2,7 @@ import * as http from "node:http";
 import { createRequire } from "node:module";
 import { AgentRunWatcher } from "../lib/controller/agent-run-watcher.js";
 import { makeClients } from "../lib/controller/k8s.js";
+import { getInstanceConfig, formatInstanceBanner } from "../lib/instance-config.js";
 
 const require = createRequire(import.meta.url);
 const pkg = require("../../package.json") as { version: string };
@@ -10,8 +11,10 @@ async function main(): Promise<void> {
   const namespace = process.env.AF_WATCH_NAMESPACE || undefined;
   const runRootDir = process.env.AF_RUN_ROOT_DIR || "/app/.work/runs";
   const healthzPort = Number(process.env.AF_HEALTHZ_PORT || "8081");
+  const instanceCfg = getInstanceConfig();
 
   console.log(`agent-factory controller v${pkg.version}`);
+  console.log(formatInstanceBanner(instanceCfg, "controller"));
   console.log(
     namespace
       ? `[controller] scoped to namespace: ${namespace}`
