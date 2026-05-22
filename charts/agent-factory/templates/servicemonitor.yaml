@@ -1,0 +1,37 @@
+{{- if .Values.serviceMonitor.enabled -}}
+{{- /*
+  ServiceMonitor for kube-prometheus-stack / Prometheus Operator.
+  Gated on serviceMonitor.enabled (default false) so the chart works on
+  clusters without the monitoring.coreos.com CRD installed.
+
+  Scrapes the intake-api Service on its named `http` port at /metrics.
+  The worker exposes its own /metrics on WORKER_METRICS_PORT when set,
+  but isn't fronted by a Service today — adding that is a separate
+  follow-up.
+*/ -}}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "agent-factory.fullname" . }}
+  {{- with .Values.serviceMonitor.namespace }}
+  namespace: {{ . }}
+  {{- end }}
+  labels:
+    {{- include "agent-factory.labels" . | nindent 4 }}
+    {{- with .Values.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "agent-factory.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: intake-api
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ .Values.serviceMonitor.interval | default "30s" }}
+      scrapeTimeout: {{ .Values.serviceMonitor.scrapeTimeout | default "10s" }}
+{{- end -}}

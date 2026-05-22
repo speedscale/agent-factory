@@ -99,6 +99,46 @@ CLI flag > env var > default. CLI flags are only honored by the one-shot `llm-ru
 |---|---|---|---|
 | `PORT` | intake-api | `8080` | HTTP listen port. |
 
+## Metrics
+
+Both `intake-api` and `worker` expose Prometheus metrics. `/metrics` returns text/plain exposition format (Prometheus 0.0.4) and `/metrics.json` preserves the legacy JSON shape for non-Prometheus consumers. **Neither requires `INTAKE_API_TOKEN`** — they're read-only and meant for in-cluster scrape configs.
+
+| Endpoint | Format | Notes |
+|---|---|---|
+| `GET /metrics` (intake-api `:8080`) | text/plain | Prometheus exposition |
+| `GET /metrics.json` (intake-api `:8080`) | application/json | Legacy snapshot — `runTotals`, `queue` |
+| `GET /metrics` (worker, when `WORKER_METRICS_PORT` set) | text/plain | Prometheus exposition |
+| `GET /metrics.json` (worker, when `WORKER_METRICS_PORT` set) | application/json | Legacy `WorkerMetrics` JSON |
+
+Every metric carries an `instance` label sourced from `AF_INSTANCE`.
+
+### Metric inventory
+
+| Metric | Type | Labels | Surface | Notes |
+|---|---|---|---|---|
+| `agent_factory_runs_total` | gauge | `phase`, `instance` | intake-api | Run count by lifecycle phase. Pre-seeded with all six phases at 0. |
+| `agent_factory_queue_depth` | gauge | `backend`, `instance` | intake-api | Pending runs in the queue. |
+| `agent_factory_worker_loops_total` | counter | `instance` | worker | Queue-poll iterations since startup. |
+| `agent_factory_worker_runs_processed_total` | counter | `result` (`succeeded`/`failed`), `instance` | worker | Runs the worker took to a terminal state. |
+| `agent_factory_worker_run_claims_skipped_total` | counter | `instance` | worker | Runs the worker skipped because another worker held the claim file. |
+| `agent_factory_worker_stale_runs_failed_total` | counter | `instance` | worker | Active runs failed by the stale-claim sweep. |
+| `agent_factory_worker_queue_depth` | gauge | `backend`, `instance` | worker | Most recently observed pending-run count from the worker's perspective. |
+
+### Helm: ServiceMonitor for Prometheus Operator
+
+```yaml
+# values.yaml
+serviceMonitor:
+  enabled: true
+  interval: 30s
+  scrapeTimeout: 10s
+  namespace: ""   # empty = release namespace
+  labels:
+    release: kube-prometheus-stack   # match your Prometheus' serviceMonitorSelector
+```
+
+Renders a `ServiceMonitor` CR scoped to the intake-api `Service` on its `http` port. The worker's `/metrics` is not yet fronted by a `Service` — separate follow-up if you want to scrape it too.
+
 ## CLI flags (llm-run only)
 
 | Flag | Notes |

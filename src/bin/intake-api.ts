@@ -10,6 +10,12 @@ import { parsePollerIntervalMs, startIssuePollerLoop } from "../lib/issue-poller
 import { startLinearPollerLoop } from "../lib/linear-poller.js";
 import { triggerWorkerJobForRun } from "../lib/k8s-worker-job.js";
 import { getInstanceConfig, formatInstanceBanner } from "../lib/instance-config.js";
+import {
+  createIntakeRegistry,
+  renderPrometheusText,
+  PROMETHEUS_CONTENT_TYPE,
+  type IntakeRegistry
+} from "../lib/metrics.js";
 import { listRuns, loadRun } from "../lib/run-admin.js";
 import { createRunQueueFromEnv } from "../lib/run-queue.js";
 import { createRunFromRequest } from "../lib/run-store.js";
@@ -47,6 +53,10 @@ function parseRepoAppMapFromJson(raw: string): Map<string, string> {
 const repoAppMap = new Map<string, string>();
 const appCache = new Map<string, AgentApp>();
 const embeddedPollerEnabled = process.env.INTAKE_ENABLE_EMBEDDED_POLLER === "true";
+
+// One process-wide Prometheus registry seeded with the instance label so
+// /metrics renders the same identity that startup banners do.
+const intakeRegistry: IntakeRegistry = createIntakeRegistry(getInstanceConfig().instance);
 
 interface GitHubPullRequestEvent {
   action: string;
@@ -467,7 +477,20 @@ async function getRunHandler(req: IncomingMessage, res: ServerResponse): Promise
   }
 }
 
-async function metricsHandler(res: ServerResponse): Promise<void> {
+/**
+ * Compute the latest phase counts + queue depth and write them into the
+ * shared Prometheus registry. Used by both /metrics (text) and
+ * /metrics.json (JSON) so the two views stay consistent.
+ *
+ * Recompute-on-scrape is cheap here — `listRuns()` is a directory walk,
+ * `getQueueDepth()` is a single Redis or filesystem call.
+ */
+async function refreshMetricsSnapshot(): Promise<{
+  total: number;
+  phaseCounts: Record<string, number>;
+  queueBackend: string;
+  queueDepth: number;
+}> {
   const runs = await listRuns();
   const phaseCounts: Record<string, number> = {
     queued: 0,
@@ -477,30 +500,40 @@ async function metricsHandler(res: ServerResponse): Promise<void> {
     succeeded: 0,
     failed: 0
   };
-
   for (const run of runs) {
     phaseCounts[run.status.phase] = (phaseCounts[run.status.phase] ?? 0) + 1;
   }
-
   const queue = createRunQueueFromEnv();
-
   try {
     const queueDepth = await queue.getQueueDepth();
-    sendJson(res, 200, {
-      service: "intake-api",
-      generatedAt: new Date().toISOString(),
-      runTotals: {
-        total: runs.length,
-        byPhase: phaseCounts
-      },
-      queue: {
-        backend: queue.backend,
-        depth: queueDepth
-      }
-    });
+    // Push into the Prometheus registry so the next renderPrometheusText()
+    // sees current values.
+    for (const [phase, count] of Object.entries(phaseCounts)) {
+      intakeRegistry.runsTotal.set({ phase }, count);
+    }
+    intakeRegistry.queueDepth.set({ backend: queue.backend }, queueDepth);
+    return { total: runs.length, phaseCounts, queueBackend: queue.backend, queueDepth };
   } finally {
     await queue.close();
   }
+}
+
+async function metricsPrometheusHandler(res: ServerResponse): Promise<void> {
+  await refreshMetricsSnapshot();
+  const text = await renderPrometheusText(intakeRegistry.registry);
+  res.statusCode = 200;
+  res.setHeader("content-type", PROMETHEUS_CONTENT_TYPE);
+  res.end(text);
+}
+
+async function metricsJsonHandler(res: ServerResponse): Promise<void> {
+  const snap = await refreshMetricsSnapshot();
+  sendJson(res, 200, {
+    service: "intake-api",
+    generatedAt: new Date().toISOString(),
+    runTotals: { total: snap.total, byPhase: snap.phaseCounts },
+    queue: { backend: snap.queueBackend, depth: snap.queueDepth }
+  });
 }
 
 async function githubPullRequestWebhookHandler(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -652,13 +685,17 @@ async function handler(req: IncomingMessage, res: ServerResponse): Promise<void>
     return;
   }
 
+  // /metrics and /metrics.json are intentionally unauthenticated: Prometheus
+  // scrape configs inside the cluster shouldn't need a bearer token, and
+  // operators can gate external access via ingress rules. Both are
+  // read-only and idempotent.
   if (req.method === "GET" && parsedUrl.pathname === "/metrics") {
-    if (!isAuthorized(req)) {
-      sendUnauthorized(res);
-      return;
-    }
+    await metricsPrometheusHandler(res);
+    return;
+  }
 
-    await metricsHandler(res);
+  if (req.method === "GET" && parsedUrl.pathname === "/metrics.json") {
+    await metricsJsonHandler(res);
     return;
   }
 
