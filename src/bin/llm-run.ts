@@ -15,6 +15,8 @@
  *     --workdir /tmp/llm-run-work \
  *     [--provider anthropic|openrouter|ds4|omlx] (default: anthropic) \
  *     [--model <id>]                              (default per provider: claude-sonnet-4-6 / openai/gpt-5.4 / deepseek-v4-flash / Qwen3.6-27B-4bit) \
+ *     [--no-triage]                               (skip the pre-dispatch fitness check) \
+ *     [--no-eval]                                 (skip the post-Worker Evaluator phase) \
  *     [--verbose]
  *
  * When --repo is provided, the Worker creates a git worktree at <workdir>/repo
@@ -36,6 +38,7 @@ import { runPlanner, runWorker, runPlannerSource, runWorkerSource, runEvaluator 
 import type { EmitPlanResult, EmitPlanSourceResult, AnyPlanResult } from "../lib/llm-engine.js";
 import { classifySpec } from "../lib/spec-classifier.js";
 import { detectReproContext } from "../lib/repro-context-detector.js";
+import { runTriage, formatTriageReport } from "../lib/triage.js";
 
 const execAsync = promisify(exec);
 
@@ -88,6 +91,7 @@ async function main(): Promise<void> {
   const workDir = getArg(argv, ["--workdir", "-w"]) ?? path.join(process.cwd(), ".llm-run-work");
   const verbose = hasFlag(argv, ["--verbose", "-v"]);
   const skipEval = hasFlag(argv, ["--no-eval"]);
+  const skipTriage = hasFlag(argv, ["--no-triage"]);
   const providerArg = getArg(argv, ["--provider", "-p"]) ?? "anthropic";
   if (providerArg !== "anthropic" && providerArg !== "openrouter" && providerArg !== "ds4" && providerArg !== "omlx") {
     console.error(`unknown provider: ${providerArg}. Expected one of: anthropic, openrouter, ds4, omlx`);
@@ -127,7 +131,7 @@ async function main(): Promise<void> {
 
   if (mode === "traffic" && !snapshotDir) {
     console.error("traffic mode requires --snapshot <dir>. Use --mode source (or omit and let the classifier choose) for tickets without wire evidence.");
-    console.error("usage: llm-run [--mode auto|traffic|source] [--snapshot <dir>] [--source <dir>] [--labels a,b,c] [--repo <dir>] [--branch <name>] [--title <str>] [--body <str>] [--workdir <dir>] [--provider anthropic|openrouter|ds4|omlx] [--model <id>] [--verbose]");
+    console.error("usage: llm-run [--mode auto|traffic|source] [--snapshot <dir>] [--source <dir>] [--labels a,b,c] [--repo <dir>] [--branch <name>] [--title <str>] [--body <str>] [--workdir <dir>] [--provider anthropic|openrouter|ds4|omlx] [--model <id>] [--no-triage] [--no-eval] [--verbose]");
     process.exit(1);
   }
 
@@ -162,6 +166,34 @@ async function main(): Promise<void> {
   await mkdir(workDir, { recursive: true });
 
   console.log(JSON.stringify({ phase: "start", title, mode, snapshotDir, sourceDir, repoDir, branchName, workDir, provider, model, classifierRationale, classifierScores }, null, 2));
+
+  // ---- Triage phase (pre-Planner) ----
+  // Decides whether the engine has enough information to attempt the ticket.
+  // If not, abort with a reviewer-ready report so a human can improve the spec
+  // before re-dispatch. Skipped via --no-triage.
+  if (!skipTriage) {
+    console.log("\n=== TRIAGE PHASE ===");
+    try {
+      const triageResult = await runTriage({ title, body }, { provider, model, verbose });
+      console.log(JSON.stringify({ phase: "triaged", verdict: triageResult.verdict, reason: triageResult.reason, missingContext: triageResult.missingContext, recommendedActions: triageResult.recommendedActions }, null, 2));
+      const triageOutput = path.join(workDir, "triage.json");
+      await writeFile(triageOutput, JSON.stringify(triageResult, null, 2), "utf8");
+
+      if (triageResult.verdict === "needs-info") {
+        console.error("\n" + formatTriageReport(triageResult));
+        console.error("\nDispatch aborted — the spec needs more context before the engine can act on it.");
+        console.error("Add the missing items to the ticket and re-dispatch; pass --no-triage to bypass this check.");
+        process.exit(2);
+      }
+    } catch (err) {
+      // Triage failures (e.g. LLM unreachable, response unparseable) should
+      // not silently degrade into a real dispatch. Print and abort so the
+      // operator can either fix the call or pass --no-triage to bypass.
+      console.error(`Triage step failed: ${(err as Error).message}`);
+      console.error("Pass --no-triage to bypass this check if intentional.");
+      process.exit(1);
+    }
+  }
 
   // ---- Planner phase ----
   const plannerStart = Date.now();
