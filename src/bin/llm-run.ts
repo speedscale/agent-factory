@@ -35,6 +35,7 @@ import { promisify } from "node:util";
 import { runPlanner, runWorker, runPlannerSource, runWorkerSource, runEvaluator } from "../lib/llm-engine.js";
 import type { EmitPlanResult, EmitPlanSourceResult, AnyPlanResult } from "../lib/llm-engine.js";
 import { classifySpec } from "../lib/spec-classifier.js";
+import { detectReproContext } from "../lib/repro-context-detector.js";
 
 const execAsync = promisify(exec);
 
@@ -128,6 +129,34 @@ async function main(): Promise<void> {
     console.error("traffic mode requires --snapshot <dir>. Use --mode source (or omit and let the classifier choose) for tickets without wire evidence.");
     console.error("usage: llm-run [--mode auto|traffic|source] [--snapshot <dir>] [--source <dir>] [--labels a,b,c] [--repo <dir>] [--branch <name>] [--title <str>] [--body <str>] [--workdir <dir>] [--provider anthropic|openrouter|ds4|omlx] [--model <id>] [--verbose]");
     process.exit(1);
+  }
+
+  // Safety net: if mode resolved to source but the ticket references external
+  // reproduction context (HTTP captures, logs, traces, stack traces, repro
+  // repos, etc.) that the engine doesn't have on hand, refuse rather than
+  // fall back to a synthetic Planner-authored harness. That fallback produces
+  // a circular reproduce gate — the same LLM authors both the failing
+  // assertion and the harness that proves it false, so "harness fails on
+  // master" only confirms the model's bug model is self-consistent. The
+  // operator should acquire the referenced artifacts and supply them.
+  if (mode === "source") {
+    const rc = detectReproContext({ title, body });
+    if (rc.detected) {
+      const snapshotOk = await snapshotHasContent(snapshotDir);
+      if (!snapshotOk) {
+        console.error(
+          `source mode refused: the ticket references external reproduction context ` +
+          `(${rc.signals.join(", ")}) but no usable repro input was supplied to the engine.\n` +
+          `Falling back to a synthetic Planner-authored harness here would produce ` +
+          `a circular reproduce gate. Either:\n` +
+          `  1. Acquire the referenced artifact(s) and re-dispatch with --snapshot <dir> ` +
+          `pointing at a real recording (use --mode traffic if the bug is wire-shaped); OR\n` +
+          `  2. Re-capture the reproduction (follow the ticket's repro steps) and supply ` +
+          `it the same way.`
+        );
+        process.exit(1);
+      }
+    }
   }
 
   await mkdir(workDir, { recursive: true });
