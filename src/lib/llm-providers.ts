@@ -22,8 +22,18 @@ export interface ToolDef {
     properties: Record<string, {
       type: string;
       description?: string;
-      /** For type: "array" — schema of each item. */
-      items?: { type: string };
+      /** For type: "array" — schema of each item. Supports primitive items
+       *  ({ type: "string" }) and structured object items with their own
+       *  properties (used for the Evaluator's missedRequirements). */
+      items?: {
+        type: string;
+        properties?: Record<string, {
+          type: string;
+          description?: string;
+          enum?: string[];
+        }>;
+        required?: string[];
+      };
       /** For type: "string" — restrict to one of these values. */
       enum?: string[];
     }>;

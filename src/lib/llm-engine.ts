@@ -33,6 +33,12 @@ import {
 import { validateBaselineEvidence, type BaselineEvidence } from "./source-mode-validation.js";
 import { diffDeclarations } from "./declaration-diff.js";
 import {
+  computeFinalVerdict,
+  type FinalVerdict,
+  type MissedRequirement,
+  type MissSeverity
+} from "./eval-verdict.js";
+import {
   rescueToolCall,
   validateToolArgs,
   checkPrerequisites,
@@ -95,11 +101,22 @@ export interface EmitPlanSourceResult {
 
 export interface EmitEvalReportResult {
   addressedRequirements: string[];
-  missedRequirements: string[];
+  /**
+   * Structured misses with per-item severity so the run record can
+   * distinguish a load-bearing AC miss from a quality bar the patch matched
+   * but didn't exceed. See src/lib/eval-verdict.ts for the bucketing logic.
+   */
+  missedRequirements: MissedRequirement[];
   confirmHarnessTrustworthy: boolean;
   confirmHarnessNotes: string;
-  /** "pass" | "partial" | "fail" */
-  overallVerdict: string;
+  /**
+   * Final verdict, DERIVED in code from the structured misses + harness
+   * trustworthiness, with the Evaluator's own `fail` preserved as an
+   * override. One of: "pass" | "partial-soft" | "partial-blocker" | "fail".
+   */
+  overallVerdict: FinalVerdict;
+  /** What the Evaluator emitted, kept for transparency / debugging. */
+  modelVerdict: string;
   summary: string;
 }
 
@@ -563,12 +580,30 @@ const TOOLS: ToolDef[] = [
         },
         missedRequirements: {
           type: "array",
-          items: { type: "string" },
-          description: "Spec requirements that are NOT reflected in the patch. Quote the requirement text verbatim or near-verbatim from the spec body. Empty array if everything is addressed."
+          items: {
+            type: "object",
+            properties: {
+              text: {
+                type: "string",
+                description: "Quote the unmet requirement verbatim or near-verbatim from the spec body."
+              },
+              severity: {
+                type: "string",
+                enum: ["blocker", "soft"],
+                description: "blocker = load-bearing acceptance criterion the spec explicitly called out (a reviewer will reject the MR until it's satisfied). soft = a quality bar the patch didn't exceed but matched the established codebase pattern the spec told the Worker to mirror (worth a follow-up, not a blocker). When in doubt prefer 'blocker' — soft is reserved for cases where you can cite a sibling file or codebase precedent that the patch matches."
+              },
+              reason: {
+                type: "string",
+                description: "One short sentence on why this severity. For blocker: which AC/sentence in the spec made it load-bearing. For soft: which sibling file or precedent the patch matches."
+              }
+            },
+            required: ["text", "severity"]
+          },
+          description: "Spec requirements that are NOT reflected in the patch, with per-item severity. Empty array if everything is addressed."
         },
         confirmHarnessTrustworthy: {
           type: "boolean",
-          description: "True if the confirm harness actually exercises the metric named in the plan. False if the harness asserts on something else, was skipped, or appears fabricated."
+          description: "True if the confirm harness actually exercises the metric named in the plan. False if the harness asserts on something else, was skipped, or appears fabricated. An untrustworthy harness alone is treated as a blocker — the patch may be correct but we have no way to prove it."
         },
         confirmHarnessNotes: {
           type: "string",
@@ -577,7 +612,7 @@ const TOOLS: ToolDef[] = [
         overallVerdict: {
           type: "string",
           enum: ["pass", "partial", "fail"],
-          description: "pass = all requirements addressed and harness trustworthy; partial = some requirements missed or harness weak but core fix landed; fail = core fix missing or patch is wrong."
+          description: "Your self-graded bucket. The engine derives the final 4-bucket verdict (pass | partial-soft | partial-blocker | fail) from the misses + harness flag — your job is to set fail when the core fix is missing or the patch is wrong, and to use partial/pass for everything else. The misses array's severity tags drive whether 'partial' becomes 'partial-soft' or 'partial-blocker'."
         },
         summary: {
           type: "string",
@@ -934,9 +969,14 @@ Rules:
 - You have READ-ONLY tools. Do not modify any files.
 - Be strict about missed requirements. If the spec says "add a --dry-run flag" and you can't find a --dry-run flag in the patch or source, that's a missed requirement, not a "minor gap."
 - "pass" verdict requires ALL spec requirements addressed AND confirm harness trustworthy AND no unjustified deletions in compare_file_declarations.
-- "partial" = core fix landed but some requirements missing OR harness is weak (e.g. mocks the thing being tested).
+- "partial" = core fix landed but some requirements missing OR harness is weak (e.g. mocks the thing being tested). Per-miss severity in missedRequirements drives whether this becomes partial-soft or partial-blocker downstream.
 - "fail" = the core fix doesn't address the central bug, the patch is plainly wrong, OR compare_file_declarations reports removed declarations the spec didn't authorize.
 - Do not call emit_eval_report until you have actually read the patched source file AND called compare_file_declarations on every file the Worker modified.
+
+Tagging missed-requirement severity:
+- BLOCKER: the spec explicitly calls this out as an acceptance criterion (numbered AC, "must", "required") AND the patch does not satisfy it. Reviewer will reject the MR until it's done. Default to blocker when in doubt.
+- SOFT: the patch didn't exceed a quality bar but DID match the established codebase pattern the spec told the Worker to mirror. You must be able to cite the sibling file or precedent that justifies "soft" — e.g. "the tests are shallow, but proxymock_export_datadog_synthetics_test.go is equally shallow and the spec said to mirror it." A miss with no codebase precedent is a blocker, not soft.
+- Each missed item also takes an optional 'reason' field — fill it in with the citation (which AC / which sibling file).
 
 STOPPING RULE:
 By loop 15, emit the report with whatever findings you have. Do not keep exploring once the question is answered.
@@ -1035,14 +1075,51 @@ export async function runEvaluator(
     evalTools
   );
 
+  const addressedRequirements = Array.isArray(result.addressedRequirements)
+    ? (result.addressedRequirements as unknown as string[])
+    : [];
+  const missedRequirements = normalizeMissedRequirements(result.missedRequirements);
+  const confirmHarnessTrustworthy = Boolean(result.confirmHarnessTrustworthy);
+  const modelVerdict = typeof result.overallVerdict === "string" ? result.overallVerdict : "partial";
+  const overallVerdict = computeFinalVerdict(modelVerdict, missedRequirements, confirmHarnessTrustworthy);
+
   return {
-    addressedRequirements: Array.isArray(result.addressedRequirements) ? result.addressedRequirements as unknown as string[] : [],
-    missedRequirements: Array.isArray(result.missedRequirements) ? result.missedRequirements as unknown as string[] : [],
-    confirmHarnessTrustworthy: result.confirmHarnessTrustworthy as unknown as boolean,
-    confirmHarnessNotes: result.confirmHarnessNotes ?? "",
-    overallVerdict: result.overallVerdict ?? "partial",
-    summary: result.summary ?? ""
+    addressedRequirements,
+    missedRequirements,
+    confirmHarnessTrustworthy,
+    confirmHarnessNotes: result.confirmHarnessNotes as string ?? "",
+    overallVerdict,
+    modelVerdict,
+    summary: result.summary as string ?? ""
   };
+}
+
+/**
+ * Coerce the model's `missedRequirements` payload into the structured shape.
+ * Tolerates two legacy/edge forms:
+ *   - The new shape: [{ text, severity, reason? }, ...]
+ *   - Loose strings: ["text", "text", ...] — coerced to blocker (the
+ *     pessimistic default) so a model that ignored the new schema doesn't
+ *     accidentally produce a partial-soft when it meant a partial-blocker.
+ */
+function normalizeMissedRequirements(raw: unknown): MissedRequirement[] {
+  if (!Array.isArray(raw)) return [];
+  const out: MissedRequirement[] = [];
+  for (const item of raw) {
+    if (typeof item === "string") {
+      out.push({ text: item, severity: "blocker" });
+      continue;
+    }
+    if (item && typeof item === "object") {
+      const obj = item as Record<string, unknown>;
+      const text = typeof obj.text === "string" ? obj.text : "";
+      if (!text) continue;
+      const sev: MissSeverity = obj.severity === "soft" ? "soft" : "blocker";
+      const reason = typeof obj.reason === "string" && obj.reason ? obj.reason : undefined;
+      out.push({ text, severity: sev, reason });
+    }
+  }
+  return out;
 }
 
 export async function runWorker(
