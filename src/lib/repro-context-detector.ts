@@ -94,8 +94,55 @@ const ARTIFACT_PATTERNS: ArtifactPattern[] = [
 ];
 
 /**
+ * Verbs that signal the ticket is asking the engine to PRODUCE a thing of the
+ * named format — i.e. the format is the deliverable, not an input artifact
+ * the engine has to acquire. Hits like "add a Postman exporter", "build a
+ * HAR sink", "implement OpenAPI generation", "support pcap capture".
+ */
+const BUILD_VERBS_RE = /\b(?:add|adds|adding|build|builds|building|implement|implements|implementing|produce|produces|producing|emit|emits|emitting|export|exports|exporting|exporter|generate|generates|generating|generator|create|creates|creating|support|supports|supporting|expose|exposes|exposing|introduce|introduces|introducing|extend|extends|extending|new\s+\w+\s+(?:format|exporter|sink|generator)|subcommand)\b/i;
+
+/**
+ * Verbs that signal the format mention IS an input artifact — i.e. the
+ * engine needs to consume it to reproduce the bug. Hits like "reproduce
+ * against the Postman collection", "replay the HAR", "load fixtures/x.json".
+ *
+ * Presence of a reproduce verb in the same window outweighs a build verb,
+ * because mixed-signal cases are safer to flag than skip.
+ */
+const REPRO_VERBS_RE = /\b(?:use|uses|using|replay|replays|replaying|load|loads|loading|loaded|import|imports|imported|importing|reproduce|reproduces|reproducing|reproduced|repro|attached|captured|recorded|observed|seen|see\s+(?:attached|the|file|recording|log|trace)|from\s+(?:the\s+)?(?:attached|recording|capture|log)|against\s+(?:the|a|an)|repro:|repros?\s+with|fails?\s+(?:with|on)|crashes?\s+(?:with|on)|failing\s+request)\b/i;
+
+const CONTEXT_WINDOW = 120;
+
+function gFlagged(re: RegExp): RegExp {
+  return re.flags.includes("g") ? re : new RegExp(re.source, re.flags + "g");
+}
+
+/**
+ * For a single match, decide whether the surrounding text reads as a
+ * "build/deliver" context, a "reproduce/consume" context, or neither.
+ * Reproduce wins ties: if both verb classes appear in the window, treat it
+ * as reproduce so we err on the side of flagging.
+ */
+function classifyMatchContext(text: string, matchIdx: number, matchLen: number): "build" | "reproduce" | "neutral" {
+  const start = Math.max(0, matchIdx - CONTEXT_WINDOW);
+  const end = Math.min(text.length, matchIdx + matchLen + CONTEXT_WINDOW);
+  const win = text.slice(start, end);
+  const hasBuild = BUILD_VERBS_RE.test(win);
+  const hasRepro = REPRO_VERBS_RE.test(win);
+  if (hasRepro) return "reproduce";
+  if (hasBuild) return "build";
+  return "neutral";
+}
+
+/**
  * Scan `${title}\n${body}` for evidence the ticket references external repro
  * context. Returns up to 5 distinct matched signal names.
+ *
+ * A signal only fires if at least one of its match locations reads as
+ * reproduce/consume context (or is neutral). Matches that sit entirely in
+ * build/deliver context — e.g. "add proxymock export postman" — are
+ * suppressed so spec authors don't have to dodge format names when the
+ * format is the deliverable.
  *
  * A `false` result does NOT mean the ticket is source-only — only that it
  * lacks explicit repro-context references. Callers should still defer to
@@ -106,7 +153,14 @@ export function detectReproContext(spec: { title: string; body: string }): Repro
   const text = `${spec.title}\n${spec.body}`;
   const signals: string[] = [];
   for (const { name, re } of ARTIFACT_PATTERNS) {
-    if (re.test(text) && !signals.includes(name)) {
+    const matches = [...text.matchAll(gFlagged(re))];
+    if (matches.length === 0) continue;
+    const anyNonBuild = matches.some((m) => {
+      if (m.index === undefined) return true;
+      return classifyMatchContext(text, m.index, m[0].length) !== "build";
+    });
+    if (!anyNonBuild) continue;
+    if (!signals.includes(name)) {
       signals.push(name);
       if (signals.length >= 5) break;
     }

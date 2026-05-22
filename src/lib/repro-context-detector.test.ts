@@ -328,6 +328,101 @@ Decoding the mocked OpenAI RRPair shows plain JSON.`
   assert.ok(r.signals.includes("proxymock recording dir"));
 });
 
+// ---------- Build-vs-reproduce disambiguation ----------
+//
+// The detector must not fire on tickets where a known artifact format is the
+// DELIVERABLE rather than the INPUT. "Add a Postman exporter" should pass;
+// "Reproduce against the Postman collection" should still flag.
+
+test("'Add proxymock export postman' subcommand spec → not detected", () => {
+  // Concrete spec body that motivated this fix. Mentions "Postman collection"
+  // and "RRPair" but the surrounding verbs are all build-flavored
+  // (Add/Expand/export/Reuse), so the detector must NOT flag this.
+  const r = detectReproContext({
+    title: "Add proxymock export subcommands for Postman, k6, and Gatling",
+    body: `Follow-up to Datadog Synthetics exporter work.
+
+## Goal
+
+Expand \`proxymock export\` so local RRPair-based export flows support the existing formats already available through snapshot export.
+
+## Scope
+
+* Add \`proxymock export postman\` (Postman collection output)
+* Add \`proxymock export k6\`
+* Add \`proxymock export gatling\`
+* Reuse existing \`lib/export\` generation logic where possible
+* Keep behavior/flags consistent with existing exporter patterns`
+  });
+  assert.equal(r.detected, false, `expected no signals on a build-flavored spec, got: ${r.signals.join(", ")}`);
+});
+
+test("'add a HAR exporter' build spec → not detected", () => {
+  const r = detectReproContext({
+    title: "Add a HAR exporter to speedctl",
+    body: "Implement HAR file output for the existing export pipeline. Users want .har for browser devtools."
+  });
+  assert.equal(r.detected, false, `expected no signals, got: ${r.signals.join(", ")}`);
+});
+
+test("'implement k6 script export' build spec → not detected", () => {
+  const r = detectReproContext({
+    title: "Implement k6 script export",
+    body: "Generate a k6 load test script from a snapshot. Output goes to disk; no input artifact needed."
+  });
+  assert.equal(r.detected, false, `expected no signals, got: ${r.signals.join(", ")}`);
+});
+
+test("'support pcap capture as a sink' build spec → not detected", () => {
+  const r = detectReproContext({
+    title: "Support pcap capture as a sink",
+    body: "Add a new sink that emits packet captures (.pcap) for downstream Wireshark inspection."
+  });
+  assert.equal(r.detected, false, `expected no signals, got: ${r.signals.join(", ")}`);
+});
+
+test("'reproduce against a Postman collection' input spec → still detected", () => {
+  const r = detectReproContext({
+    title: "Auth flow breaks on the customer Postman collection",
+    body: "Reproduce against the attached Acme Postman collection — the third request 401s after a fresh login."
+  });
+  assert.equal(r.detected, true);
+  assert.ok(r.signals.includes("Postman collection reference"));
+});
+
+test("'replay the HAR' input spec → still detected", () => {
+  const r = detectReproContext({
+    title: "Sequence number desync on replay",
+    body: "Replay the attached session.har captured from the broken support call — fails on the 4th request."
+  });
+  assert.equal(r.detected, true);
+  assert.ok(r.signals.includes("HAR file"));
+});
+
+test("'load fixtures/x.json' input spec → still detected", () => {
+  const r = detectReproContext({
+    title: "Parser crash on malformed payload",
+    body: "Load fixtures/auth-failure.json and observe the panic in handleResponse()."
+  });
+  assert.equal(r.detected, true);
+  assert.ok(r.signals.includes("fixture/recording file"));
+});
+
+test("mixed-context spec (build paragraph + reproduce paragraph) → still detected", () => {
+  // If any single match sits in reproduce context, the signal fires — we'd
+  // rather over-flag than silently let a real reproduction artifact slip past.
+  const r = detectReproContext({
+    title: "Add HAR exporter; also fix the .har replay drift",
+    body: `## Part 1: build
+Add a HAR exporter to speedctl. Output only, no input.
+
+## Part 2: reproduce
+Replay the attached session.har from the support ticket — drift after request #4.`
+  });
+  assert.equal(r.detected, true);
+  assert.ok(r.signals.includes("HAR file"));
+});
+
 test("signal list capped at 5", () => {
   // Body that would match many patterns; cap must still hold.
   const r = detectReproContext({
