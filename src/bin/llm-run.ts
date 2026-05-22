@@ -16,6 +16,7 @@
  *     [--provider anthropic|openrouter|ds4|omlx] (default: anthropic) \
  *     [--model <id>]                              (default per provider: claude-sonnet-4-6 / openai/gpt-5.4 / deepseek-v4-flash / Qwen3.6-27B-4bit) \
  *     [--no-triage]                               (skip the pre-dispatch fitness check) \
+ *     [--no-context-check]                        (skip the repro-context safety net; use when an artifact format is the deliverable, not the input) \
  *     [--no-eval]                                 (skip the post-Worker Evaluator phase) \
  *     [--verbose]
  *
@@ -86,6 +87,7 @@ async function main(): Promise<void> {
   const verbose = hasFlag(argv, ["--verbose", "-v"]);
   const skipEval = hasFlag(argv, ["--no-eval"]);
   const skipTriage = hasFlag(argv, ["--no-triage"]);
+  const skipContextCheck = hasFlag(argv, ["--no-context-check"]);
   const providerArg = getArg(argv, ["--provider", "-p"]) ?? "anthropic";
   if (providerArg !== "anthropic" && providerArg !== "openrouter" && providerArg !== "ds4" && providerArg !== "omlx") {
     console.error(`unknown provider: ${providerArg}. Expected one of: anthropic, openrouter, ds4, omlx`);
@@ -125,7 +127,7 @@ async function main(): Promise<void> {
 
   if (mode === "traffic" && !snapshotDir) {
     console.error("traffic mode requires --snapshot <dir>. Use --mode source (or omit and let the classifier choose) for tickets without wire evidence.");
-    console.error("usage: llm-run [--mode auto|traffic|source] [--snapshot <dir>] [--source <dir>] [--labels a,b,c] [--repo <dir>] [--branch <name>] [--title <str>] [--body <str>] [--workdir <dir>] [--provider anthropic|openrouter|ds4|omlx] [--model <id>] [--no-triage] [--no-eval] [--verbose]");
+    console.error("usage: llm-run [--mode auto|traffic|source] [--snapshot <dir>] [--source <dir>] [--labels a,b,c] [--repo <dir>] [--branch <name>] [--title <str>] [--body <str>] [--workdir <dir>] [--provider anthropic|openrouter|ds4|omlx] [--model <id>] [--no-triage] [--no-context-check] [--no-eval] [--verbose]");
     process.exit(1);
   }
 
@@ -138,21 +140,27 @@ async function main(): Promise<void> {
   // master" only confirms the model's bug model is self-consistent. The
   // operator should acquire the referenced artifacts and supply them.
   if (mode === "source") {
-    const rc = detectReproContext({ title, body });
-    if (rc.detected) {
-      const snapshotOk = await snapshotHasContent(snapshotDir);
-      if (!snapshotOk) {
-        console.error(
-          `source mode refused: the ticket references external reproduction context ` +
-          `(${rc.signals.join(", ")}) but no usable repro input was supplied to the engine.\n` +
-          `Falling back to a synthetic Planner-authored harness here would produce ` +
-          `a circular reproduce gate. Either:\n` +
-          `  1. Acquire the referenced artifact(s) and re-dispatch with --snapshot <dir> ` +
-          `pointing at a real recording (use --mode traffic if the bug is wire-shaped); OR\n` +
-          `  2. Re-capture the reproduction (follow the ticket's repro steps) and supply ` +
-          `it the same way.`
-        );
-        process.exit(1);
+    if (skipContextCheck) {
+      console.warn("[repro-context] gate bypassed by --no-context-check at operator's request");
+    } else {
+      const rc = detectReproContext({ title, body });
+      if (rc.detected) {
+        const snapshotOk = await snapshotHasContent(snapshotDir);
+        if (!snapshotOk) {
+          console.error(
+            `source mode refused: the ticket references external reproduction context ` +
+            `(${rc.signals.join(", ")}) but no usable repro input was supplied to the engine.\n` +
+            `Falling back to a synthetic Planner-authored harness here would produce ` +
+            `a circular reproduce gate. Either:\n` +
+            `  1. Acquire the referenced artifact(s) and re-dispatch with --snapshot <dir> ` +
+            `pointing at a real recording (use --mode traffic if the bug is wire-shaped); OR\n` +
+            `  2. Re-capture the reproduction (follow the ticket's repro steps) and supply ` +
+            `it the same way; OR\n` +
+            `  3. Pass --no-context-check if the format mention is the deliverable, not ` +
+            `an input the engine needs to acquire (e.g. "add a Postman exporter").`
+          );
+          process.exit(1);
+        }
       }
     }
   }
