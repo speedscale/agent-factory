@@ -1,11 +1,16 @@
-import { Ajv, type ErrorObject } from "ajv";
+import { type ErrorObject } from "ajv";
+import { Ajv2020 } from "ajv/dist/2020.js";
 import * as addFormatsModule from "ajv-formats";
 import type { AgentInputSchema } from "../../agents/types.js";
 
-type AddFormatsFn = (ajv: Ajv) => Ajv;
+type AddFormatsFn = (ajv: Ajv2020) => Ajv2020;
 const addFormats = (addFormatsModule as unknown as { default: AddFormatsFn }).default;
 
-const ajv = new Ajv({ allErrors: true, strict: false });
+// Every agent input schema declares `$schema: ".../draft/2020-12/schema"`.
+// The default `Ajv` class only ships the draft-07 meta-schema, so compile
+// fails with `no schema with key or ref "https://json-schema.org/draft/2020-12/schema"`.
+// `Ajv2020` preloads draft 2019-09 + draft 2020-12 meta-schemas.
+const ajv = new Ajv2020({ allErrors: true, strict: false });
 addFormats(ajv);
 
 export interface ValidationResult {
