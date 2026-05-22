@@ -8,6 +8,7 @@ on:
     paths-ignore:
       - package.json
       - package-lock.json
+      - charts/agent-factory/Chart.yaml
 
 jobs:
   version-policy:
@@ -38,15 +39,22 @@ jobs:
       - name: Bump patch version
         run: npm version patch --no-git-tag-version
 
+      - name: Sync Helm chart appVersion to package.json
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          # Keep Chart.AppVersion in lockstep with package.json so consumers
+          # who don't override --set image.tag get the matching image.
+          sed -i "s/^appVersion:.*/appVersion: \"$VERSION\"/" charts/agent-factory/Chart.yaml
+
       - name: Commit and push version bump
         run: |
-          if git diff --quiet -- package.json package-lock.json; then
+          if git diff --quiet -- package.json package-lock.json charts/agent-factory/Chart.yaml; then
             echo "No version file changes detected; skipping commit."
             exit 0
           fi
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add package.json package-lock.json
+          git add package.json package-lock.json charts/agent-factory/Chart.yaml
           git commit -m "chore: bump version [skip ci]"
           git push

@@ -91,9 +91,14 @@ serviceAccount:
   name: ""
   annotations: {}
 
-podSecurityContext: {}
+# fsGroup matches the image's `node` user (UID/GID 1000) so PVC mounts at
+# /app/artifacts and /app/.work come up writable. Without this, the worker
+# pod runs as non-root but can't write its run artifacts.
+podSecurityContext:
+  fsGroup: 1000
 securityContext:
   runAsNonRoot: true
+  runAsUser: 1000
   readOnlyRootFilesystem: false
   allowPrivilegeEscalation: false
 
