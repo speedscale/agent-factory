@@ -105,3 +105,19 @@ securityContext:
 nodeSelector: {}
 tolerations: []
 affinity: {}
+
+# Prometheus Operator integration. Default off so the chart deploys on
+# clusters without monitoring.coreos.com CRDs installed. Flip enabled=true
+# when kube-prometheus-stack (or any operator that watches ServiceMonitor)
+# is present in the cluster.
+serviceMonitor:
+  enabled: false
+  interval: 30s
+  scrapeTimeout: 10s
+  # Override the namespace if the Prometheus instance is scoped to one
+  # other than the release namespace. Empty = same namespace as the release.
+  namespace: ""
+  # Extra labels to add to the ServiceMonitor — Prometheus instances often
+  # use a label selector (e.g. `release: kube-prometheus-stack`) to pick
+  # which ServiceMonitors they scrape.
+  labels: {}

@@ -2,8 +2,15 @@ import { open, stat, unlink } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { Server } from "node:http";
 import { getInstanceConfig, formatInstanceBanner } from "../lib/instance-config.js";
+import {
+  createWorkerRegistry,
+  renderPrometheusText,
+  PROMETHEUS_CONTENT_TYPE,
+  type WorkerRegistry
+} from "../lib/metrics.js";
 
 const instanceCfg = getInstanceConfig();
+const workerRegistry: WorkerRegistry = createWorkerRegistry(instanceCfg.instance);
 import { buildPlan, loadPlannerContext, writePlanArtifact, writeTriageArtifact } from "../lib/planner.js";
 import { loadRunnerContext, runBuildStage } from "../lib/runner.js";
 import { loadValidatorContext, runValidationStage } from "../lib/validator.js";
@@ -362,6 +369,18 @@ function startWorkerMetricsServer(metrics: WorkerMetrics): Server | undefined {
     }
 
     if (req.method === "GET" && path === "/metrics") {
+      // Reflect the current queue depth onto the registry gauge before
+      // rendering so dashboards see the latest value, not a stale one.
+      workerRegistry.queueDepth.set({ backend: metrics.queueBackend }, metrics.lastBatchSize);
+      void renderPrometheusText(workerRegistry.registry).then((text) => {
+        res.statusCode = 200;
+        res.setHeader("content-type", PROMETHEUS_CONTENT_TYPE);
+        res.end(text);
+      });
+      return;
+    }
+
+    if (req.method === "GET" && path === "/metrics.json") {
       res.statusCode = 200;
       res.setHeader("content-type", "application/json");
       res.end(`${JSON.stringify({ service: "worker", generatedAt: new Date().toISOString(), metrics }, null, 2)}\n`);
@@ -412,7 +431,10 @@ async function runWorker(queue: RunQueue, options: WorkerOptions): Promise<void>
   try {
     while (true) {
       metrics.loops += 1;
-      metrics.staleRunsFailed += await failStaleActiveRuns(options.maxActivePhaseMs);
+      workerRegistry.loopsTotal.inc();
+      const staleFailed = await failStaleActiveRuns(options.maxActivePhaseMs);
+      metrics.staleRunsFailed += staleFailed;
+      if (staleFailed > 0) workerRegistry.staleRunsFailedTotal.inc(staleFailed);
       const queuedRuns = await queue.listQueuedRuns();
       metrics.lastBatchSize = queuedRuns.length;
       if (queuedRuns.length > 0) {
@@ -434,6 +456,7 @@ async function runWorker(queue: RunQueue, options: WorkerOptions): Promise<void>
           const claimed = await tryClaimRun(runName, options.claimTtlMs);
           if (!claimed) {
             metrics.runClaimsSkipped += 1;
+            workerRegistry.runClaimsSkippedTotal.inc();
             continue;
           }
         }
@@ -441,11 +464,13 @@ async function runWorker(queue: RunQueue, options: WorkerOptions): Promise<void>
         try {
           await processRun(runName, options.sourceDir);
           metrics.runsProcessed += 1;
+          workerRegistry.runsProcessedTotal.inc({ result: "succeeded" });
           metrics.lastRun = runName;
           metrics.lastRunAt = new Date().toISOString();
           console.log(JSON.stringify({ message: "run processed", run: runName }, null, 2));
         } catch (error) {
           metrics.runsFailed += 1;
+          workerRegistry.runsProcessedTotal.inc({ result: "failed" });
           metrics.lastRun = runName;
           metrics.lastRunAt = new Date().toISOString();
           const message = error instanceof Error ? error.message : "run processing failed";
