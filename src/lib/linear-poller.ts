@@ -370,6 +370,17 @@ export async function applyAgentRun(
   }
 }
 
+/**
+ * Pick the first non-empty trimmed namespace from the candidates.
+ * Exported for tests.
+ */
+export function pickNamespace(...candidates: (string | undefined)[]): string | undefined {
+  for (const c of candidates) {
+    if (typeof c === "string" && c.trim().length > 0) return c.trim();
+  }
+  return undefined;
+}
+
 function isAlreadyExists(err: unknown): boolean {
   if (!err || typeof err !== "object") return false;
   const e = err as { code?: number; statusCode?: number; status?: number; response?: { statusCode?: number } };
@@ -400,9 +411,13 @@ export async function runLinearPollerOnce(
   const config = loadLinearPollerConfigFromEnv(env);
   const app = await loadDefaultApp(config.defaultAppFile);
 
-  const namespace = env.AF_WATCH_NAMESPACE && env.AF_WATCH_NAMESPACE.trim().length > 0
-    ? env.AF_WATCH_NAMESPACE.trim()
-    : "default";
+  // Precedence:
+  //   1. AF_WATCH_NAMESPACE — explicit operator choice (matches controller's
+  //      watch scope so the dispatcher sees the CRs the poller creates).
+  //   2. POD_NAMESPACE — injected via the chart's downward API so CRs land
+  //      in the release namespace by default (where the AgentApp lives).
+  //   3. "default" — last-resort fallback when running outside k8s.
+  const namespace = pickNamespace(env.AF_WATCH_NAMESPACE, env.POD_NAMESPACE) ?? "default";
   const clients = injectedClients ?? makeClients();
 
   const redis = createClient({ url: config.redisUrl });

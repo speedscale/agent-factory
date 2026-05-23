@@ -6,6 +6,7 @@ import {
   applyAgentRun,
   parseHumanQueryToFilter,
   loadLinearPollerConfigFromEnv,
+  pickNamespace,
   type LinearIssue
 } from "./linear-poller.js";
 import type { AgentApp, AgentRun } from "../contracts/index.js";
@@ -281,6 +282,30 @@ test("applyAgentRun treats 409 Conflict as 'already-exists' (idempotency contrac
   const run = linearIssueToAgentRun(makeIssue(), APP);
   const result = await applyAgentRun(clients, run);
   assert.equal(result, "already-exists");
+});
+
+// ---------- pickNamespace ----------
+
+test("pickNamespace prefers AF_WATCH_NAMESPACE over POD_NAMESPACE", () => {
+  assert.equal(pickNamespace("ns-explicit", "ns-downward"), "ns-explicit");
+});
+
+test("pickNamespace falls back to POD_NAMESPACE when AF_WATCH_NAMESPACE is empty", () => {
+  // Caught by smoke test 2026-05-23: previously the fallback was hardcoded
+  // "default" so CRs landed where the AgentApp didn't live, and every run
+  // failed AppRefUnresolved. POD_NAMESPACE via downward API fixes this.
+  assert.equal(pickNamespace(undefined, "agent-factory"), "agent-factory");
+  assert.equal(pickNamespace("", "agent-factory"), "agent-factory");
+  assert.equal(pickNamespace("   ", "agent-factory"), "agent-factory");
+});
+
+test("pickNamespace returns undefined when both are empty (caller picks final default)", () => {
+  assert.equal(pickNamespace(undefined, undefined), undefined);
+  assert.equal(pickNamespace("", ""), undefined);
+});
+
+test("pickNamespace trims whitespace", () => {
+  assert.equal(pickNamespace("  ns-padded  "), "ns-padded");
 });
 
 test("applyAgentRun re-throws non-409 errors", async () => {

@@ -35,6 +35,15 @@ spec:
             - name: http
               containerPort: 8080
           env:
+            # POD_NAMESPACE via downward API. The embedded Linear poller
+            # uses this as the namespace for new AgentRun CRs when
+            # AF_WATCH_NAMESPACE isn't set, so CRs land in the release
+            # namespace instead of "default" (where the AgentApp doesn't
+            # live and the dispatcher 404s on AppRefUnresolved).
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
             - name: AF_ENGINE_KIND
               value: {{ .Values.engine.kind | quote }}
             - name: AF_ENGINE_MODEL
