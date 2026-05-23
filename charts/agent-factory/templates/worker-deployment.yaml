@@ -49,6 +49,35 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.engine.authSecret.name }}
                   key: {{ .Values.engine.authSecret.key }}
+            {{- /*
+              ANTHROPIC_API_KEY is what the agent loop (src/lib/llm-providers.ts)
+              reads. We mirror AF_ENGINE_AUTH_TOKEN into it so triage and other
+              real agents can call Claude without operators having to rotate
+              two copies of the same key. Only injected when engine.kind is
+              claude-sdk; other providers read their own provider-specific
+              env vars (OPENROUTER_API_KEY etc.) which stay separate.
+            */ -}}
+            {{- if eq .Values.engine.kind "claude-sdk" }}
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.engine.authSecret.name }}
+                  key: {{ .Values.engine.authSecret.key }}
+            {{- end }}
+            {{- /*
+              LINEAR_API_KEY lets agents post back to Linear (the triage
+              agent's comment-back is the first user). Optional — if the
+              secret isn't configured the agents log and skip; the verdict
+              is still preserved in the run artifact.
+            */ -}}
+            {{- if .Values.linear.authSecret.name }}
+            - name: LINEAR_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.linear.authSecret.name }}
+                  key: {{ .Values.linear.authSecret.key }}
+                  optional: true
+            {{- end }}
           resources:
             {{- toYaml .Values.worker.resources | nindent 12 }}
           {{- with .Values.securityContext }}

@@ -51,10 +51,26 @@ spec:
               not just the filesystem queue. Scope must match the controller's
               watch scope, otherwise dashboards under-count (or surface runs
               the SA has no permission to read). Reuses the controller env var.
+              Also gates the namespace the embedded Linear poller creates
+              AgentRun CRs in.
             */ -}}
             {{- if .Values.controller.watchNamespace }}
             - name: AF_WATCH_NAMESPACE
               value: {{ .Values.controller.watchNamespace | quote }}
+            {{- end }}
+            {{- /*
+              LINEAR_API_KEY for the embedded poller (POLLER_SOURCE=linear).
+              Without it the poller fails fast at config-load. Mounted as
+              `optional: true` so cluster-installs that haven't enabled the
+              Linear path don't fail to start the pod.
+            */ -}}
+            {{- if .Values.linear.authSecret.name }}
+            - name: LINEAR_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.linear.authSecret.name }}
+                  key: {{ .Values.linear.authSecret.key }}
+                  optional: true
             {{- end }}
           readinessProbe:
             httpGet: { path: /healthz, port: http }

@@ -22,6 +22,16 @@ engine:
     name: anthropic-api-key
     key: token
 
+# Linear integration. Used by:
+#   - the Linear-issue poller (intake-api side, when POLLER_SOURCE=linear)
+#   - agents that comment back on Linear tickets (worker side, triage)
+# Optional: when authSecret.name is empty, the poller can't run and any
+# agent that tries to post a comment will log and skip.
+linear:
+  authSecret:
+    name: ""        # e.g. "linear-api-key"
+    key: token
+
 # Traffic sources to install as TrafficSource CRs at chart-apply time.
 # Leave empty if applying TrafficSources out-of-band via GitOps.
 trafficSources: []
