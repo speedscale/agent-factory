@@ -35,6 +35,15 @@ spec:
             - name: http
               containerPort: 8080
           env:
+            # POD_NAMESPACE via downward API. The embedded Linear poller
+            # uses this as the namespace for new AgentRun CRs when
+            # AF_WATCH_NAMESPACE isn't set, so CRs land in the release
+            # namespace instead of "default" (where the AgentApp doesn't
+            # live and the dispatcher 404s on AppRefUnresolved).
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
             - name: AF_ENGINE_KIND
               value: {{ .Values.engine.kind | quote }}
             - name: AF_ENGINE_MODEL
@@ -51,10 +60,26 @@ spec:
               not just the filesystem queue. Scope must match the controller's
               watch scope, otherwise dashboards under-count (or surface runs
               the SA has no permission to read). Reuses the controller env var.
+              Also gates the namespace the embedded Linear poller creates
+              AgentRun CRs in.
             */ -}}
             {{- if .Values.controller.watchNamespace }}
             - name: AF_WATCH_NAMESPACE
               value: {{ .Values.controller.watchNamespace | quote }}
+            {{- end }}
+            {{- /*
+              LINEAR_API_KEY for the embedded poller (POLLER_SOURCE=linear).
+              Without it the poller fails fast at config-load. Mounted as
+              `optional: true` so cluster-installs that haven't enabled the
+              Linear path don't fail to start the pod.
+            */ -}}
+            {{- if .Values.linear.authSecret.name }}
+            - name: LINEAR_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.linear.authSecret.name }}
+                  key: {{ .Values.linear.authSecret.key }}
+                  optional: true
             {{- end }}
           readinessProbe:
             httpGet: { path: /healthz, port: http }

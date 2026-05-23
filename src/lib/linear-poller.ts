@@ -29,8 +29,9 @@
 import { readFile } from "node:fs/promises";
 import { createClient } from "redis";
 import { parse as parseYaml } from "yaml";
-import type { AgentApp } from "../contracts/index.js";
-import { createRunFromRequest, type IntakeRequest, type RunIssueInput } from "./run-store.js";
+import type { AgentApp, AgentRun } from "../contracts/index.js";
+import { makeClients, type K8sClients } from "./controller/k8s.js";
+import { type IntakeRequest, type RunIssueInput } from "./run-store.js";
 
 /**
  * The subset of Linear issue fields this module reads. Linear returns far
@@ -98,6 +99,9 @@ export function loadLinearPollerConfigFromEnv(env: NodeJS.ProcessEnv = process.e
  * The `issue.id` field becomes the run's stable identifier (so re-polls
  * don't double-dispatch). The `branchName` Linear computes is preserved
  * as a hint — Worker may use it or override.
+ *
+ * Retained for callers and tests; the live poller now goes through
+ * `linearIssueToAgentRun()` which targets the CRD path directly.
  */
 export function linearIssueToIntakeRequest(issue: LinearIssue, app: AgentApp): IntakeRequest {
   const labelNames = issue.labels?.nodes?.map((n) => n.name) ?? [];
@@ -120,6 +124,87 @@ export function linearIssueToIntakeRequest(issue: LinearIssue, app: AgentApp): I
       mode: "baseline"
     }
   };
+}
+
+/**
+ * Slugify Linear's identifier into a k8s-compatible name suffix.
+ * `XYZ-123` → `xyz-123`. Deterministic — same identifier always produces
+ * the same name, which is how we get idempotency: a second poll that
+ * sees the same ticket attempts the same `kubectl create` and gets a
+ * 409 Conflict, which we treat as "already dispatched, no-op."
+ */
+function agentRunNameForIdentifier(identifier: string, agent: string = "triage"): string {
+  const slug = identifier
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return `${agent}-${slug}`;
+}
+
+/**
+ * Convert a Linear issue into an AgentRun CR ready to apply via the
+ * k8s API. Pure; no IO. Tested in isolation.
+ *
+ * The CR sets `spec.agent: triage` unconditionally — for the steel-thread
+ * demo every Linear-sourced ticket runs through the triage agent first;
+ * follow-up agents can be dispatched from there based on the verdict
+ * (out of scope for this PR).
+ *
+ * `spec.issue.linearIssueId` carries Linear's internal UUID so the
+ * triage agent has what it needs to post a comment back. The
+ * human-readable `id` stays as the Linear identifier (e.g. `XYZ-123`).
+ */
+export function linearIssueToAgentRun(
+  issue: LinearIssue,
+  app: AgentApp,
+  options: { namespace?: string; agent?: string } = {},
+): AgentRun {
+  const labelNames = issue.labels?.nodes?.map((n) => n.name) ?? [];
+  const branchHint = issue.branchName?.trim() || `linear/${issue.identifier.toLowerCase()}`;
+  const agent = options.agent ?? "triage";
+  const name = agentRunNameForIdentifier(issue.identifier, agent);
+  const namespace = options.namespace ?? "default";
+
+  // x-kubernetes-preserve-unknown-fields=true on spec.issue lets us
+  // carry the linearIssueId alongside the canonical fields. The TS
+  // contract has the official fields; the CR object can hold extras.
+  const issueBlock = {
+    id: issue.identifier,
+    title: issue.title,
+    body: composeBody(issue, labelNames, branchHint),
+    url: issue.url,
+    linearIssueId: issue.id,
+  };
+
+  return {
+    apiVersion: "agents.speedscale.io/v1alpha1",
+    kind: "AgentRun",
+    metadata: {
+      name,
+      namespace,
+      labels: {
+        "agents.speedscale.io/source": "linear-poller",
+        "agents.speedscale.io/agent": agent,
+      },
+    },
+    spec: {
+      appRef: { name: app.metadata.name },
+      agent,
+      issue: issueBlock,
+      request: {
+        source: "agent",
+        mode: "baseline",
+        url: issue.url,
+      },
+      // Required by the TS contract; the triage agent ignores it. A
+      // future bug-fix agent dispatched from a triage verdict would
+      // populate this from app.spec.repo.
+      workspace: { root: "/app/.work/runs" },
+    },
+    // status is server-populated by the controller on observation; a
+    // create-payload omits it. Cast through unknown to bypass the TS
+    // contract's read-shape requirement.
+  } as unknown as AgentRun;
 }
 
 /**
@@ -266,28 +351,109 @@ export async function loadDefaultApp(filePath: string): Promise<AgentApp> {
 }
 
 /**
- * One poll pass. Fetches matching tickets, claims new-or-re-edited ones
- * in Redis, and enqueues runs for each.
+ * Apply an AgentRun CR to the cluster. Treats `409 Conflict` (same name
+ * already exists) as a no-op so the second poll of an already-dispatched
+ * ticket doesn't error out — that's the idempotency contract.
+ *
+ * Exported for unit tests.
  */
-export async function runLinearPollerOnce(env: NodeJS.ProcessEnv = process.env): Promise<void> {
+export async function applyAgentRun(
+  clients: K8sClients,
+  run: AgentRun,
+): Promise<"created" | "already-exists"> {
+  try {
+    await clients.objects.create(run);
+    return "created";
+  } catch (err) {
+    if (isAlreadyExists(err)) return "already-exists";
+    throw err;
+  }
+}
+
+/**
+ * Pick the first non-empty trimmed namespace from the candidates.
+ * Exported for tests.
+ */
+export function pickNamespace(...candidates: (string | undefined)[]): string | undefined {
+  for (const c of candidates) {
+    if (typeof c === "string" && c.trim().length > 0) return c.trim();
+  }
+  return undefined;
+}
+
+function isAlreadyExists(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const e = err as { code?: number; statusCode?: number; status?: number; response?: { statusCode?: number } };
+  return (
+    e.code === 409 ||
+    e.statusCode === 409 ||
+    e.status === 409 ||
+    e.response?.statusCode === 409
+  );
+}
+
+/**
+ * One poll pass. Fetches matching tickets, claims new-or-re-edited ones
+ * in Redis, and creates an AgentRun CR for each. The controller (PR #74)
+ * watches AgentRuns and dispatches them — this function intentionally
+ * does no filesystem work.
+ *
+ * Redis dedup remains the fast pre-check so we don't hammer the k8s API
+ * with `create` calls every poll for tickets we've already filed. The
+ * 409-on-duplicate path below is the defence in depth (e.g. if Redis is
+ * wiped, the same Linear ticket still won't double-dispatch — the CR
+ * name is deterministic).
+ */
+export async function runLinearPollerOnce(
+  env: NodeJS.ProcessEnv = process.env,
+  injectedClients?: K8sClients,
+): Promise<void> {
   const config = loadLinearPollerConfigFromEnv(env);
   const app = await loadDefaultApp(config.defaultAppFile);
+
+  // Precedence:
+  //   1. AF_WATCH_NAMESPACE — explicit operator choice (matches controller's
+  //      watch scope so the dispatcher sees the CRs the poller creates).
+  //   2. POD_NAMESPACE — injected via the chart's downward API so CRs land
+  //      in the release namespace by default (where the AgentApp lives).
+  //   3. "default" — last-resort fallback when running outside k8s.
+  const namespace = pickNamespace(env.AF_WATCH_NAMESPACE, env.POD_NAMESPACE) ?? "default";
+  const clients = injectedClients ?? makeClients();
 
   const redis = createClient({ url: config.redisUrl });
   await redis.connect();
   try {
     const issues = await fetchLinearIssues(config);
-    let enqueued = 0;
+    let created = 0;
+    let skipped = 0;
     for (const issue of issues) {
       const fresh = await claimIssue(redis, config.statePrefix, issue);
-      if (!fresh) continue;
-      const intakeRequest = linearIssueToIntakeRequest(issue, app);
-      await createRunFromRequest(intakeRequest);
-      enqueued += 1;
-      console.log(`[linear-poller] queued ${issue.identifier}: ${issue.title}`);
+      if (!fresh) {
+        skipped += 1;
+        continue;
+      }
+      const run = linearIssueToAgentRun(issue, app, { namespace });
+      try {
+        const result = await applyAgentRun(clients, run);
+        if (result === "created") {
+          created += 1;
+          console.log(`[linear-poller] created AgentRun ${run.metadata.name} for ${issue.identifier}`);
+        } else {
+          skipped += 1;
+          console.log(`[linear-poller] AgentRun ${run.metadata.name} already exists for ${issue.identifier}`);
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`[linear-poller] failed to create AgentRun for ${issue.identifier}: ${message}`);
+        // Don't break the loop — other tickets in the batch should still
+        // get a chance. Next poll re-attempts (Redis claim already taken,
+        // so we'd lose the retry — release it on failure so a future
+        // poll picks the ticket back up).
+        await redis.del(dedupKey(config.statePrefix, issue));
+      }
     }
-    if (enqueued === 0 && issues.length > 0) {
-      console.log(`[linear-poller] ${issues.length} ticket(s) returned; all already-dispatched`);
+    if (created === 0 && issues.length > 0) {
+      console.log(`[linear-poller] ${issues.length} ticket(s) returned; ${skipped} already-dispatched, 0 new`);
     } else if (issues.length === 0) {
       console.log(`[linear-poller] no tickets match query`);
     }

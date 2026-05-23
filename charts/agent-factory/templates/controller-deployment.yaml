@@ -47,6 +47,42 @@ spec:
               value: /app/.work/runs
             - name: AF_HEALTHZ_PORT
               value: "8081"
+            # The dispatch path (AgentRunWatcher → dispatchAgentRun → agent.run)
+            # runs in this pod, so the agents that call Claude / post to Linear
+            # need their secrets here — NOT just on the worker. ANTHROPIC_API_KEY
+            # is what the Anthropic SDK reads; AF_ENGINE_AUTH_TOKEN was
+            # previously mounted only on the worker, which left the
+            # controller-side dispatch unable to call the LLM.
+            - name: AF_ENGINE_KIND
+              value: {{ .Values.engine.kind | quote }}
+            - name: AF_ENGINE_MODEL
+              value: {{ .Values.engine.model | quote }}
+            - name: AF_ENGINE_ENDPOINT
+              value: {{ .Values.engine.endpoint | quote }}
+            - name: AF_ENGINE_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.engine.authSecret.name }}
+                  key: {{ .Values.engine.authSecret.key }}
+            {{- if eq .Values.engine.kind "claude-sdk" }}
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.engine.authSecret.name }}
+                  key: {{ .Values.engine.authSecret.key }}
+            {{- end }}
+            # LINEAR_API_KEY lets the triage agent post the classification
+            # back to the originating Linear ticket. Optional — agents log
+            # and skip when unset; the run still succeeds with the verdict
+            # preserved in the on-disk artifact.
+            {{- if .Values.linear.authSecret.name }}
+            - name: LINEAR_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.linear.authSecret.name }}
+                  key: {{ .Values.linear.authSecret.key }}
+                  optional: true
+            {{- end }}
           readinessProbe:
             httpGet: { path: /readyz, port: healthz }
             initialDelaySeconds: 2

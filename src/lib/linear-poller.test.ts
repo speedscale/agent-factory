@@ -2,11 +2,15 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   linearIssueToIntakeRequest,
+  linearIssueToAgentRun,
+  applyAgentRun,
   parseHumanQueryToFilter,
   loadLinearPollerConfigFromEnv,
+  pickNamespace,
   type LinearIssue
 } from "./linear-poller.js";
-import type { AgentApp } from "../contracts/index.js";
+import type { AgentApp, AgentRun } from "../contracts/index.js";
+import type { K8sClients } from "./controller/k8s.js";
 
 const APP: AgentApp = {
   apiVersion: "agents.speedscale.io/v1alpha1",
@@ -198,6 +202,116 @@ test("trims whitespace from env values", () => {
   assert.equal(cfg.apiKey, "k");
   assert.equal(cfg.query, "label:x");
   assert.equal(cfg.defaultAppFile, "/x.yaml");
+});
+
+// ---------- linearIssueToAgentRun ----------
+
+test("AgentRun name is deterministic: triage-<lowercase-identifier>", () => {
+  const run = linearIssueToAgentRun(makeIssue({ identifier: "XYZ-123" }), APP);
+  assert.equal(run.metadata.name, "triage-xyz-123");
+  // Same input → same name → idempotency.
+  const again = linearIssueToAgentRun(makeIssue({ identifier: "XYZ-123" }), APP);
+  assert.equal(run.metadata.name, again.metadata.name);
+});
+
+test("AgentRun carries spec.agent=triage, spec.appRef, source labels", () => {
+  const run = linearIssueToAgentRun(makeIssue(), APP);
+  assert.equal(run.spec.agent, "triage");
+  assert.equal(run.spec.appRef.name, "demo-node");
+  const labels = (run.metadata as { labels?: Record<string, string> }).labels ?? {};
+  assert.equal(labels["agents.speedscale.io/source"], "linear-poller");
+  assert.equal(labels["agents.speedscale.io/agent"], "triage");
+});
+
+test("AgentRun spec.issue carries linearIssueId (the UUID, not identifier)", () => {
+  const run = linearIssueToAgentRun(makeIssue({ id: "uuid-abc", identifier: "XYZ-99999" }), APP);
+  const issue = run.spec.issue as Record<string, unknown>;
+  assert.equal(issue.id, "XYZ-99999");
+  assert.equal(issue.linearIssueId, "uuid-abc");
+});
+
+test("AgentRun targets the AF_WATCH_NAMESPACE (or default)", () => {
+  const a = linearIssueToAgentRun(makeIssue(), APP);
+  assert.equal((a.metadata as { namespace?: string }).namespace, "default");
+  const b = linearIssueToAgentRun(makeIssue(), APP, { namespace: "demo" });
+  assert.equal((b.metadata as { namespace?: string }).namespace, "demo");
+});
+
+test("AgentRun.spec.request.source is 'agent' (poller-origin)", () => {
+  const run = linearIssueToAgentRun(makeIssue(), APP);
+  assert.equal(run.spec.request?.source, "agent");
+  assert.equal(run.spec.request?.mode, "baseline");
+});
+
+// ---------- applyAgentRun ----------
+
+function makeFakeClients(behavior: "ok" | "409" | "500"): { clients: K8sClients; calls: AgentRun[] } {
+  const calls: AgentRun[] = [];
+  const clients = {
+    objects: {
+      create: async (obj: AgentRun) => {
+        calls.push(obj);
+        if (behavior === "409") {
+          const err = new Error("already exists") as Error & { statusCode: number };
+          err.statusCode = 409;
+          throw err;
+        }
+        if (behavior === "500") {
+          const err = new Error("server error") as Error & { statusCode: number };
+          err.statusCode = 500;
+          throw err;
+        }
+        return obj;
+      },
+    },
+  } as unknown as K8sClients;
+  return { clients, calls };
+}
+
+test("applyAgentRun returns 'created' on success", async () => {
+  const { clients, calls } = makeFakeClients("ok");
+  const run = linearIssueToAgentRun(makeIssue(), APP);
+  const result = await applyAgentRun(clients, run);
+  assert.equal(result, "created");
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].metadata.name, "triage-test-99999");
+});
+
+test("applyAgentRun treats 409 Conflict as 'already-exists' (idempotency contract)", async () => {
+  const { clients } = makeFakeClients("409");
+  const run = linearIssueToAgentRun(makeIssue(), APP);
+  const result = await applyAgentRun(clients, run);
+  assert.equal(result, "already-exists");
+});
+
+// ---------- pickNamespace ----------
+
+test("pickNamespace prefers AF_WATCH_NAMESPACE over POD_NAMESPACE", () => {
+  assert.equal(pickNamespace("ns-explicit", "ns-downward"), "ns-explicit");
+});
+
+test("pickNamespace falls back to POD_NAMESPACE when AF_WATCH_NAMESPACE is empty", () => {
+  // Caught by smoke test 2026-05-23: previously the fallback was hardcoded
+  // "default" so CRs landed where the AgentApp didn't live, and every run
+  // failed AppRefUnresolved. POD_NAMESPACE via downward API fixes this.
+  assert.equal(pickNamespace(undefined, "agent-factory"), "agent-factory");
+  assert.equal(pickNamespace("", "agent-factory"), "agent-factory");
+  assert.equal(pickNamespace("   ", "agent-factory"), "agent-factory");
+});
+
+test("pickNamespace returns undefined when both are empty (caller picks final default)", () => {
+  assert.equal(pickNamespace(undefined, undefined), undefined);
+  assert.equal(pickNamespace("", ""), undefined);
+});
+
+test("pickNamespace trims whitespace", () => {
+  assert.equal(pickNamespace("  ns-padded  "), "ns-padded");
+});
+
+test("applyAgentRun re-throws non-409 errors", async () => {
+  const { clients } = makeFakeClients("500");
+  const run = linearIssueToAgentRun(makeIssue(), APP);
+  await assert.rejects(applyAgentRun(clients, run), /server error/);
 });
 
 test("POLLER_MAX_ISSUES_PER_POLL is read and validated", () => {
