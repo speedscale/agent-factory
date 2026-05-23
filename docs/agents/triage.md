@@ -117,6 +117,34 @@ when configured in `values.yaml`:
 - `LINEAR_API_KEY` — mounted from `linear.authSecret`. Optional; if
   unset the agent skips comment-posting and the run still succeeds.
 
+## Which label does the poller watch?
+
+`auto-fix` — the agent-dispatch label. Per the workspace's label conventions
+(see `speedstack/skills/engineering/linear/labels.md`):
+
+- **`auto-fix`** — agent-factory should dispatch this. Per-repo bug/feature
+  in a Speedscale code repo with clear acceptance criteria and a real
+  reproduction. The dispatch path the triage agent is built for.
+- **`factory`** — work **ON** the engine itself (Planner, Worker, Evaluator,
+  prompt hardening). Meta-tickets for humans; the agent should **not**
+  dispatch on these — they are by nature design-judgment work that lacks
+  the structure the engine expects.
+- **`ai-ready`** — tool-agnostic AI-dispatchable. Used by the GTM/radar
+  agent, not this one.
+
+The labels are mutually exclusive. A ticket the agent-factory will run is
+`auto-fix`, not `ai-ready`, not `factory`.
+
+Recommended poller query:
+
+```
+label:auto-fix team:Speedscale state:Todo
+```
+
+Polling on `factory` is wrong — those tickets will all classify
+`needs-info` (correctly: meta-work tickets aren't dispatch-shaped) and you
+burn LLM calls confirming what the label already tells you.
+
 ## Smoke test
 
 Pre-conditions:
@@ -132,17 +160,17 @@ Pre-conditions:
 
 Steps:
 
-1. File a fresh Linear ticket on the Speedscale team with label `factory`.
-2. Within one poll interval (default 60s) the embedded poller calls
-   `commentCreate`'s sibling — `kubectl get agentruns -A` should show a
-   new `triage-xyz-NNN` CR.
-3. The controller picks it up. `kubectl describe agentrun triage-xyz-NNN`
+1. File a fresh Linear ticket on the Speedscale team with label `auto-fix`
+   (or move an existing `auto-fix` ticket to state `Todo`).
+2. Within one poll interval (default 60s) `kubectl get agentruns -A`
+   should show a new `triage-<slug>` CR in the release namespace.
+3. The controller picks it up. `kubectl describe agentrun triage-<slug>`
    shows phases `queued → planned → generating → succeeded` (or
    `failed` if the LLM call errors).
 4. Open the Linear ticket — a comment appears with the verdict + reason
    + (if applicable) missing context and recommended actions.
 5. The dashboard's `Succeeded` tile increments; the `Run logs` panel
-   filtered to `run_id=triage-xyz-NNN` shows the full dispatch trace.
+   filtered to `run_id=triage-<slug>` shows the full dispatch trace.
 
 If step 4 doesn't happen, check the run's `triage.json` artifact — the
 verdict is there even when the comment post fails.
