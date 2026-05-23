@@ -8,6 +8,8 @@ import type {
   AgentRun,
   TrafficSource,
 } from "../../contracts/index.js";
+import { getInstanceConfig } from "../instance-config.js";
+import { createLogger, type Logger } from "../logger.js";
 import { AGENTS_API_VERSION, type K8sClients } from "./k8s.js";
 import { validateInput } from "./schema-validator.js";
 import { patchAgentRunStatus } from "./status-updater.js";
@@ -16,6 +18,12 @@ export interface DispatcherOptions {
   clients: K8sClients;
   runRootDir: string;
   binaryVersion: string;
+  /**
+   * Structured base logger. Defaults to a controller-scoped logger seeded
+   * with the current AF_INSTANCE so every dispatch line carries `instance`
+   * automatically. Override for tests.
+   */
+  logger?: Logger;
 }
 
 export async function dispatchAgentRun(
@@ -24,10 +32,27 @@ export async function dispatchAgentRun(
 ): Promise<void> {
   const namespace = (run.metadata as { namespace?: string }).namespace ?? "default";
   const runName = run.metadata.name;
-  const logger = makeLogger(runName);
+  const baseLogger =
+    opts.logger ??
+    createLogger({
+      component: "controller",
+      fields: { instance: getInstanceConfig().instance },
+    });
+  // Per-run child logger: every line emitted by this dispatch carries
+  // run_id, namespace, agent_app, and (once known) agent. The Loki panel
+  // filter on $run_id keys off these fields.
+  const runLogger = baseLogger.child({
+    run_id: runName,
+    namespace,
+    agent_app: run.spec.appRef?.name,
+    agent: run.spec.agent,
+  });
+  const logger = adaptAgentLogger(runLogger);
+
+  runLogger.info("dispatch start", { phase: run.status?.phase });
 
   if (!run.spec.agent) {
-    await fail(opts, namespace, runName, "MissingAgent", "spec.agent is required");
+    await fail(opts, namespace, runName, "MissingAgent", "spec.agent is required", runLogger);
     return;
   }
 
@@ -35,7 +60,7 @@ export async function dispatchAgentRun(
   try {
     agent = getAgent(run.spec.agent);
   } catch (err) {
-    await fail(opts, namespace, runName, "UnknownAgent", String(err));
+    await fail(opts, namespace, runName, "UnknownAgent", String(err), runLogger);
     return;
   }
 
@@ -47,6 +72,7 @@ export async function dispatchAgentRun(
       runName,
       "InvalidInput",
       `input validation failed: ${(validation.errors ?? []).join("; ")}`,
+      runLogger,
     );
     return;
   }
@@ -55,7 +81,7 @@ export async function dispatchAgentRun(
   try {
     app = await loadAgentApp(opts.clients, namespace, run.spec.appRef.name);
   } catch (err) {
-    await fail(opts, namespace, runName, "AppRefUnresolved", String(err));
+    await fail(opts, namespace, runName, "AppRefUnresolved", String(err), runLogger);
     return;
   }
 
@@ -67,6 +93,7 @@ export async function dispatchAgentRun(
       runName,
       "AgentNotEnabled",
       `agent ${run.spec.agent} is not enabled on AgentApp ${app.metadata.name}`,
+      runLogger,
     );
     return;
   }
@@ -75,7 +102,7 @@ export async function dispatchAgentRun(
   try {
     trafficSources = await loadTrafficSources(opts.clients, namespace, app);
   } catch (err) {
-    await fail(opts, namespace, runName, "TrafficSourceUnresolved", String(err));
+    await fail(opts, namespace, runName, "TrafficSourceUnresolved", String(err), runLogger);
     return;
   }
 
@@ -84,6 +111,7 @@ export async function dispatchAgentRun(
     summary: `dispatching ${run.spec.agent}`,
     conditions: [okCondition("Validated", "InputValid")],
   });
+  runLogger.info("status patch", { phase: "planned" });
 
   const runDir = path.join(opts.runRootDir, namespace, runName);
   await fs.mkdir(runDir, { recursive: true });
@@ -100,6 +128,7 @@ export async function dispatchAgentRun(
     phase: "generating",
     conditions: [okCondition("Dispatched", "Running")],
   });
+  runLogger.info("status patch", { phase: "generating" });
 
   try {
     const output = await agent.run(run.spec.input ?? {}, ctx);
@@ -109,9 +138,10 @@ export async function dispatchAgentRun(
       artifacts: output.artifacts,
       conditions: [okCondition("Succeeded", "AgentReturned")],
     });
+    runLogger.info("dispatch complete", { phase: "succeeded", summary: output.summary });
   } catch (err) {
     const reason = err instanceof AgentNotImplementedError ? "AgentNotImplemented" : "AgentError";
-    await fail(opts, namespace, runName, reason, String(err));
+    await fail(opts, namespace, runName, reason, String(err), runLogger);
   }
 }
 
@@ -152,7 +182,9 @@ async function fail(
   name: string,
   reason: string,
   message: string,
+  logger?: Logger,
 ): Promise<void> {
+  logger?.error("dispatch failed", { reason, message });
   await patchAgentRunStatus(opts.clients, namespace, name, {
     phase: "failed",
     summary: `${reason}: ${message}`,
@@ -182,11 +214,17 @@ function okCondition(type: string, reason: string): {
   };
 }
 
-function makeLogger(runName: string): AgentLogger {
-  const prefix = `[run=${runName}]`;
+/**
+ * Bridge the structured `Logger` interface to the `AgentLogger` interface
+ * agents see via `ctx.logger`. Agents are decoupled from the JSON
+ * formatter — they only see `{info, warn, error}` — but every line they
+ * emit still carries the per-run fields (`run_id`, `agent_app`, etc.)
+ * because we hand them a child logger that already has them bound.
+ */
+function adaptAgentLogger(runLogger: Logger): AgentLogger {
   return {
-    info: (msg, fields) => console.log(prefix, msg, fields ? JSON.stringify(fields) : ""),
-    warn: (msg, fields) => console.warn(prefix, msg, fields ? JSON.stringify(fields) : ""),
-    error: (msg, fields) => console.error(prefix, msg, fields ? JSON.stringify(fields) : ""),
+    info: (msg, fields) => runLogger.info(msg, fields),
+    warn: (msg, fields) => runLogger.warn(msg, fields),
+    error: (msg, fields) => runLogger.error(msg, fields),
   };
 }

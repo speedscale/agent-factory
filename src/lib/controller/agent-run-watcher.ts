@@ -1,4 +1,6 @@
 import type { AgentRun } from "../../contracts/index.js";
+import { getInstanceConfig } from "../instance-config.js";
+import { createLogger, type Logger } from "../logger.js";
 import { dispatchAgentRun, type DispatcherOptions } from "./agent-dispatcher.js";
 import { AGENTS_API_VERSION, type K8sClients, watchPath } from "./k8s.js";
 import { isInProgressPhase, isTerminalPhase } from "./status-updater.js";
@@ -13,6 +15,13 @@ export interface WatcherOptions extends DispatcherOptions {
   resyncIntervalMs?: number;
 }
 
+function defaultLogger(): Logger {
+  return createLogger({
+    component: "watcher",
+    fields: { instance: getInstanceConfig().instance },
+  });
+}
+
 type AbortableRequest = { abort: () => void };
 
 const DEFAULT_RESYNC_INTERVAL_MS = 30_000;
@@ -23,9 +32,11 @@ export class AgentRunWatcher {
   private resyncTimer: NodeJS.Timeout | null = null;
   private readonly opts: WatcherOptions;
   private readonly active = new Set<string>();
+  private readonly log: Logger;
 
   constructor(opts: WatcherOptions) {
     this.opts = opts;
+    this.log = opts.logger ?? defaultLogger();
   }
 
   async start(): Promise<void> {
@@ -40,14 +51,16 @@ export class AgentRunWatcher {
     this.resyncTimer = setInterval(() => {
       void this.resyncOnce();
     }, intervalMs);
-    console.log(`[watcher] resync every ${intervalMs}ms`);
+    this.log.info("resync timer started", { intervalMs });
 
     while (!this.stopping) {
       try {
         await this.watchOnce();
       } catch (err) {
         if (this.stopping) return;
-        console.error("[watcher] watch loop error, retrying in 5s:", err);
+        this.log.error("watch loop error, retrying in 5s", {
+          error: err instanceof Error ? err.message : String(err),
+        });
         await sleep(5000);
       }
     }
@@ -64,7 +77,7 @@ export class AgentRunWatcher {
 
   private async watchOnce(): Promise<void> {
     const path = watchPath("agentruns", this.opts.namespace);
-    console.log(`[watcher] watching ${path}`);
+    this.log.info("watching", { path });
     return new Promise<void>((resolve, reject) => {
       this.opts.clients.watch
         .watch(
@@ -72,13 +85,19 @@ export class AgentRunWatcher {
           {},
           (phase: string, obj: unknown) => {
             const run = obj as AgentRun;
+            const runName = run.metadata?.name ?? "<unknown>";
             // Diagnostic: surface every callback invocation so a silent
             // watch is distinguishable from a silent handler.
-            console.log(
-              `[watcher] event: ${phase} ${run.metadata?.name ?? "<unknown>"} (rv=${run.metadata?.resourceVersion ?? "?"})`,
-            );
+            this.log.info("watch event", {
+              event: phase,
+              run_id: runName,
+              resource_version: run.metadata?.resourceVersion,
+            });
             this.handleEvent(phase, run).catch((err) => {
-              console.error("[watcher] handler error:", err);
+              this.log.error("handler error", {
+                run_id: runName,
+                error: err instanceof Error ? err.message : String(err),
+              });
             });
           },
           (err: unknown) => {
@@ -109,15 +128,20 @@ export class AgentRunWatcher {
       );
       const items = result.items ?? [];
       if (items.length > 0) {
-        console.log(`[watcher] resync: ${items.length} AgentRun(s) found`);
+        this.log.info("resync", { found: items.length });
       }
       for (const run of items) {
         await this.handleEvent("ADDED", run).catch((err) => {
-          console.error(`[watcher] resync handler error for ${run.metadata?.name}:`, err);
+          this.log.error("resync handler error", {
+            run_id: run.metadata?.name,
+            error: err instanceof Error ? err.message : String(err),
+          });
         });
       }
     } catch (err) {
-      console.error("[watcher] resync failed:", err);
+      this.log.error("resync failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 

@@ -46,6 +46,16 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.engine.authSecret.name }}
                   key: {{ .Values.engine.authSecret.key }}
+            {{- /*
+              intake-api LISTs AgentRuns so /metrics reflects CRD-driven runs,
+              not just the filesystem queue. Scope must match the controller's
+              watch scope, otherwise dashboards under-count (or surface runs
+              the SA has no permission to read). Reuses the controller env var.
+            */ -}}
+            {{- if .Values.controller.watchNamespace }}
+            - name: AF_WATCH_NAMESPACE
+              value: {{ .Values.controller.watchNamespace | quote }}
+            {{- end }}
           readinessProbe:
             httpGet: { path: /healthz, port: http }
             initialDelaySeconds: 2

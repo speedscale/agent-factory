@@ -1,6 +1,6 @@
 {
   "annotations": { "list": [] },
-  "description": "Pipeline-state view of the agent-factory engine: run counts by phase, queue depth, derived rates. Metric source: prom-client exposition from intake-api /metrics (see docs/CONFIG.md). Note: when scraped via the OTel Collector's prometheus receiver, the AF_INSTANCE label arrives as `exported_instance` because Prometheus renames it to avoid colliding with the scrape-target `instance`. The dashboard variable resolves this transparently.",
+  "description": "Pipeline-state view of the agent-factory engine: run counts by phase, queue depth, derived rates, per-run logs. Metric source: prom-client exposition from intake-api /metrics (see docs/CONFIG.md). Note: when scraped via the OTel Collector's prometheus receiver, the AF_INSTANCE label arrives as `exported_instance` because Prometheus renames it to avoid colliding with the scrape-target `instance`. The dashboard variable resolves this transparently. Logs panel uses LogQL `| json` to parse the structured logger output (controller + intake-api emit JSON with `run_id`, `agent_app`, `instance` fields) so the `$run_id` textbox filter works regardless of whether the OTel collector promotes `run_id` to a Loki label.",
   "editable": true,
   "graphTooltip": 1,
   "schemaVersion": 39,
@@ -17,6 +17,15 @@
         "refresh": 1
       },
       {
+        "name": "logs_ds",
+        "label": "Logs datasource",
+        "type": "datasource",
+        "query": "loki",
+        "current": {},
+        "hide": 0,
+        "refresh": 1
+      },
+      {
         "name": "instance",
         "label": "Instance",
         "type": "query",
@@ -28,6 +37,15 @@
         "multi": true,
         "refresh": 2,
         "sort": 1
+      },
+      {
+        "name": "run_id",
+        "label": "Run ID",
+        "type": "textbox",
+        "description": "Substring match against the JSON `run_id` field on agent-factory log lines. Leave blank to see all runs.",
+        "query": "",
+        "current": { "text": "", "value": "" },
+        "hide": 0
       }
     ]
   },
@@ -142,6 +160,39 @@
       ],
       "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "spanNulls": true }, "unit": "ops" }, "overrides": [] },
       "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "single", "sort": "none" } }
+    },
+
+    { "type": "row", "id": 104, "title": "Logs — filter by Run ID", "gridPos": { "x": 0, "y": 36, "w": 24, "h": 1 }, "collapsed": false, "panels": [] },
+
+    {
+      "type": "text", "id": 40, "title": "", "gridPos": { "x": 0, "y": 37, "w": 24, "h": 3 },
+      "options": {
+        "mode": "markdown",
+        "content": "Use the **Run ID** textbox above to filter the logs panel below. The controller and intake-api emit structured JSON log lines that include `run_id`, `agent_app`, `namespace`, and `instance`. The LogQL parser unpacks those fields at query time, so this filter works whether or not the OTel collector promotes them to Loki labels. Leave Run ID blank to see all agent-factory log lines."
+      }
+    },
+
+    {
+      "type": "logs", "id": 41, "title": "Agent-factory logs", "gridPos": { "x": 0, "y": 40, "w": 24, "h": 14 },
+      "datasource": { "type": "loki", "uid": "${logs_ds}" },
+      "targets": [
+        {
+          "expr": "{namespace=~\".+\"} | json | component=~\"controller|intake-api|watcher\" | run_id=~\"(?i).*${run_id:raw}.*\"",
+          "refId": "A",
+          "queryType": "range",
+          "editorMode": "code"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": false,
+        "showCommonLabels": false,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": false,
+        "enableLogDetails": true,
+        "dedupStrategy": "none",
+        "sortOrder": "Descending"
+      }
     }
   ]
 }
