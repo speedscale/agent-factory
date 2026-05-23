@@ -1,9 +1,16 @@
 {{- if .Values.rbac.create -}}
 {{- /*
+  Single Role/ClusterRole shared by the controller and intake-api (they
+  use the same ServiceAccount). Controller needs full CRUD + status on
+  agentruns/agentapps/trafficsources; intake-api needs LIST on agentruns
+  so /metrics can compute phase counts from k8s (not just the filesystem
+  queue). Already covered by the `list` verb below — no extra binding.
+
   When controller.watchNamespace is empty the controller watches CRs
   cluster-wide and needs ClusterRole/ClusterRoleBinding. When it is set
   to a specific namespace, a namespaced Role/RoleBinding is sufficient
-  and avoids granting cluster-wide permission.
+  and avoids granting cluster-wide permission. intake-api's k8s loader
+  reads the same AF_WATCH_NAMESPACE so its LIST scope matches.
 */ -}}
 {{- if eq (.Values.controller.watchNamespace | toString) "" }}
 apiVersion: rbac.authorization.k8s.io/v1

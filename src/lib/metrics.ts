@@ -20,19 +20,31 @@ import { Counter, Gauge, Registry } from "prom-client";
 // only needs Gauge today (per-request counters with bounded cardinality
 // are tracked as a follow-up).
 
-// Phase names match `AgentRun.status.phase`. Kept as a const so the
-// `runs_total` gauge labels can be enumerated up-front (Prometheus best
-// practice: every label combination should be observable, not just the
-// ones that happen to have non-zero values).
+// Phase names match `AgentRun.status.phase` in src/contracts/agent-run.ts.
+// Kept as a const so the `runs_total` gauge labels can be enumerated up-front
+// (Prometheus best practice: every label combination should be observable,
+// not just the ones that happen to have non-zero values).
+//
+// Keep in sync with AgentRunPhase. A run that lands in a phase missing from
+// this list won't be counted on the dashboard.
 export const RUN_PHASES = [
   "queued",
   "planned",
   "building",
+  "generating",
   "validating",
+  "deploying",
+  "reporting",
   "succeeded",
   "failed"
 ] as const;
 export type RunPhase = (typeof RUN_PHASES)[number];
+
+// Queue backends `agent_factory_queue_depth` may report against. Seeded at 0
+// so the series exists from process start — previously the gauge had no
+// samples until the first successful scrape, and any scrape that threw
+// before reaching `queueDepth.set()` left Prometheus seeing nothing at all.
+const QUEUE_BACKENDS = ["filesystem", "redis"] as const;
 
 // ---------- intake-api registry ----------
 
@@ -66,6 +78,13 @@ export function createIntakeRegistry(instance: string): IntakeRegistry {
     labelNames: ["backend"] as const,
     registers: [registry]
   });
+  // Seed every backend at 0 so the series exists from process start. The
+  // gauge previously had no samples until refreshMetricsSnapshot() reached
+  // `.set()` — any exception earlier in the snapshot path (e.g. queue
+  // backend unreachable) left the series absent from Prometheus entirely.
+  for (const backend of QUEUE_BACKENDS) {
+    queueDepth.set({ backend }, 0);
+  }
 
   return { registry, runsTotal, queueDepth };
 }
@@ -117,6 +136,9 @@ export function createWorkerRegistry(instance: string): WorkerRegistry {
     labelNames: ["backend"] as const,
     registers: [registry]
   });
+  for (const backend of QUEUE_BACKENDS) {
+    queueDepth.set({ backend }, 0);
+  }
 
   return {
     registry,

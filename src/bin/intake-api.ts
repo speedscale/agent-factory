@@ -16,6 +16,8 @@ import {
   PROMETHEUS_CONTENT_TYPE,
   type IntakeRegistry
 } from "../lib/metrics.js";
+import { createK8sRunsLoader, countByPhase, mergeRuns } from "../lib/k8s-runs.js";
+import { createLogger } from "../lib/logger.js";
 import { listRuns, loadRun } from "../lib/run-admin.js";
 import { createRunQueueFromEnv } from "../lib/run-queue.js";
 import { createRunFromRequest } from "../lib/run-store.js";
@@ -57,6 +59,23 @@ const embeddedPollerEnabled = process.env.INTAKE_ENABLE_EMBEDDED_POLLER === "tru
 // One process-wide Prometheus registry seeded with the instance label so
 // /metrics renders the same identity that startup banners do.
 const intakeRegistry: IntakeRegistry = createIntakeRegistry(getInstanceConfig().instance);
+
+// Structured logger for intake-api. Carries `instance` on every line; child
+// loggers (per-request, per-run) layer additional fields on top.
+const log = createLogger({
+  component: "intake-api",
+  fields: { instance: getInstanceConfig().instance },
+});
+
+// k8s LIST loader for AgentRuns. The HTTP intake writes run.json to the
+// filesystem; the CRD intake writes to k8s — without this loader the
+// dashboard reads 0 on every CRD-driven run.
+//
+// AF_WATCH_NAMESPACE is the same env var the controller uses; if a single
+// namespace is in scope we share it so RBAC stays tight.
+const k8sRunsLoader = createK8sRunsLoader({
+  namespace: process.env.AF_WATCH_NAMESPACE || undefined,
+});
 
 interface GitHubPullRequestEvent {
   action: string;
@@ -482,40 +501,66 @@ async function getRunHandler(req: IncomingMessage, res: ServerResponse): Promise
  * shared Prometheus registry. Used by both /metrics (text) and
  * /metrics.json (JSON) so the two views stay consistent.
  *
- * Recompute-on-scrape is cheap here — `listRuns()` is a directory walk,
- * `getQueueDepth()` is a single Redis or filesystem call.
+ * Pulls runs from BOTH stores:
+ *   - filesystem (`listRuns()`) — written by HTTP `POST /qa/runs`
+ *   - kubernetes (`k8sRunsLoader.list()`) — written by `kubectl apply
+ *     AgentRun` and the controller's status patches
+ * deduped by `metadata.name`. Either source's failure is logged but does
+ * not block the other; queue-depth lookup is similarly isolated so a
+ * Redis hiccup never blanks the phase counts.
  */
 async function refreshMetricsSnapshot(): Promise<{
   total: number;
   phaseCounts: Record<string, number>;
   queueBackend: string;
   queueDepth: number;
+  sources: { filesystem: number; k8s: number };
 }> {
-  const runs = await listRuns();
-  const phaseCounts: Record<string, number> = {
-    queued: 0,
-    planned: 0,
-    building: 0,
-    validating: 0,
-    succeeded: 0,
-    failed: 0
-  };
-  for (const run of runs) {
-    phaseCounts[run.status.phase] = (phaseCounts[run.status.phase] ?? 0) + 1;
+  const [fsRuns, k8sRuns] = await Promise.all([
+    listRuns().catch((err: unknown) => {
+      log.warn("filesystem listRuns failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return [];
+    }),
+    k8sRunsLoader.list().catch((err: unknown) => {
+      log.warn("k8s listRuns failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return [];
+    }),
+  ]);
+
+  const merged = mergeRuns(fsRuns, k8sRuns);
+  const phaseCounts = countByPhase(merged);
+
+  // Push phase counts into the registry first, so even if the queue
+  // backend is down the dashboard tiles still reflect the truth.
+  for (const [phase, count] of Object.entries(phaseCounts)) {
+    intakeRegistry.runsTotal.set({ phase }, count);
   }
+
   const queue = createRunQueueFromEnv();
+  let queueDepth = 0;
   try {
-    const queueDepth = await queue.getQueueDepth();
-    // Push into the Prometheus registry so the next renderPrometheusText()
-    // sees current values.
-    for (const [phase, count] of Object.entries(phaseCounts)) {
-      intakeRegistry.runsTotal.set({ phase }, count);
-    }
+    queueDepth = await queue.getQueueDepth();
     intakeRegistry.queueDepth.set({ backend: queue.backend }, queueDepth);
-    return { total: runs.length, phaseCounts, queueBackend: queue.backend, queueDepth };
+  } catch (err) {
+    log.warn("queue depth lookup failed; phase counts still updated", {
+      backend: queue.backend,
+      error: err instanceof Error ? err.message : String(err),
+    });
   } finally {
-    await queue.close();
+    await queue.close().catch(() => undefined);
   }
+
+  return {
+    total: merged.length,
+    phaseCounts,
+    queueBackend: queue.backend,
+    queueDepth,
+    sources: { filesystem: fsRuns.length, k8s: k8sRuns.length },
+  };
 }
 
 async function metricsPrometheusHandler(res: ServerResponse): Promise<void> {
@@ -532,7 +577,12 @@ async function metricsJsonHandler(res: ServerResponse): Promise<void> {
     service: "intake-api",
     generatedAt: new Date().toISOString(),
     runTotals: { total: snap.total, byPhase: snap.phaseCounts },
-    queue: { backend: snap.queueBackend, depth: snap.queueDepth }
+    queue: { backend: snap.queueBackend, depth: snap.queueDepth },
+    sources: {
+      filesystem: snap.sources.filesystem,
+      k8s: snap.sources.k8s,
+      k8sConfigured: k8sRunsLoader.isConfigured()
+    }
   });
 }
 
