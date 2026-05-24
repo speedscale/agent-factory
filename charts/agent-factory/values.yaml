@@ -13,11 +13,28 @@ image:
   pullSecrets: []
 
 # Engine configuration (which LLM the agents use).
+#
+# `kind` chooses the provider the agents call. It's mapped to the internal
+# LLMProvider in `src/lib/engine-config.ts`:
+#
+#   claude-sdk   -> anthropic   (cloud, requires authSecret)
+#   openrouter   -> openrouter  (cloud, requires authSecret)
+#   ds4          -> ds4         (local DeepSeek-V4-Flash on 127.0.0.1)
+#   omlx         -> omlx        (local MLX multi-model on 127.0.0.1)
+#   generic-llm  -> openrouter  (alias — operator-friendly name for an
+#                                OpenAI-compatible HTTP endpoint)
+#   private-llm  -> openrouter  (alias — same as generic-llm)
+#
+# Unknown kinds throw at startup so misconfiguration is loud rather than
+# silently falling back to Anthropic.
 engine:
-  kind: claude-sdk   # claude-sdk | generic-llm | private-llm
+  kind: claude-sdk   # claude-sdk | openrouter | ds4 | omlx | generic-llm | private-llm
   model: claude-opus-4-7
   endpoint: https://api.anthropic.com
-  # Secret holding the API key. The chart never reads the value.
+  # Secret holding the API key for cloud providers. The chart never reads
+  # the value. Required when `kind` is claude-sdk or openrouter (or their
+  # generic-llm / private-llm aliases). Local providers (ds4, omlx) don't
+  # need auth — leave `name` empty and the secret mount is skipped.
   authSecret:
     name: anthropic-api-key
     key: token

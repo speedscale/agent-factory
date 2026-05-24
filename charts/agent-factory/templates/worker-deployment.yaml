@@ -1,3 +1,5 @@
+{{- /* Fail-fast on missing auth secret for cloud providers. */ -}}
+{{- include "agent-factory.assertEngineAuthSecret" . -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -44,20 +46,28 @@ spec:
               value: {{ .Values.engine.model | quote }}
             - name: AF_ENGINE_ENDPOINT
               value: {{ .Values.engine.endpoint | quote }}
+            {{- /*
+              AF_ENGINE_AUTH_TOKEN is only mounted when the kind requires
+              auth and a secret name is configured. Local providers (ds4,
+              omlx) speak to 127.0.0.1 and don't need a token; an empty
+              secretKeyRef would fail scheduling.
+            */ -}}
+            {{- if and (eq (include "agent-factory.engineKindRequiresAuth" .) "true") .Values.engine.authSecret.name }}
             - name: AF_ENGINE_AUTH_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.engine.authSecret.name }}
                   key: {{ .Values.engine.authSecret.key }}
+            {{- end }}
             {{- /*
               ANTHROPIC_API_KEY is what the agent loop (src/lib/llm-providers.ts)
-              reads. We mirror AF_ENGINE_AUTH_TOKEN into it so triage and other
+              reads. We mirror engine.authSecret into it so triage and other
               real agents can call Claude without operators having to rotate
               two copies of the same key. Only injected when engine.kind is
               claude-sdk; other providers read their own provider-specific
               env vars (OPENROUTER_API_KEY etc.) which stay separate.
             */ -}}
-            {{- if eq .Values.engine.kind "claude-sdk" }}
+            {{- if and (eq (include "agent-factory.engineKindIsAnthropic" .) "true") .Values.engine.authSecret.name }}
             - name: ANTHROPIC_API_KEY
               valueFrom:
                 secretKeyRef:

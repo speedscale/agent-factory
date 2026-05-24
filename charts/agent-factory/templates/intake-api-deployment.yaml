@@ -1,3 +1,5 @@
+{{- /* Fail-fast on missing auth secret for cloud providers. */ -}}
+{{- include "agent-factory.assertEngineAuthSecret" . -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -50,11 +52,18 @@ spec:
               value: {{ .Values.engine.model | quote }}
             - name: AF_ENGINE_ENDPOINT
               value: {{ .Values.engine.endpoint | quote }}
+            {{- /*
+              AF_ENGINE_AUTH_TOKEN is only mounted when the kind requires
+              auth and a secret name is configured. Local providers (ds4,
+              omlx) don't need a token.
+            */ -}}
+            {{- if and (eq (include "agent-factory.engineKindRequiresAuth" .) "true") .Values.engine.authSecret.name }}
             - name: AF_ENGINE_AUTH_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.engine.authSecret.name }}
                   key: {{ .Values.engine.authSecret.key }}
+            {{- end }}
             {{- /*
               intake-api LISTs AgentRuns so /metrics reflects CRD-driven runs,
               not just the filesystem queue. Scope must match the controller's
