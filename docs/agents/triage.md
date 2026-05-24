@@ -106,14 +106,36 @@ reads from the AgentRun context and writes to `ctx.runDir`. The
 controller's ServiceAccount already covers everything in the dispatch
 path (granted in [`charts/agent-factory/templates/rbac.yaml`](../../charts/agent-factory/templates/rbac.yaml)).
 
+## Engine / provider selection
+
+The triage agent calls whichever provider is configured by the chart's
+`engine.kind` value (mirrored into `AF_ENGINE_KIND` on every pod that
+runs the dispatcher). The mapping is resolved at agent startup by
+`resolveEngineConfig` in [`src/lib/engine-config.ts`](../../src/lib/engine-config.ts):
+
+| `engine.kind` | Provider called | Auth required |
+|---|---|---|
+| `claude-sdk` (default) | Anthropic API | `ANTHROPIC_API_KEY` |
+| `openrouter` / `generic-llm` / `private-llm` | OpenRouter (or any OpenAI-compatible endpoint) | `OPENROUTER_API_KEY` |
+| `ds4` | Local DeepSeek-V4-Flash on `127.0.0.1` | none |
+| `omlx` | Local MLX server on `127.0.0.1` | none |
+
+Full provider matrix and the model-selection env vars live in
+[`docs/CONFIG.md`](../CONFIG.md#engine--model). Unknown kinds throw at
+startup — the agent does not silently fall back to Anthropic, which
+would mask misconfiguration on air-gapped deployments.
+
 ## Secrets
 
-Two env vars are read at the worker pod, both wired by the Helm chart
-when configured in `values.yaml`:
+Env vars read at the worker (and controller) pod, all wired by the Helm
+chart when configured in `values.yaml`:
 
 - `ANTHROPIC_API_KEY` — mirrors `engine.authSecret` when
   `engine.kind=claude-sdk`. Used by `src/lib/llm-providers.ts` for the
   one LLM call.
+- Other provider keys (`OPENROUTER_API_KEY`, `DS4_API_KEY`,
+  `OMLX_API_KEY`) — set out-of-band per provider; the chart's
+  `engine.authSecret` block only covers the canonical cloud path today.
 - `LINEAR_API_KEY` — mounted from `linear.authSecret`. Optional; if
   unset the agent skips comment-posting and the run still succeeds.
 

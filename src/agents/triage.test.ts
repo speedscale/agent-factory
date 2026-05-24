@@ -11,7 +11,8 @@ import {
 } from "./triage.js";
 import type { AgentRunContext } from "./types.js";
 import type { AgentApp, AgentRun, TrafficSource } from "../contracts/index.js";
-import type { TriageResult } from "../lib/triage.js";
+import type { TriageResult, TriageOptions } from "../lib/triage.js";
+import type { LLMProvider } from "../lib/llm-providers.js";
 
 // `runTriageAgent` accepts injectable deps; we don't have to monkey-patch
 // ES-module exports (which is illegal anyway). `triageAgent.run` delegates
@@ -54,6 +55,21 @@ async function tempRunDir(): Promise<string> {
 
 function fakeRunTriage(result: TriageResult): TriageDeps["runTriage"] {
   return async () => result;
+}
+
+interface RunTriageCall {
+  spec: { title: string; body: string };
+  opts: TriageOptions;
+}
+
+function capturingFakeRunTriage(
+  result: TriageResult,
+  calls: RunTriageCall[],
+): TriageDeps["runTriage"] {
+  return async (spec, opts) => {
+    calls.push({ spec, opts });
+    return result;
+  };
 }
 
 function fakeRunTriageThrowing(message: string): TriageDeps["runTriage"] {
@@ -236,4 +252,144 @@ test("triageAgent.run delegates to runTriageAgent with default deps (smoke)", ()
   // dependencies are exercised in production; tests use the injection seam.
   assert.equal(triageAgent.id, "triage");
   assert.equal(typeof triageAgent.run, "function");
+});
+
+// ---------- env-driven provider selection ----------
+//
+// The bug we're guarding against: triage.ts used to hardcode
+// `provider = "anthropic"` regardless of what the chart set
+// AF_ENGINE_KIND to. These tests assert the resolved provider is
+// threaded into runTriage's opts so the chart's `engine.kind` actually
+// takes effect at runtime.
+
+test("provider resolved from AF_ENGINE_KIND=ds4 is passed to runTriage", async (t) => {
+  const runDir = await tempRunDir();
+  t.after(async () => fs.rm(runDir, { recursive: true, force: true }));
+
+  const calls: RunTriageCall[] = [];
+  const { ctx } = makeCtx({
+    runDir,
+    issue: { id: "XYZ-1", title: "T", body: "B" },
+  });
+  await runTriageAgent({}, ctx, {
+    runTriage: capturingFakeRunTriage(
+      {
+        verdict: "dispatch",
+        reason: "ok",
+        missingContext: [],
+        recommendedActions: [],
+      },
+      calls,
+    ),
+    // Use the real resolveEngineConfig — the whole point is to verify
+    // the env-driven mapping reaches runTriage.
+    env: { AF_ENGINE_KIND: "ds4" },
+  });
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].opts.provider, "ds4");
+});
+
+test("provider falls back to anthropic when AF_ENGINE_KIND is unset", async (t) => {
+  const runDir = await tempRunDir();
+  t.after(async () => fs.rm(runDir, { recursive: true, force: true }));
+
+  const calls: RunTriageCall[] = [];
+  const { ctx } = makeCtx({
+    runDir,
+    issue: { id: "XYZ-1", title: "T", body: "B" },
+  });
+  await runTriageAgent({}, ctx, {
+    runTriage: capturingFakeRunTriage(
+      {
+        verdict: "dispatch",
+        reason: "ok",
+        missingContext: [],
+        recommendedActions: [],
+      },
+      calls,
+    ),
+    env: {},
+  });
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].opts.provider, "anthropic");
+});
+
+test("AF_ENGINE_MODEL overrides the per-provider default model", async (t) => {
+  const runDir = await tempRunDir();
+  t.after(async () => fs.rm(runDir, { recursive: true, force: true }));
+
+  const calls: RunTriageCall[] = [];
+  const { ctx } = makeCtx({
+    runDir,
+    issue: { id: "XYZ-1", title: "T", body: "B" },
+  });
+  await runTriageAgent({}, ctx, {
+    runTriage: capturingFakeRunTriage(
+      {
+        verdict: "dispatch",
+        reason: "ok",
+        missingContext: [],
+        recommendedActions: [],
+      },
+      calls,
+    ),
+    env: { AF_ENGINE_KIND: "openrouter", AF_ENGINE_MODEL: "anthropic/claude-3.5-sonnet" },
+  });
+
+  assert.equal(calls[0].opts.provider, "openrouter");
+  assert.equal(calls[0].opts.model, "anthropic/claude-3.5-sonnet");
+});
+
+test("unknown AF_ENGINE_KIND propagates as an error (no silent anthropic fallback)", async (t) => {
+  const runDir = await tempRunDir();
+  t.after(async () => fs.rm(runDir, { recursive: true, force: true }));
+
+  const { ctx } = makeCtx({
+    runDir,
+    issue: { id: "XYZ-1", title: "T", body: "B" },
+  });
+  await assert.rejects(
+    runTriageAgent({}, ctx, {
+      runTriage: fakeRunTriage({
+        verdict: "dispatch",
+        reason: "ok",
+        missingContext: [],
+        recommendedActions: [],
+      }),
+      env: { AF_ENGINE_KIND: "gpt5" },
+    }),
+    /unknown AF_ENGINE_KIND/,
+  );
+});
+
+test("injected resolveEngineConfig override is honored", async (t) => {
+  const runDir = await tempRunDir();
+  t.after(async () => fs.rm(runDir, { recursive: true, force: true }));
+
+  const calls: RunTriageCall[] = [];
+  const { ctx } = makeCtx({
+    runDir,
+    issue: { id: "XYZ-1", title: "T", body: "B" },
+  });
+  await runTriageAgent({}, ctx, {
+    runTriage: capturingFakeRunTriage(
+      {
+        verdict: "dispatch",
+        reason: "ok",
+        missingContext: [],
+        recommendedActions: [],
+      },
+      calls,
+    ),
+    resolveEngineConfig: () => ({
+      provider: "omlx" as LLMProvider,
+      model: "test-model-id",
+    }),
+    env: {}, // ignored because resolveEngineConfig is stubbed
+  });
+
+  assert.equal(calls[0].opts.provider, "omlx");
+  assert.equal(calls[0].opts.model, "test-model-id");
 });

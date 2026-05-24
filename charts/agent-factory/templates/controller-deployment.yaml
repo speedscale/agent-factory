@@ -1,4 +1,6 @@
 {{- if .Values.controller.enabled -}}
+{{- /* Fail-fast on missing auth secret for cloud providers. */ -}}
+{{- include "agent-factory.assertEngineAuthSecret" . -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -59,12 +61,20 @@ spec:
               value: {{ .Values.engine.model | quote }}
             - name: AF_ENGINE_ENDPOINT
               value: {{ .Values.engine.endpoint | quote }}
+            {{- /*
+              AF_ENGINE_AUTH_TOKEN and ANTHROPIC_API_KEY are only mounted
+              when the kind requires auth AND a secret is configured. Local
+              providers (ds4, omlx) speak to 127.0.0.1 and don't need a
+              token; mounting an empty secretKeyRef would fail scheduling.
+            */ -}}
+            {{- if and (eq (include "agent-factory.engineKindRequiresAuth" .) "true") .Values.engine.authSecret.name }}
             - name: AF_ENGINE_AUTH_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.engine.authSecret.name }}
                   key: {{ .Values.engine.authSecret.key }}
-            {{- if eq .Values.engine.kind "claude-sdk" }}
+            {{- end }}
+            {{- if and (eq (include "agent-factory.engineKindIsAnthropic" .) "true") .Values.engine.authSecret.name }}
             - name: ANTHROPIC_API_KEY
               valueFrom:
                 secretKeyRef:

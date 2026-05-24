@@ -75,11 +75,41 @@ CLI flag > env var > default. CLI flags are only honored by the one-shot `llm-ru
 
 ## Engine / model
 
+The agent loop picks an LLM provider from `AF_ENGINE_KIND`. The Helm
+chart's `engine.kind` value is wired straight through to this env var,
+and `src/lib/engine-config.ts` is the single source of truth for the
+mapping. Unknown kinds throw at startup — there is no silent fallback to
+Anthropic, so misconfiguration is loud rather than billed.
+
 | Var | Consumer | Default | Notes |
 |---|---|---|---|
-| `ANTHROPIC_API_KEY` | engine | — | Secret. |
+| `AF_ENGINE_KIND` | engine | `claude-sdk` | One of: `claude-sdk`, `openrouter`, `ds4`, `omlx`, `generic-llm`, `private-llm`. See provider matrix below. |
+| `AF_ENGINE_MODEL` | engine | per-provider default | Model identifier. Defaults: `claude-sonnet-4-6` (anthropic), `openai/gpt-5.4` (openrouter), `deepseek-v4-flash` (ds4), `Qwen3.6-27B-4bit` (omlx). |
+| `AF_ENGINE_ENDPOINT` | engine | (per provider) | Optional base URL override. Today only consumed by the OpenAI-compatible providers via their own `*_BASE_URL` env vars. |
+| `ANTHROPIC_API_KEY` | engine (anthropic provider) | — | Secret. Mirrored from `engine.authSecret` by the chart when `engine.kind=claude-sdk`. |
+| `OPENROUTER_API_KEY` | engine (openrouter provider) | — | Secret. Required for the OpenRouter cloud client. |
+| `DS4_API_KEY` | engine (ds4 provider) | `ds4-local` | Optional. Local server doesn't validate. |
+| `DS4_BASE_URL` | engine (ds4 provider) | `http://127.0.0.1:38011/v1` | |
+| `OMLX_API_KEY` | engine (omlx provider) | `omlx-local` | Optional. Local server doesn't validate. |
+| `OMLX_BASE_URL` | engine (omlx provider) | `http://127.0.0.1:38010/v1` | |
 | `ENGINE_MAX_LOOPS` | engine | `50` | Agent-loop iteration cap. |
 | `ENGINE_EVALUATOR_MAX_LOOPS` | engine | `20` | Evaluator-specific cap. |
+
+### Provider matrix
+
+| `AF_ENGINE_KIND` / `engine.kind` | Internal provider | Auth required | Notes |
+|---|---|---|---|
+| `claude-sdk` | `anthropic` | yes (`ANTHROPIC_API_KEY`) | Default. Anthropic cloud. |
+| `openrouter` | `openrouter` | yes (`OPENROUTER_API_KEY`) | OpenRouter cloud. |
+| `generic-llm` | `openrouter` | yes | Alias — operator-friendly name for an OpenAI-compatible HTTP endpoint. |
+| `private-llm` | `openrouter` | yes | Alias — same as `generic-llm`. |
+| `ds4` | `ds4` | no | Local DeepSeek-V4-Flash on `127.0.0.1`. |
+| `omlx` | `omlx` | no | Local MLX multi-model server on `127.0.0.1`. |
+
+The chart's `engine.authSecret` block is required for the cloud kinds
+and ignored for the local kinds (`ds4`, `omlx`). For local kinds, leave
+`engine.authSecret.name` empty; the chart will skip the secret mount
+rather than fail with `secretKeyRef.name=""`.
 
 ## Bot identity (auto-PR author)
 

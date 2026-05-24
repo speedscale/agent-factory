@@ -19,7 +19,7 @@
  * recommended human actions so the spec can be improved and re-dispatched.
  */
 
-import { callLLM, type LLMProvider } from "./llm-providers.js";
+import { callLLM, defaultModelFor, type LLMProvider } from "./llm-providers.js";
 
 export type TriageVerdict = "dispatch" | "needs-info";
 
@@ -33,7 +33,14 @@ export interface TriageResult {
 }
 
 export interface TriageOptions {
-  provider?: LLMProvider;
+  /**
+   * LLM provider. Required — callers must resolve from env (e.g. via
+   * `resolveEngineConfig(process.env)`) rather than letting triage silently
+   * default to Anthropic. A silent default masked chart misconfiguration:
+   * flipping `engine.kind` to ds4 in values.yaml had no effect because the
+   * agent always called Anthropic anyway.
+   */
+  provider: LLMProvider;
   model?: string;
   verbose?: boolean;
 }
@@ -142,14 +149,16 @@ export function formatTriageReport(result: TriageResult): string {
 /**
  * Run triage against a spec. Returns the verdict and supporting fields.
  *
- * Single LLM call, no tool use, no agent loop. The provider/model default
- * to the same as the rest of the dispatch unless overridden by the caller.
+ * Single LLM call, no tool use, no agent loop. The provider is required;
+ * model defaults to the per-provider default when the caller doesn't pin
+ * one. Callers should resolve the provider from env (see
+ * `resolveEngineConfig` in `engine-config.ts`) rather than hardcoding it.
  */
 export async function runTriage(
   spec: { title: string; body: string },
-  opts: TriageOptions = {}
+  opts: TriageOptions
 ): Promise<TriageResult> {
-  const provider = opts.provider ?? "anthropic";
+  const provider = opts.provider;
   const model = opts.model ?? defaultModelFor(provider);
 
   const userMessage =
@@ -173,11 +182,3 @@ export async function runTriage(
   return parseTriageResponse(raw);
 }
 
-function defaultModelFor(provider: LLMProvider): string {
-  switch (provider) {
-    case "anthropic": return "claude-sonnet-4-6";
-    case "openrouter": return "openai/gpt-5.4";
-    case "ds4": return "deepseek-v4-flash";
-    case "omlx": return "Qwen3.6-27B-4bit";
-  }
-}
