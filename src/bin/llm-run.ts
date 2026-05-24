@@ -13,8 +13,8 @@
  *     --repo    /path/to/service           (git repo root — enables worktree isolation) \
  *     --branch  agent/s-10886-radar-perf   (branch name; derived from --title if omitted) \
  *     --workdir /tmp/llm-run-work \
- *     [--provider anthropic|openrouter|ds4|omlx] (default: anthropic) \
- *     [--model <id>]                              (default per provider: claude-sonnet-4-6 / openai/gpt-5.4 / deepseek-v4-flash / Qwen3.6-27B-4bit) \
+ *     [--provider anthropic|openrouter|ds4|omlx] (env fallback: AF_ENGINE_KIND via resolveEngineConfig) \
+ *     [--model <id>]                              (env fallback: AF_ENGINE_MODEL; ultimate default: defaultModelFor(provider)) \
  *     [--no-triage]                               (skip the pre-dispatch fitness check) \
  *     [--no-context-check]                        (skip the repro-context safety net; use when an artifact format is the deliverable, not the input) \
  *     [--no-checklist-check]                      (skip the multi-deliverable gate; use when N parallel asks share enough scaffolding for one dispatch) \
@@ -39,6 +39,8 @@ import os from "node:os";
 import { promisify } from "node:util";
 import { runPlanner, runWorker, runPlannerSource, runWorkerSource, runEvaluator } from "../lib/llm-engine.js";
 import type { EmitPlanResult, EmitPlanSourceResult, AnyPlanResult } from "../lib/llm-engine.js";
+import { resolveEngineConfig } from "../lib/engine-config.js";
+import { defaultModelFor, type LLMProvider } from "../lib/llm-providers.js";
 import { classifySpec } from "../lib/spec-classifier.js";
 import { detectReproContext } from "../lib/repro-context-detector.js";
 import { detectChecklist, formatChecklistReport } from "../lib/checklist-detector.js";
@@ -96,13 +98,26 @@ async function main(): Promise<void> {
   const skipChecklistCheck = hasFlag(argv, ["--no-checklist-check"]);
   const instanceOverride = getArg(argv, ["--instance"]);
   const instanceCfg = getInstanceConfig(process.env, { instance: instanceOverride });
-  const providerArg = getArg(argv, ["--provider", "-p"]) ?? "anthropic";
-  if (providerArg !== "anthropic" && providerArg !== "openrouter" && providerArg !== "ds4" && providerArg !== "omlx") {
-    console.error(`unknown provider: ${providerArg}. Expected one of: anthropic, openrouter, ds4, omlx`);
+  // Resolve engine config: CLI flags win, then env (AF_ENGINE_KIND / AF_ENGINE_MODEL
+  // via resolveEngineConfig), then the chart-aligned default ("claude-sdk" → anthropic
+  // with the per-provider default model). No silent "anthropic" fallback — a
+  // misconfigured BYOC deployment must surface, not quietly hit Anthropic.
+  const providerFlag = getArg(argv, ["--provider", "-p"]);
+  const modelFlag = getArg(argv, ["--model", "-m"]);
+  const envCfg = resolveEngineConfig(process.env);
+  let provider: LLMProvider;
+  if (providerFlag === undefined) {
+    provider = envCfg.provider;
+  } else if (providerFlag === "anthropic" || providerFlag === "openrouter" || providerFlag === "ds4" || providerFlag === "omlx") {
+    provider = providerFlag;
+  } else {
+    console.error(`unknown provider: ${providerFlag}. Expected one of: anthropic, openrouter, ds4, omlx`);
     process.exit(1);
   }
-  const provider = providerArg as "anthropic" | "openrouter" | "ds4" | "omlx";
-  const model = getArg(argv, ["--model", "-m"]);
+  // `defaultModelFor(provider)` is the same fallback resolveEngineConfig uses when
+  // AF_ENGINE_MODEL is unset, so we don't need to import it here — envCfg.model is
+  // always a string.
+  const model: string = modelFlag ?? (providerFlag === undefined ? envCfg.model : defaultModelFor(provider));
 
   const modeArg = (getArg(argv, ["--mode"]) ?? "auto").toLowerCase();
   if (modeArg !== "auto" && modeArg !== "traffic" && modeArg !== "source") {

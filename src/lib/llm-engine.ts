@@ -129,10 +129,16 @@ export interface LLMRunOptions {
   repoDir?: string;
   /** Branch name for the worktree, e.g. "agent/s-10886-radar-perf". Required when repoDir is set. */
   branchName?: string;
-  /** LLM provider for both Planner and Worker. Defaults to "anthropic". */
-  provider?: LLMProvider;
-  /** Model identifier for the chosen provider. Defaults to defaultModelFor(provider). */
-  model?: string;
+  /**
+   * LLM provider for both Planner and Worker. Required — no default.
+   * Callers must resolve this via `resolveEngineConfig(env)` from
+   * `lib/engine-config.ts` so `AF_ENGINE_KIND` is honored end-to-end.
+   * A silent provider fallback masked misconfigured BYOC deployments
+   * that thought they'd cut over to a local model.
+   */
+  provider: LLMProvider;
+  /** Model identifier for the chosen provider. Required. */
+  model: string;
 }
 
 export interface WorktreeResult {
@@ -711,9 +717,9 @@ async function agentLoop(
   userMessage: string,
   terminalToolName: string,
   verbose: boolean,
-  maxLoops: number = MAX_LOOPS,
-  provider: LLMProvider = "anthropic",
-  model: string = defaultModelFor(provider),
+  maxLoops: number,
+  provider: LLMProvider,
+  model: string,
   tools: ToolDef[] = TOOLS
 ): Promise<Record<string, string>> {
   const messages: ConvMessage[] = [{ role: "user", content: userMessage }];
@@ -898,8 +904,8 @@ export async function runPlanner(
   if (opts.workDir) parts.push(`Work directory for harness files: ${opts.workDir}`);
 
   const PLANNER_MAX_LOOPS = parseInt(process.env.ENGINE_PLANNER_MAX_LOOPS ?? "30", 10);
-  const provider = opts.provider ?? "anthropic";
-  const model = opts.model ?? defaultModelFor(provider);
+  const { provider } = opts;
+  const { model } = opts;
   const result = await agentLoop(PLANNER_SYSTEM, parts.join("\n"), "emit_plan", opts.verbose ?? false, PLANNER_MAX_LOOPS, provider, model);
 
   const plan: AgentPlan = {
@@ -1062,8 +1068,8 @@ export async function runEvaluator(
   if (opts.snapshotDir) parts.push(`Snapshot directory (original RRPair evidence): ${opts.snapshotDir}`);
 
   const EVALUATOR_MAX_LOOPS = parseInt(process.env.ENGINE_EVALUATOR_MAX_LOOPS ?? "20", 10);
-  const provider = opts.provider ?? "anthropic";
-  const model = opts.model ?? defaultModelFor(provider);
+  const { provider } = opts;
+  const { model } = opts;
   const result = await agentLoop(
     EVALUATOR_SYSTEM,
     parts.join("\n"),
@@ -1162,8 +1168,8 @@ export async function runWorker(
   }
 
   const WORKER_MAX_LOOPS = parseInt(process.env.ENGINE_WORKER_MAX_LOOPS ?? "25", 10);
-  const provider = opts.provider ?? "anthropic";
-  const model = opts.model ?? defaultModelFor(provider);
+  const { provider } = opts;
+  const { model } = opts;
   const result = await agentLoop(WORKER_SYSTEM, parts.join("\n"), "emit_patch", opts.verbose ?? false, WORKER_MAX_LOOPS, provider, model);
 
   return {
@@ -1222,8 +1228,8 @@ export async function runPlannerSource(
   );
 
   const PLANNER_MAX_LOOPS = parseInt(process.env.ENGINE_PLANNER_MAX_LOOPS ?? "30", 10);
-  const provider = opts.provider ?? "anthropic";
-  const model = opts.model ?? defaultModelFor(provider);
+  const { provider } = opts;
+  const { model } = opts;
   const result = await agentLoop(
     PLANNER_SOURCE_SYSTEM,
     parts.join("\n"),
@@ -1355,8 +1361,8 @@ export async function runWorkerSource(
   }
 
   const WORKER_MAX_LOOPS = parseInt(process.env.ENGINE_WORKER_MAX_LOOPS ?? "25", 10);
-  const provider = opts.provider ?? "anthropic";
-  const model = opts.model ?? defaultModelFor(provider);
+  const { provider } = opts;
+  const { model } = opts;
   const result = await agentLoop(
     WORKER_SOURCE_SYSTEM,
     parts.join("\n"),
