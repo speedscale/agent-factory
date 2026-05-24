@@ -2,13 +2,62 @@
 
 Agent Factory runs a complete software-delivery loop — **Spec → Generate → Validate → Deploy → Observe** — driven by an LLM grounded in real captured traffic. Every fix is validated against production RRPairs via `proxymock` before a human approves it.
 
-## What it does
+## The loop
+
+```mermaid
+flowchart TD
+    issue([Issue / Alert / PR])
+    issue --> spec
+    spec[Spec<br/>name metric, reproduce on master]
+    spec --> gen[Generate<br/>LLM writes minimal fix]
+    gen --> val[Validate<br/>confirm harness + regression replay]
+    val --> dep[Deploy<br/>open PR/MR with evidence]
+    dep --> obs[Observe<br/>post-deploy snapshot diff]
+    obs -- feedback --> spec
+
+    traffic[("RRPair traffic via proxymock")]
+    traffic -. evidence .-> spec
+    traffic -. baseline .-> val
+    traffic -. post-deploy diff .-> obs
+
+    style traffic fill:#1a7f37,stroke:#1a7f37,color:#fff
+    style issue fill:#6e7681,stroke:#6e7681,color:#fff
+    style spec fill:#1f6feb,stroke:#1f6feb,color:#fff
+    style gen fill:#1f6feb,stroke:#1f6feb,color:#fff
+    style val fill:#1f6feb,stroke:#1f6feb,color:#fff
+    style dep fill:#1f6feb,stroke:#1f6feb,color:#fff
+    style obs fill:#1f6feb,stroke:#1f6feb,color:#fff
+```
 
 1. **Spec** — ingests an issue, alert, or PR; pulls a snapshot of captured traffic; identifies the measurable metric the bug violates; confirms the bug is reproducible.
 2. **Generate** — LLM reads the relevant source files and writes a minimal fix.
 3. **Validate** — runs the same reproduce harness against the patched code to confirm the metric is within bound; runs regression replay via proxymock.
 4. **Deploy** — opens a PR/MR with the fix, harness output, and quality report as evidence.
 5. **Observe** — post-deploy snapshot comparison closes the loop.
+
+## How traffic gets in (BYOC)
+
+In BYOC the customer's existing observability is the traffic source. The Grafana + Loki reference architecture is the canonical path:
+
+```mermaid
+flowchart TD
+    apps([Customer apps]) --> fwd[Speedscale Forwarder<br/>DLP + filter]
+    fwd -- OTLP gRPC --> col[OTel Collector]
+    col --> loki[(Loki)]
+    loki --> graf[Grafana dashboards]
+    loki -- loki-gather --> snap[(Snapshot dir<br/>proxymock-readable)]
+    snap --> af[Agent Factory<br/>Spec phase]
+
+    style apps fill:#6e7681,stroke:#6e7681,color:#fff
+    style fwd fill:#1f6feb,stroke:#1f6feb,color:#fff
+    style col fill:#1f6feb,stroke:#1f6feb,color:#fff
+    style snap fill:#1f6feb,stroke:#1f6feb,color:#fff
+    style loki fill:#8957e5,stroke:#8957e5,color:#fff
+    style graf fill:#8957e5,stroke:#8957e5,color:#fff
+    style af fill:#1a7f37,stroke:#1a7f37,color:#fff
+```
+
+Customer data never leaves the customer VPC. See the [Grafana reference architecture](https://github.com/speedscale/demo/tree/main/reference-architectures/grafana) for install steps.
 
 ## Deployment modes
 
