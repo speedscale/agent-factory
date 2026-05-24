@@ -29,6 +29,10 @@ import * as path from "node:path";
 import type { AgentDef, AgentInputSchema, AgentRunContext, AgentRunOutput } from "./types.js";
 import { runTriage as defaultRunTriage, formatTriageReport, type TriageResult } from "../lib/triage.js";
 import {
+  resolveEngineConfig as defaultResolveEngineConfig,
+  type EngineConfig,
+} from "../lib/engine-config.js";
+import {
   createLinearClient as defaultCreateLinearClient,
   linearIssueIdFrom,
   type LinearClient,
@@ -42,6 +46,14 @@ import {
 export interface TriageDeps {
   runTriage?: typeof defaultRunTriage;
   createLinearClient?: (opts: LinearClientOptions) => LinearClient;
+  /**
+   * Resolves the LLM engine config (provider + model + endpoint) from env.
+   * Defaults to `resolveEngineConfig` from `lib/engine-config.ts`, which
+   * reads `AF_ENGINE_KIND` / `AF_ENGINE_MODEL` / `AF_ENGINE_ENDPOINT`.
+   * Tests override this to assert the env-driven selection without
+   * mutating `process.env`.
+   */
+  resolveEngineConfig?: (env: NodeJS.ProcessEnv) => EngineConfig;
   env?: NodeJS.ProcessEnv;
 }
 
@@ -85,6 +97,7 @@ export async function runTriageAgent(
 ): Promise<AgentRunOutput> {
   const runTriage = deps.runTriage ?? defaultRunTriage;
   const createLinearClient = deps.createLinearClient ?? defaultCreateLinearClient;
+  const resolveEngineConfig = deps.resolveEngineConfig ?? defaultResolveEngineConfig;
   const env = deps.env ?? process.env;
 
   const issue = ctx.run.spec.issue;
@@ -94,15 +107,25 @@ export async function runTriageAgent(
     throw new TriageBadResponseError("AgentRun.spec.issue.title is required for triage");
   }
 
+    // Resolve provider/model from env (AF_ENGINE_*). Throws on unknown
+    // kind — better to fail the run with a clear config error than to
+    // silently call Anthropic on an air-gapped deployment.
+    const engineCfg = resolveEngineConfig(env);
+
     ctx.logger.info("triage start", {
       issue_id: issue.id,
       title_length: issue.title.length,
       body_length: (issue.body ?? "").length,
+      provider: engineCfg.provider,
+      model: engineCfg.model,
     });
 
     let result: TriageResult;
     try {
-      result = await runTriage({ title: issue.title, body: issue.body ?? "" });
+      result = await runTriage(
+        { title: issue.title, body: issue.body ?? "" },
+        { provider: engineCfg.provider, model: engineCfg.model },
+      );
     } catch (err) {
       // Parse failures or LLM errors surface as AgentError on the run
       // (dispatcher wraps the throw). Don't retry — the operator should
