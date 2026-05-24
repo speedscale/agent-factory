@@ -5,23 +5,28 @@ Agent Factory runs a complete software-delivery loop — **Spec → Generate →
 ## The loop
 
 ```mermaid
-flowchart LR
-    issue([Issue / Alert / PR]):::trigger --> spec
-    spec[<b>Spec</b><br/>name metric<br/>reproduce on master]:::phase
-    spec --> gen[<b>Generate</b><br/>LLM writes<br/>minimal fix]:::phase
-    gen --> val[<b>Validate</b><br/>confirm harness<br/>+ regression replay]:::phase
-    val --> dep[<b>Deploy</b><br/>open PR/MR<br/>with evidence]:::phase
-    dep --> obs[<b>Observe</b><br/>post-deploy<br/>snapshot diff]:::phase
-    obs -. feedback .-> spec
+flowchart TD
+    issue([Issue / Alert / PR])
+    issue --> spec
+    spec[Spec<br/>name metric, reproduce on master]
+    spec --> gen[Generate<br/>LLM writes minimal fix]
+    gen --> val[Validate<br/>confirm harness + regression replay]
+    val --> dep[Deploy<br/>open PR/MR with evidence]
+    dep --> obs[Observe<br/>post-deploy snapshot diff]
+    obs -- feedback --> spec
 
-    traffic[("RRPair traffic<br/>via proxymock")]:::evidence
+    traffic[("RRPair traffic via proxymock")]
     traffic -. evidence .-> spec
     traffic -. baseline .-> val
     traffic -. post-deploy diff .-> obs
 
-    classDef phase fill:#1f6feb,stroke:#1f6feb,color:#fff
-    classDef trigger fill:#6e7681,stroke:#6e7681,color:#fff
-    classDef evidence fill:#1a7f37,stroke:#1a7f37,color:#fff
+    style traffic fill:#1a7f37,stroke:#1a7f37,color:#fff
+    style issue fill:#6e7681,stroke:#6e7681,color:#fff
+    style spec fill:#1f6feb,stroke:#1f6feb,color:#fff
+    style gen fill:#1f6feb,stroke:#1f6feb,color:#fff
+    style val fill:#1f6feb,stroke:#1f6feb,color:#fff
+    style dep fill:#1f6feb,stroke:#1f6feb,color:#fff
+    style obs fill:#1f6feb,stroke:#1f6feb,color:#fff
 ```
 
 1. **Spec** — ingests an issue, alert, or PR; pulls a snapshot of captured traffic; identifies the measurable metric the bug violates; confirms the bug is reproducible.
@@ -35,18 +40,21 @@ flowchart LR
 In BYOC the customer's existing observability is the traffic source. The Grafana + Loki reference architecture is the canonical path:
 
 ```mermaid
-flowchart LR
-    apps([Customer apps]):::ext --> fwd[Speedscale<br/>Forwarder<br/>DLP + filter]:::sp
-    fwd -->|OTLP gRPC| col[OTel<br/>Collector]:::sp
-    col --> loki[(Loki)]:::store
-    loki --> graf[Grafana<br/>dashboards]:::store
-    loki -. loki-gather.py .-> snap[(Snapshot dir<br/>proxymock-readable)]:::sp
-    snap --> af{{Agent Factory<br/>Spec phase}}:::af
+flowchart TD
+    apps([Customer apps]) --> fwd[Speedscale Forwarder<br/>DLP + filter]
+    fwd -- OTLP gRPC --> col[OTel Collector]
+    col --> loki[(Loki)]
+    loki --> graf[Grafana dashboards]
+    loki -- loki-gather --> snap[(Snapshot dir<br/>proxymock-readable)]
+    snap --> af[Agent Factory<br/>Spec phase]
 
-    classDef ext fill:#6e7681,stroke:#6e7681,color:#fff
-    classDef sp fill:#1f6feb,stroke:#1f6feb,color:#fff
-    classDef store fill:#8957e5,stroke:#8957e5,color:#fff
-    classDef af fill:#1a7f37,stroke:#1a7f37,color:#fff
+    style apps fill:#6e7681,stroke:#6e7681,color:#fff
+    style fwd fill:#1f6feb,stroke:#1f6feb,color:#fff
+    style col fill:#1f6feb,stroke:#1f6feb,color:#fff
+    style snap fill:#1f6feb,stroke:#1f6feb,color:#fff
+    style loki fill:#8957e5,stroke:#8957e5,color:#fff
+    style graf fill:#8957e5,stroke:#8957e5,color:#fff
+    style af fill:#1a7f37,stroke:#1a7f37,color:#fff
 ```
 
 Customer data never leaves the customer VPC. See the [Grafana reference architecture](https://github.com/speedscale/demo/tree/main/reference-architectures/grafana) for install steps.
