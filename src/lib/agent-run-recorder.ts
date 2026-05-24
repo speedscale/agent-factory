@@ -10,9 +10,10 @@
  * `triage-s-*` runs — ticket text, prompts, raw model response, parsed
  * verdict, posted comment, phase transitions, and timings.
  *
- * Today the only agent that wires this in is `triage` (its `TriageResult`
- * carries `rawResponse`). Other agents may pass null `rawResponse`/`parsed`
- * until they're plumbed through; the recorder still captures everything
+ * Wired into `controller/agent-dispatcher.ts` and invoked on every
+ * dispatch. `triage` populates `rawResponse`/`parsed` from its
+ * `TriageResult`; other agents may pass null for those fields until
+ * they're plumbed through, but the recorder still captures everything
  * else (ticket, transitions, timings) so we never silently lose history.
  *
  * Design choice: the recorder is intentionally tolerant of missing

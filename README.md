@@ -10,17 +10,29 @@ Agent Factory runs a complete software-delivery loop — **Spec → Generate →
 4. **Deploy** — opens a PR/MR with the fix, harness output, and quality report as evidence.
 5. **Observe** — post-deploy snapshot comparison closes the loop.
 
-## Deployment models
+## Deployment modes
 
-| | Speedscale Cloud | Customer BYOC |
+The same binary runs three ways. See [`examples/instances/`](examples/instances/) for sample Helm values and [`speedstack/instances/agent-factory/`](https://gitlab.com/speedscale/skunkworks/speedstack/-/tree/main/instances/agent-factory) for the live deployments.
+
+| Mode | Topology | When to use |
 |---|---|---|
-| Traffic data | Speedscale-hosted | Customer's proxymock BYOC |
+| **CLI** (`npm run llm-run`) | Single process on a laptop | One-off dispatches, local development, ticket-by-ticket runs |
+| **Kubernetes** (Helm chart) | `intake-api` + `controller` + `worker` pods, filesystem or Redis queue | Continuous polling against a ticket source (GitHub, Linear), shared environment |
+| **BYOC** (customer cluster) | Helm chart + customer's traffic store + customer's LLM endpoint | Production deployments where data must stay in the customer VPC |
+
+In BYOC, the **traffic context** comes from the customer's existing observability — see the [Grafana + Loki reference architecture](https://github.com/speedscale/demo/tree/main/reference-architectures/grafana) in the demos repo, with the companion `loki-gather.py` script that turns a Loki slice into a `proxymock`-replayable directory.
+
+### Configuration boundary
+
+| | Speedscale Cloud (SOS) | Customer BYOC |
+|---|---|---|
+| Traffic data | Speedscale-hosted | Customer's proxymock + reference architecture |
 | LLM endpoint | Anthropic (Speedscale key) | Customer's choice (Anthropic, Bedrock, Azure, self-hosted) |
 | Code access | Speedscale's repos | Customer's git mirror |
 | Deployment | Speedscale-operated | Helm chart in customer's cluster |
 | Data boundary | Speedscale VPC | Customer VPC — data never leaves |
 
-## Quick start — LLM fix loop
+## Quick start — CLI
 
 ```bash
 npm install
@@ -43,14 +55,18 @@ Check gate verdict for a specific run:
 npm run gate:check -- --run <run-name>
 ```
 
-## Documentation
+## Quick start — Kubernetes
 
-- **[docs/architecture.md](docs/architecture.md)** — full system design, planes, deployment models
-- **[docs/engine.md](docs/engine.md)** — LLM engine: tool catalog, agent loop, Planner/Worker phases
-- **[docs/engine-hardening.md](docs/engine-hardening.md)** — tool-call hardening: rescue, escalating nudges, prereqs, compaction, error classification
-- **[docs/plan.md](docs/plan.md)** — active roadmap and next steps
-- **[docs/users.md](docs/users.md)** — operators: deployment, run submission, operations
-- **[docs/developers.md](docs/developers.md)** — contributors: development workflow, contracts, release
+Install the chart against a cluster running `speedscale-operator`:
+
+```bash
+helm install agent-factory ./charts/agent-factory \
+  --namespace agent-factory --create-namespace \
+  --set engine.kind=claude-sdk \
+  --set engine.authSecret.name=anthropic-api-key
+```
+
+See [`examples/instances/`](examples/instances/) for `internal/`, `customer/`, `demo/`, and `local/` value sets, and [`docs/users.md`](docs/users.md) for operator workflow.
 
 ## Core artifacts per run
 
@@ -62,3 +78,33 @@ npm run gate:check -- --run <run-name>
 | `patch.json` | Worker output: fix, rationale, confirm result |
 | `quality-report.json/.md` | Regression replay diff against baseline RRPairs |
 | `result.json` | Run summary with phase outcomes |
+
+## Documentation
+
+**Design**
+- [`docs/architecture.md`](docs/architecture.md) — system planes, deployment models, contracts
+- [`docs/engine.md`](docs/engine.md) — LLM engine: tool catalog, agent loop, Planner/Worker
+- [`docs/engine-source-mode.md`](docs/engine-source-mode.md) — non-traffic-shaped fixes path
+- [`docs/engine-hardening.md`](docs/engine-hardening.md) — tool-call hardening: rescue, escalating nudges, prereqs, compaction
+- [`docs/multi-deliverable-tickets.md`](docs/multi-deliverable-tickets.md) — handling checklist-style specs
+
+**Operations**
+- [`docs/users.md`](docs/users.md) — operators: deployment, run submission
+- [`docs/operations.md`](docs/operations.md) — runbook
+- [`docs/CONFIG.md`](docs/CONFIG.md) — every env var the binary accepts
+- [`docs/release.md`](docs/release.md) — version bump + publish flow
+
+**Agents**
+- [`docs/agents/triage.md`](docs/agents/triage.md) — triage agent specifics
+
+**Quality**
+- [`docs/EVALS.md`](docs/EVALS.md) — eval substrate: fixtures, runner, dual-judge
+
+> Recorded eval runs and other local training feedback live in each instance's
+> directory under speedstack (e.g. `speedstack/instances/agent-factory/<instance>/training-feedback/`),
+> not in this repo.
+
+**Contributing**
+- [`docs/developers.md`](docs/developers.md) — development workflow, contracts, release
+- [`docs/plan.md`](docs/plan.md) — active roadmap
+- [`docs/history.md`](docs/history.md) — pivot history and design decisions

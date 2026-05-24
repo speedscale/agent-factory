@@ -36,6 +36,11 @@ vendor/
 artifacts/
 reports/
 
+# local training feedback (recorded eval runs, agent-run traces)
+# never commit these to the public repo — they live in speedstack/instances/
+eval-runs/
+agent-runs/
+
 # secrets
 .env
 secrets/
