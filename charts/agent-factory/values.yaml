@@ -49,6 +49,22 @@ linear:
     name: ""        # e.g. "linear-api-key"
     key: token
 
+# Archive substrate. Where the controller writes per-AgentRun JSON
+# traces and where the eval runner writes its jsonl. One interface,
+# two backends:
+#
+#   backend: gcs   → @google-cloud/storage, bucket below, ADC creds
+#   backend: local → fs/promises, path below
+#   backend: ""    → falls back to gcs if bucket set, else local
+#                    (with a startup WARN so we don't silently lose history)
+#
+# Cluster default: local at /var/lib/agent-factory/archive on a PVC.
+# For Speedscale Cloud / SOS, set backend: gcs and the canonical bucket.
+archive:
+  backend: ""                                  # gcs | local | ""
+  bucket: "ken-ai-agent-factory-archive"       # used when backend resolves to gcs
+  path: "/var/lib/agent-factory/archive"       # used when backend resolves to local
+
 # Traffic sources to install as TrafficSource CRs at chart-apply time.
 # Leave empty if applying TrafficSources out-of-band via GitOps.
 trafficSources: []

@@ -1,0 +1,27 @@
+id: 001-wellformed-handler-bug
+title: "PaymentHandler.charge() returns 500 when amount is exactly zero"
+body: |
+  Repro: POST /v1/payments with { "amount": 0, "currency": "usd" }.
+
+  Expected (per spec, src/handlers/payment.ts line 142 comment): a 400
+  with body { "error": "amount_must_be_positive" }. Currently the handler
+  throws an unhandled "InvalidArgumentError: amount" from
+  validatePaymentAmount() in src/lib/validators.ts:88, which bubbles up
+  as a 500.
+
+  Acceptance criteria:
+    - POST /v1/payments {"amount": 0} returns HTTP 400
+    - response body matches { "error": "amount_must_be_positive" }
+    - existing zero-amount unit test in test/payment.test.ts (currently
+      .skip) is re-enabled and passes
+
+  Recording: see traffic snapshot `prod-payments-2026-05-20` slice
+  `zero-amount-edge` for the exact failing request shape.
+labels: [auto-fix, bug]
+expected:
+  verdict: dispatch
+  must_not: [needs-info, decline]
+notes: |
+  Textbook well-formed bug report. Named file, named function, line
+  number, explicit acceptance criteria, repro recipe, recording
+  reference. The engine should accept this without comment.

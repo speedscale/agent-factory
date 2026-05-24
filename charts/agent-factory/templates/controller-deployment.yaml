@@ -49,6 +49,23 @@ spec:
               value: /app/.work/runs
             - name: AF_HEALTHZ_PORT
               value: "8081"
+            # Archive substrate — per-AgentRun traces and eval runs
+            # both land here. See charts/agent-factory/values.yaml
+            # `archive:` block and docs/EVALS.md for selection rules.
+            {{- if .Values.archive }}
+            {{- if .Values.archive.backend }}
+            - name: AF_ARCHIVE_BACKEND
+              value: {{ .Values.archive.backend | quote }}
+            {{- end }}
+            {{- if .Values.archive.bucket }}
+            - name: AF_ARCHIVE_BUCKET
+              value: {{ .Values.archive.bucket | quote }}
+            {{- end }}
+            {{- if .Values.archive.path }}
+            - name: AF_ARCHIVE_PATH
+              value: {{ .Values.archive.path | quote }}
+            {{- end }}
+            {{- end }}
             # The dispatch path (AgentRunWatcher → dispatchAgentRun → agent.run)
             # runs in this pod, so the agents that call Claude / post to Linear
             # need their secrets here — NOT just on the worker. ANTHROPIC_API_KEY

@@ -13,6 +13,12 @@ import { createLogger, type Logger } from "../logger.js";
 import { AGENTS_API_VERSION, type K8sClients } from "./k8s.js";
 import { validateInput } from "./schema-validator.js";
 import { patchAgentRunStatus } from "./status-updater.js";
+import {
+  buildBaseRecord,
+  recordAgentRun,
+  type AgentRunRecord,
+  type AgentRunTransition,
+} from "../agent-run-recorder.js";
 
 export interface DispatcherOptions {
   clients: K8sClients;
@@ -106,6 +112,12 @@ export async function dispatchAgentRun(
     return;
   }
 
+  const transitions: AgentRunTransition[] = [];
+  const recordTransition = (phase: string) => {
+    transitions.push({ phase, ts: new Date().toISOString() });
+  };
+  recordTransition("planned");
+
   await patchAgentRunStatus(opts.clients, namespace, runName, {
     phase: "planned",
     summary: `dispatching ${run.spec.agent}`,
@@ -124,14 +136,17 @@ export async function dispatchAgentRun(
     logger,
   };
 
+  recordTransition("generating");
   await patchAgentRunStatus(opts.clients, namespace, runName, {
     phase: "generating",
     conditions: [okCondition("Dispatched", "Running")],
   });
   runLogger.info("status patch", { phase: "generating" });
 
+  const startedAt = Date.now();
   try {
     const output = await agent.run(run.spec.input ?? {}, ctx);
+    recordTransition("succeeded");
     await patchAgentRunStatus(opts.clients, namespace, runName, {
       phase: "succeeded",
       summary: output.summary,
@@ -139,10 +154,75 @@ export async function dispatchAgentRun(
       conditions: [okCondition("Succeeded", "AgentReturned")],
     });
     runLogger.info("dispatch complete", { phase: "succeeded", summary: output.summary });
+    // Persist the full trace. Best-effort: recordAgentRun never throws.
+    // For triage, hydrate parsed verdict from the on-disk artifact so
+    // the archive has the structured outcome even without invading the
+    // triage agent body to thread it through directly.
+    await persistRecord({
+      run,
+      runDir,
+      output,
+      transitions,
+      totalMs: Date.now() - startedAt,
+      runLogger,
+    });
   } catch (err) {
     const reason = err instanceof AgentNotImplementedError ? "AgentNotImplemented" : "AgentError";
+    recordTransition("failed");
     await fail(opts, namespace, runName, reason, String(err), runLogger);
+    await persistRecord({
+      run,
+      runDir,
+      output: undefined,
+      transitions,
+      totalMs: Date.now() - startedAt,
+      runLogger,
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
+}
+
+interface PersistArgs {
+  run: AgentRun;
+  runDir: string;
+  output: { summary?: string; artifacts?: Record<string, string> } | undefined;
+  transitions: AgentRunTransition[];
+  totalMs: number;
+  runLogger: Logger;
+  error?: string;
+}
+
+async function persistRecord(args: PersistArgs): Promise<void> {
+  const record: AgentRunRecord = {
+    ...buildBaseRecord(args.run),
+    transitions: args.transitions,
+    timings: { totalMs: args.totalMs },
+    postedComment: args.output?.summary,
+    extra: args.error ? { error: args.error } : undefined,
+  };
+
+  // Hydrate parsed verdict from the triage artifact if present. This is
+  // the cleanest way to capture the structured outcome without modifying
+  // the triage agent body (which is owned by a parallel engine-plumbing
+  // change-set). TODO: once the engine plumbing PR lands, thread the raw
+  // model response + prompts through AgentRunOutput so this read isn't
+  // needed and rawResponse becomes available on the record.
+  const triageArtifact = args.output?.artifacts?.triage;
+  if (triageArtifact) {
+    try {
+      const abs = path.join(args.runDir, triageArtifact);
+      const buf = await fs.readFile(abs, "utf8");
+      const parsed = JSON.parse(buf) as Record<string, unknown>;
+      record.parsed = parsed;
+    } catch (err) {
+      args.runLogger.warn("could not read triage artifact for recorder", {
+        artifact: triageArtifact,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  await recordAgentRun(record, { logger: args.runLogger });
 }
 
 async function loadAgentApp(
