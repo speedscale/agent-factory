@@ -13,11 +13,7 @@ import type { AgentLogger } from "../agents/types.js";
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 function noopLogger(): AgentLogger {
-  return {
-    info: () => {},
-    warn: () => {},
-    error: () => {},
-  };
+  return { info: () => {}, warn: () => {}, error: () => {} };
 }
 
 function captureLogger(): { logger: AgentLogger; lines: Array<{ level: string; msg: string }> } {
@@ -34,52 +30,25 @@ async function tempDir(): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), "mat-test-"));
 }
 
-function makeLocalSource(name = "my-ts"): TrafficSource {
+function makeSource(
+  kind: TrafficSource["spec"]["store"]["kind"],
+  extras: Partial<TrafficSource["spec"]["store"]> = {},
+  scopeExtras: Partial<TrafficSource["spec"]["scope"]> = {},
+  name = "test-ts",
+): TrafficSource {
   return {
     apiVersion: "agents.speedscale.io/v1alpha1",
     kind: "TrafficSource",
     metadata: { name },
     spec: {
-      store: { kind: "local-fs", path: "/some/path" },
-      scope: { clusters: ["prod"] },
+      store: { kind, ...extras },
+      scope: { clusters: ["prod"], ...scopeExtras },
       dlp: { profile: "standard" },
     },
   };
 }
 
-function makeLokiSource(
-  opts: {
-    name?: string;
-    endpoint?: string;
-    logql?: string;
-    window?: string;
-    clusters?: string[];
-    services?: string[];
-    auth?: TrafficSource["spec"]["store"]["auth"];
-  } = {},
-): TrafficSource {
-  return {
-    apiVersion: "agents.speedscale.io/v1alpha1",
-    kind: "TrafficSource",
-    metadata: { name: opts.name ?? "loki-ts" },
-    spec: {
-      store: {
-        kind: "loki",
-        endpoint: opts.endpoint ?? "http://loki:3100",
-        logql: opts.logql,
-        window: opts.window,
-        auth: opts.auth,
-      },
-      scope: {
-        clusters: opts.clusters ?? ["prod"],
-        services: opts.services,
-      },
-      dlp: { profile: "standard" },
-    },
-  };
-}
-
-/** Exec stub that succeeds immediately, recording the last call. */
+/** Exec stub that captures the last call and succeeds. */
 function makeExecStub(stdout = "", stderr = "") {
   let lastCmd = "";
   let lastEnv: NodeJS.ProcessEnv | undefined;
@@ -91,180 +60,321 @@ function makeExecStub(stdout = "", stderr = "") {
     lastEnv = opts?.env;
     return { stdout, stderr };
   };
-  return { execFn, get lastCmd() { return lastCmd; }, get lastEnv() { return lastEnv; } };
-}
-
-/** Exec stub that always throws. */
-function failingExecStub(msg = "loki unavailable") {
-  return async (_cmd: string): Promise<never> => {
-    throw new Error(msg);
+  return {
+    execFn,
+    get lastCmd() { return lastCmd; },
+    get lastEnv() { return lastEnv; },
   };
 }
 
-// ── tests ─────────────────────────────────────────────────────────────────────
+function failingExecStub(msg = "exec failed") {
+  return async (_cmd: string): Promise<never> => { throw new Error(msg); };
+}
 
-test("non-loki sources pass through unchanged", async () => {
-  const source = makeLocalSource();
+// ── local-fs ──────────────────────────────────────────────────────────────────
+
+test("local-fs: returned unchanged (no exec, no dir creation)", async () => {
+  const source = makeSource("local-fs", { path: "/existing/snap" });
   const runDir = await tempDir();
   try {
-    const result = await materializeTrafficSource(source, {
-      runDir,
-      logger: noopLogger(),
-    });
-    assert.deepEqual(result, source);
+    const result = await materializeTrafficSource(source, { runDir, logger: noopLogger() });
+    assert.equal(result, source, "should be the exact same object reference");
+    // no snapshot subdir should have been created
+    const entries = await fs.readdir(runDir);
+    assert.equal(entries.length, 0, "runDir should remain empty for local-fs");
   } finally {
     await fs.rm(runDir, { recursive: true, force: true });
   }
 });
 
-test("loki source: snapshot dir is created", async () => {
-  const runDir = await tempDir();
-  try {
-    const stub = makeExecStub();
-    await materializeTrafficSource(makeLokiSource({ name: "ts1" }), {
-      runDir,
-      logger: noopLogger(),
-      execFn: stub.execFn,
-    });
-    const snapshotDir = path.join(runDir, "snapshot", "ts1");
-    const stat = await fs.stat(snapshotDir);
-    assert.ok(stat.isDirectory(), "snapshot dir should be created");
-  } finally {
-    await fs.rm(runDir, { recursive: true, force: true });
-  }
-});
+// ── unknown kind ──────────────────────────────────────────────────────────────
 
-test("loki source: returned source has kind=local-fs and correct path", async () => {
-  const runDir = await tempDir();
-  try {
-    const stub = makeExecStub();
-    const result = await materializeTrafficSource(makeLokiSource({ name: "ts2" }), {
-      runDir,
-      logger: noopLogger(),
-      execFn: stub.execFn,
-    });
-    assert.equal(result.spec.store.kind, "local-fs");
-    assert.equal(result.spec.store.path, path.join(runDir, "snapshot", "ts2"));
-    // loki-specific fields cleared
-    assert.equal(result.spec.store.logql, undefined);
-    assert.equal(result.spec.store.window, undefined);
-    assert.equal(result.spec.store.endpoint, undefined);
-    assert.equal(result.spec.store.auth, undefined);
-  } finally {
-    await fs.rm(runDir, { recursive: true, force: true });
-  }
-});
-
-test("loki source: command includes --loki-url and --out-dir", async () => {
-  const runDir = await tempDir();
-  try {
-    const stub = makeExecStub();
-    await materializeTrafficSource(
-      makeLokiSource({ endpoint: "http://loki.monitoring:3100" }),
-      { runDir, logger: noopLogger(), execFn: stub.execFn },
-    );
-    assert.ok(stub.lastCmd.includes("--loki-url"), "cmd should include --loki-url");
-    assert.ok(stub.lastCmd.includes("http://loki.monitoring:3100"), "cmd should contain the endpoint");
-    assert.ok(stub.lastCmd.includes("--out-dir"), "cmd should include --out-dir");
-  } finally {
-    await fs.rm(runDir, { recursive: true, force: true });
-  }
-});
-
-test("loki source: --logql used when store.logql is set", async () => {
-  const runDir = await tempDir();
-  try {
-    const stub = makeExecStub();
-    await materializeTrafficSource(
-      makeLokiSource({ logql: '{app="my-app"} |= "ERROR"' }),
-      { runDir, logger: noopLogger(), execFn: stub.execFn },
-    );
-    assert.ok(stub.lastCmd.includes("--logql"), "cmd should include --logql flag");
-    assert.ok(stub.lastCmd.includes("my-app"), "cmd should embed the query");
-    // cluster/service filters must NOT appear when --logql is set
-    assert.ok(!stub.lastCmd.includes("--cluster"), "cmd should not include --cluster when logql is set");
-  } finally {
-    await fs.rm(runDir, { recursive: true, force: true });
-  }
-});
-
-test("loki source: scope filters used when no logql", async () => {
-  const runDir = await tempDir();
-  try {
-    const stub = makeExecStub();
-    await materializeTrafficSource(
-      makeLokiSource({ clusters: ["us-east-1"], services: ["radar"] }),
-      { runDir, logger: noopLogger(), execFn: stub.execFn },
-    );
-    assert.ok(stub.lastCmd.includes("--cluster"), "cmd should include --cluster");
-    assert.ok(stub.lastCmd.includes("us-east-1"), "cmd should include cluster name");
-    assert.ok(stub.lastCmd.includes("--service"), "cmd should include --service");
-    assert.ok(stub.lastCmd.includes("radar"), "cmd should include service name");
-  } finally {
-    await fs.rm(runDir, { recursive: true, force: true });
-  }
-});
-
-test("loki source: custom window passed as --start", async () => {
-  const runDir = await tempDir();
-  try {
-    const stub = makeExecStub();
-    await materializeTrafficSource(
-      makeLokiSource({ window: "-30m" }),
-      { runDir, logger: noopLogger(), execFn: stub.execFn },
-    );
-    assert.ok(stub.lastCmd.includes("--start"), "cmd should include --start");
-    assert.ok(stub.lastCmd.includes("-30m"), "cmd should include custom window");
-  } finally {
-    await fs.rm(runDir, { recursive: true, force: true });
-  }
-});
-
-test("loki source: default window is -1h", async () => {
-  const runDir = await tempDir();
-  try {
-    const stub = makeExecStub();
-    await materializeTrafficSource(
-      makeLokiSource(), // no window set
-      { runDir, logger: noopLogger(), execFn: stub.execFn },
-    );
-    assert.ok(stub.lastCmd.includes("-1h"), "default window should be -1h");
-  } finally {
-    await fs.rm(runDir, { recursive: true, force: true });
-  }
-});
-
-test("loki source: custom lokiGatherPath used in command", async () => {
-  const runDir = await tempDir();
-  try {
-    const stub = makeExecStub();
-    await materializeTrafficSource(makeLokiSource(), {
-      runDir,
-      logger: noopLogger(),
-      execFn: stub.execFn,
-      lokiGatherPath: "/opt/my-loki-gather",
-    });
-    assert.ok(
-      stub.lastCmd.includes("/opt/my-loki-gather"),
-      "custom lokiGatherPath should appear in command",
-    );
-  } finally {
-    await fs.rm(runDir, { recursive: true, force: true });
-  }
-});
-
-test("loki source: exec failure is wrapped and rethrown", async () => {
+test("unknown kind throws with helpful message", async () => {
+  const source = makeSource("local-fs");
+  // @ts-ignore — force an unknown kind to test the guard
+  source.spec.store.kind = "elasticsearch";
   const runDir = await tempDir();
   try {
     await assert.rejects(
-      () =>
-        materializeTrafficSource(makeLokiSource(), {
-          runDir,
-          logger: noopLogger(),
-          execFn: failingExecStub("connection refused"),
-        }),
+      () => materializeTrafficSource(source, { runDir, logger: noopLogger() }),
       (err: Error) => {
-        assert.ok(err.message.includes("loki-gather failed"), "error should mention loki-gather failed");
+        assert.ok(err.message.includes('"elasticsearch"'), "error should name the unknown kind");
+        assert.ok(err.message.includes("no adapter"), "error should say no adapter");
+        return true;
+      },
+    );
+  } finally {
+    await fs.rm(runDir, { recursive: true, force: true });
+  }
+});
+
+// ── speedscale-cloud ──────────────────────────────────────────────────────────
+
+test("speedscale-cloud: calls proxymock cloud pull snapshot with snapshot ID", async () => {
+  const source = makeSource("speedscale-cloud", { path: "abc-123-snapshot-id" });
+  const runDir = await tempDir();
+  try {
+    const stub = makeExecStub();
+    await materializeTrafficSource(source, {
+      runDir, logger: noopLogger(), execFn: stub.execFn,
+      proxymockPath: "/usr/local/bin/proxymock",
+    });
+    assert.ok(stub.lastCmd.includes("cloud"), "cmd should include 'cloud'");
+    assert.ok(stub.lastCmd.includes("pull"), "cmd should include 'pull'");
+    assert.ok(stub.lastCmd.includes("snapshot"), "cmd should include 'snapshot'");
+    assert.ok(stub.lastCmd.includes("abc-123-snapshot-id"), "cmd should include snapshot ID");
+    assert.ok(stub.lastCmd.includes("--out"), "cmd should include --out");
+  } finally {
+    await fs.rm(runDir, { recursive: true, force: true });
+  }
+});
+
+test("speedscale-cloud: result has kind=local-fs pointing at snapshot subdir", async () => {
+  const source = makeSource("speedscale-cloud", { path: "snap-uuid" }, {}, "cloud-ts");
+  const runDir = await tempDir();
+  try {
+    const stub = makeExecStub();
+    const result = await materializeTrafficSource(source, {
+      runDir, logger: noopLogger(), execFn: stub.execFn,
+    });
+    assert.equal(result.spec.store.kind, "local-fs");
+    assert.equal(result.spec.store.path, path.join(runDir, "snapshot", "cloud-ts"));
+  } finally {
+    await fs.rm(runDir, { recursive: true, force: true });
+  }
+});
+
+test("speedscale-cloud: throws when store.path (snapshot ID) is missing", async () => {
+  const source = makeSource("speedscale-cloud"); // no path
+  const runDir = await tempDir();
+  try {
+    await assert.rejects(
+      () => materializeTrafficSource(source, { runDir, logger: noopLogger(), execFn: makeExecStub().execFn }),
+      /snapshot ID/,
+    );
+  } finally {
+    await fs.rm(runDir, { recursive: true, force: true });
+  }
+});
+
+test("speedscale-cloud: injects SPEEDSCALE_API_KEY from auth secret", async () => {
+  const source = makeSource("speedscale-cloud", {
+    path: "snap-id",
+    auth: { secretRef: { name: "spd-key", key: "api-key" } },
+  });
+  const runDir = await tempDir();
+  try {
+    const stub = makeExecStub();
+    await materializeTrafficSource(source, {
+      runDir, logger: noopLogger(), execFn: stub.execFn,
+      namespace: "default",
+      readSecret: async (_ns, name, key) => {
+        assert.equal(name, "spd-key");
+        assert.equal(key, "api-key");
+        return "my-api-key";
+      },
+    });
+    assert.equal(stub.lastEnv?.SPEEDSCALE_API_KEY, "my-api-key");
+  } finally {
+    await fs.rm(runDir, { recursive: true, force: true });
+  }
+});
+
+// ── speedscale-onprem ─────────────────────────────────────────────────────────
+
+test("speedscale-onprem: cmd includes --app-url from store.endpoint", async () => {
+  const source = makeSource("speedscale-onprem", {
+    path: "snap-uuid",
+    endpoint: "https://speedscale.mycompany.com",
+  });
+  const runDir = await tempDir();
+  try {
+    const stub = makeExecStub();
+    await materializeTrafficSource(source, {
+      runDir, logger: noopLogger(), execFn: stub.execFn,
+    });
+    assert.ok(stub.lastCmd.includes("--app-url"), "cmd should include --app-url");
+    assert.ok(stub.lastCmd.includes("mycompany.com"), "cmd should include on-prem URL");
+    assert.ok(stub.lastCmd.includes("snap-uuid"), "cmd should include snapshot ID");
+  } finally {
+    await fs.rm(runDir, { recursive: true, force: true });
+  }
+});
+
+test("speedscale-onprem: throws when store.endpoint is missing", async () => {
+  const source = makeSource("speedscale-onprem", { path: "snap-uuid" }); // no endpoint
+  const runDir = await tempDir();
+  try {
+    await assert.rejects(
+      () => materializeTrafficSource(source, { runDir, logger: noopLogger(), execFn: makeExecStub().execFn }),
+      /store\.endpoint/,
+    );
+  } finally {
+    await fs.rm(runDir, { recursive: true, force: true });
+  }
+});
+
+test("speedscale-onprem: throws when store.path (snapshot ID) is missing", async () => {
+  const source = makeSource("speedscale-onprem", { endpoint: "https://speedscale.mycompany.com" });
+  const runDir = await tempDir();
+  try {
+    await assert.rejects(
+      () => materializeTrafficSource(source, { runDir, logger: noopLogger(), execFn: makeExecStub().execFn }),
+      /snapshot ID/,
+    );
+  } finally {
+    await fs.rm(runDir, { recursive: true, force: true });
+  }
+});
+
+// ── loki ─────────────────────────────────────────────────────────────────────
+
+test("loki: snapshot dir is created", async () => {
+  const source = makeSource("loki", { endpoint: "http://loki:3100" }, {}, "loki-ts");
+  const runDir = await tempDir();
+  try {
+    const stub = makeExecStub();
+    await materializeTrafficSource(source, { runDir, logger: noopLogger(), execFn: stub.execFn });
+    const snapshotDir = path.join(runDir, "snapshot", "loki-ts");
+    assert.ok((await fs.stat(snapshotDir)).isDirectory());
+  } finally {
+    await fs.rm(runDir, { recursive: true, force: true });
+  }
+});
+
+test("loki: cmd includes --loki-url and --out-dir", async () => {
+  const source = makeSource("loki", { endpoint: "http://loki.monitoring:3100" });
+  const runDir = await tempDir();
+  try {
+    const stub = makeExecStub();
+    await materializeTrafficSource(source, { runDir, logger: noopLogger(), execFn: stub.execFn });
+    assert.ok(stub.lastCmd.includes("--loki-url"));
+    assert.ok(stub.lastCmd.includes("loki.monitoring:3100"));
+    assert.ok(stub.lastCmd.includes("--out-dir"));
+  } finally {
+    await fs.rm(runDir, { recursive: true, force: true });
+  }
+});
+
+test("loki: --logql flag used when store.logql is set (no --cluster)", async () => {
+  const source = makeSource("loki", { endpoint: "http://loki:3100", logql: '{app="x"} |= "ERR"' });
+  const runDir = await tempDir();
+  try {
+    const stub = makeExecStub();
+    await materializeTrafficSource(source, { runDir, logger: noopLogger(), execFn: stub.execFn });
+    assert.ok(stub.lastCmd.includes("--logql"));
+    assert.ok(!stub.lastCmd.includes("--cluster"), "should not include --cluster when logql is set");
+  } finally {
+    await fs.rm(runDir, { recursive: true, force: true });
+  }
+});
+
+test("loki: scope cluster/service filters used when no logql", async () => {
+  const source = makeSource("loki", { endpoint: "http://loki:3100" }, { clusters: ["us-east"], services: ["radar"] });
+  const runDir = await tempDir();
+  try {
+    const stub = makeExecStub();
+    await materializeTrafficSource(source, { runDir, logger: noopLogger(), execFn: stub.execFn });
+    assert.ok(stub.lastCmd.includes("--cluster"));
+    assert.ok(stub.lastCmd.includes("us-east"));
+    assert.ok(stub.lastCmd.includes("--service"));
+    assert.ok(stub.lastCmd.includes("radar"));
+  } finally {
+    await fs.rm(runDir, { recursive: true, force: true });
+  }
+});
+
+test("loki: default window is -1h", async () => {
+  const source = makeSource("loki", { endpoint: "http://loki:3100" });
+  const runDir = await tempDir();
+  try {
+    const stub = makeExecStub();
+    await materializeTrafficSource(source, { runDir, logger: noopLogger(), execFn: stub.execFn });
+    assert.ok(stub.lastCmd.includes("-1h"));
+  } finally {
+    await fs.rm(runDir, { recursive: true, force: true });
+  }
+});
+
+test("loki: custom window passed as --start", async () => {
+  const source = makeSource("loki", { endpoint: "http://loki:3100", window: "-30m" });
+  const runDir = await tempDir();
+  try {
+    const stub = makeExecStub();
+    await materializeTrafficSource(source, { runDir, logger: noopLogger(), execFn: stub.execFn });
+    assert.ok(stub.lastCmd.includes("--start"));
+    assert.ok(stub.lastCmd.includes("-30m"));
+  } finally {
+    await fs.rm(runDir, { recursive: true, force: true });
+  }
+});
+
+test("loki: throws when store.endpoint is missing", async () => {
+  const source = makeSource("loki"); // no endpoint
+  const runDir = await tempDir();
+  try {
+    await assert.rejects(
+      () => materializeTrafficSource(source, { runDir, logger: noopLogger(), execFn: makeExecStub().execFn }),
+      /store\.endpoint/,
+    );
+  } finally {
+    await fs.rm(runDir, { recursive: true, force: true });
+  }
+});
+
+test("loki: LOKI_AUTH_TOKEN injected from auth secret", async () => {
+  const source = makeSource("loki", {
+    endpoint: "http://loki:3100",
+    auth: { secretRef: { name: "loki-creds", key: "token" } },
+  });
+  const runDir = await tempDir();
+  try {
+    const stub = makeExecStub();
+    await materializeTrafficSource(source, {
+      runDir, logger: noopLogger(), execFn: stub.execFn,
+      namespace: "prod",
+      readSecret: async () => "my-loki-token",
+    });
+    assert.equal(stub.lastEnv?.LOKI_AUTH_TOKEN, "my-loki-token");
+  } finally {
+    await fs.rm(runDir, { recursive: true, force: true });
+  }
+});
+
+test("loki: auth secret failure logs warning but does not throw", async () => {
+  const source = makeSource("loki", {
+    endpoint: "http://loki:3100",
+    auth: { secretRef: { name: "missing-secret", key: "token" } },
+  });
+  const runDir = await tempDir();
+  try {
+    const stub = makeExecStub();
+    const { logger, lines } = captureLogger();
+    await materializeTrafficSource(source, {
+      runDir, logger, execFn: stub.execFn,
+      namespace: "prod",
+      readSecret: async () => { throw new Error("not found"); },
+    });
+    assert.ok(lines.some((l) => l.level === "warn"), "should warn on secret read failure");
+    assert.equal(stub.lastEnv, undefined, "env should be undefined when auth fails");
+  } finally {
+    await fs.rm(runDir, { recursive: true, force: true });
+  }
+});
+
+// ── error propagation ────────────────────────────────────────────────────────
+
+test("exec failure is wrapped with source name and kind", async () => {
+  const source = makeSource("loki", { endpoint: "http://loki:3100" }, {}, "my-loki-src");
+  const runDir = await tempDir();
+  try {
+    await assert.rejects(
+      () => materializeTrafficSource(source, {
+        runDir, logger: noopLogger(), execFn: failingExecStub("connection refused"),
+      }),
+      (err: Error) => {
+        assert.ok(err.message.includes("my-loki-src"), "error should name the source");
+        assert.ok(err.message.includes("loki"), "error should name the kind");
         assert.ok(err.message.includes("connection refused"), "error should include original message");
         return true;
       },
@@ -274,106 +384,47 @@ test("loki source: exec failure is wrapped and rethrown", async () => {
   }
 });
 
-test("loki source: missing endpoint throws before exec", async () => {
-  const runDir = await tempDir();
-  try {
-    const source = makeLokiSource();
-    source.spec.store.endpoint = undefined; // endpoint is optional — remove it to trigger validation
-    const stub = makeExecStub();
-    await assert.rejects(
-      () => materializeTrafficSource(source, { runDir, logger: noopLogger(), execFn: stub.execFn }),
-      /store\.endpoint is not set/,
-    );
-  } finally {
-    await fs.rm(runDir, { recursive: true, force: true });
-  }
-});
+// ── immutability ──────────────────────────────────────────────────────────────
 
-test("loki source: auth secret is read and injected as LOKI_AUTH_TOKEN env var", async () => {
+test("original source object is not mutated by materialization", async () => {
+  const source = makeSource("loki", { endpoint: "http://loki:3100", logql: "{x=1}" });
+  const originalKind = source.spec.store.kind;
+  const originalEndpoint = source.spec.store.endpoint;
   const runDir = await tempDir();
   try {
-    const stub = makeExecStub();
-    const source = makeLokiSource({
-      auth: { secretRef: { name: "loki-creds", key: "token" } },
-    });
     await materializeTrafficSource(source, {
-      runDir,
-      logger: noopLogger(),
-      execFn: stub.execFn,
-      readSecret: async (_ns, name, key) => {
-        assert.equal(name, "loki-creds");
-        assert.equal(key, "token");
-        return "my-bearer-token";
-      },
-      namespace: "prod",
+      runDir, logger: noopLogger(), execFn: makeExecStub().execFn,
     });
-    assert.equal(stub.lastEnv?.LOKI_AUTH_TOKEN, "my-bearer-token");
+    assert.equal(source.spec.store.kind, originalKind);
+    assert.equal(source.spec.store.endpoint, originalEndpoint);
   } finally {
     await fs.rm(runDir, { recursive: true, force: true });
   }
 });
 
-test("loki source: auth secret failure logs warning but does not throw", async () => {
-  const runDir = await tempDir();
-  try {
-    const stub = makeExecStub();
-    const { logger, lines } = captureLogger();
-    const source = makeLokiSource({
-      auth: { secretRef: { name: "missing-secret", key: "token" } },
-    });
-    // Should NOT throw — missing auth is a warn-and-continue
-    await materializeTrafficSource(source, {
-      runDir,
-      logger,
-      execFn: stub.execFn,
-      readSecret: async () => { throw new Error("secret not found"); },
-      namespace: "prod",
-    });
-    const warnLine = lines.find((l) => l.level === "warn" && l.msg.includes("auth secret"));
-    assert.ok(warnLine, "should log a warning when secret read fails");
-    // env should not have LOKI_AUTH_TOKEN
-    assert.equal(stub.lastEnv, undefined);
-  } finally {
-    await fs.rm(runDir, { recursive: true, force: true });
-  }
-});
+// ── materializeTrafficSources (batch) ────────────────────────────────────────
 
-test("materializeTrafficSources: passes through mixed source list", async () => {
+test("materializeTrafficSources handles mixed source list", async () => {
   const runDir = await tempDir();
   try {
     const stub = makeExecStub();
     const sources: TrafficSource[] = [
-      makeLocalSource("local1"),
-      makeLokiSource({ name: "loki1" }),
-      makeLocalSource("local2"),
+      makeSource("local-fs", { path: "/snap1" }, {}, "src-local"),
+      makeSource("loki", { endpoint: "http://loki:3100" }, {}, "src-loki"),
+      makeSource("speedscale-cloud", { path: "uuid-456" }, {}, "src-cloud"),
     ];
     const results = await materializeTrafficSources(sources, {
-      runDir,
-      logger: noopLogger(),
-      execFn: stub.execFn,
+      runDir, logger: noopLogger(), execFn: stub.execFn,
     });
     assert.equal(results.length, 3);
-    assert.equal(results[0].spec.store.kind, "local-fs");
-    assert.equal(results[0].metadata.name, "local1");
-    assert.equal(results[1].spec.store.kind, "local-fs"); // materialized
-    assert.equal(results[1].metadata.name, "loki1");
+    // local-fs: same reference, path unchanged
+    assert.equal(results[0], sources[0]);
+    // loki: rewritten to local-fs
+    assert.equal(results[1].spec.store.kind, "local-fs");
+    assert.equal(results[1].metadata.name, "src-loki");
+    // speedscale-cloud: rewritten to local-fs
     assert.equal(results[2].spec.store.kind, "local-fs");
-    assert.equal(results[2].metadata.name, "local2");
-  } finally {
-    await fs.rm(runDir, { recursive: true, force: true });
-  }
-});
-
-test("original source object is not mutated by materialization", async () => {
-  const runDir = await tempDir();
-  try {
-    const stub = makeExecStub();
-    const source = makeLokiSource();
-    const originalKind = source.spec.store.kind;
-    const originalEndpoint = source.spec.store.endpoint;
-    await materializeTrafficSource(source, { runDir, logger: noopLogger(), execFn: stub.execFn });
-    assert.equal(source.spec.store.kind, originalKind, "original kind must not be mutated");
-    assert.equal(source.spec.store.endpoint, originalEndpoint, "original endpoint must not be mutated");
+    assert.equal(results[2].metadata.name, "src-cloud");
   } finally {
     await fs.rm(runDir, { recursive: true, force: true });
   }

@@ -73,26 +73,51 @@ CLI flag > env var > default. CLI flags are only honored by the one-shot `llm-ru
 | `AF_HEALTHZ_PORT` | controller | `8081` | Liveness probe port. |
 | `KUBERNETES_SERVICE_HOST` | controller/k8s | (set by k8s) | Used to detect in-cluster vs out-of-cluster. |
 
-## Traffic materializer (Loki / BYOC)
+## Traffic materializer (TrafficSource adapters)
 
-The controller materialises `TrafficSource` objects with `store.kind: loki` into
-local snapshot directories before running an agent. This requires `python3` and
-the `loki-gather` script to be present in the Docker image (included by default
-since the Dockerfile downloads it at build time from the speedscale/demo reference
-architecture at a pinned commit).
+The controller runs a pluggable adapter for each `TrafficSource` before handing
+the `AgentRunContext` to an agent. Each `store.kind` maps to a specific adapter:
 
-| Var | Consumer | Default | Notes |
-|---|---|---|---|
-| `AF_LOKI_GATHER_PATH` | controller (traffic-materializer) | `/usr/local/bin/loki-gather` | Absolute path to the `loki-gather` Python script. Override for custom installs or local dev where the script lives elsewhere. |
+| `store.kind` | Adapter | Status |
+|---|---|---|
+| `local-fs` | Pass-through — snapshot is already on disk | ✅ implemented |
+| `speedscale-cloud` | `proxymock cloud pull snapshot <id> --out <dir>` | ✅ implemented |
+| `speedscale-onprem` | Same + `--app-url <store.endpoint>` | ✅ implemented |
+| `loki` | `python3 loki-gather --loki-url <endpoint> --out-dir <dir>` | ✅ implemented |
+| `elasticsearch` | Gather via Elasticsearch query API | 🚧 TBD |
+| `fluent-bit` | Gather via Fluent Bit HTTP output | 🚧 TBD |
 
-**Loki TrafficSource fields** (`spec.store` when `kind: loki`):
+Adding a new adapter: implement an `AdapterFn` in `src/lib/traffic-materializer.ts`,
+add it to the `ADAPTERS` registry, extend the CRD enum and TS union.
+
+**Environment variables:**
+
+| Var | Default | Notes |
+|---|---|---|
+| `AF_PROXYMOCK_PATH` | `proxymock` (resolved via `PATH`) | Override path to the `proxymock` binary. Used by `speedscale-cloud` and `speedscale-onprem` adapters. |
+| `AF_LOKI_GATHER_PATH` | `/usr/local/bin/loki-gather` | Override path to the `loki-gather` Python script. Used by the `loki` adapter. |
+
+**`store.kind: speedscale-cloud` fields:**
 
 | Field | Required | Notes |
 |---|---|---|
-| `endpoint` | yes | Base URL of the Loki HTTP API, e.g. `http://loki.monitoring:3100`. |
-| `logql` | no | Full LogQL query. When set, bypasses the `scope.clusters` / `scope.services` label filters. |
-| `window` | no | Time window for `--start` flag (e.g. `-1h`, `-15m`, RFC3339). Defaults to `-1h`. |
-| `auth.secretRef` | no | Reference to a k8s Secret whose value is passed to loki-gather as `LOKI_AUTH_TOKEN`. Omit for in-cluster Loki without auth. |
+| `path` | yes | Speedscale Cloud snapshot UUID, e.g. `e2d4a538-626d-465e-8bf3-1c5c6eb74600`. |
+| `auth.secretRef` | no | k8s Secret whose value is `SPEEDSCALE_API_KEY`. Omit when the key is already in the pod environment. |
+
+**`store.kind: speedscale-onprem` fields** (same as above, plus):
+
+| Field | Required | Notes |
+|---|---|---|
+| `endpoint` | yes | On-prem Speedscale app URL, e.g. `https://speedscale.mycompany.com`. |
+
+**`store.kind: loki` fields:**
+
+| Field | Required | Notes |
+|---|---|---|
+| `endpoint` | yes | Loki HTTP base URL, e.g. `http://loki.monitoring:3100`. |
+| `logql` | no | Full LogQL query. Overrides `scope.clusters` / `scope.services` label filters when set. |
+| `window` | no | `--start` window (e.g. `-1h`, `-15m`, RFC3339). Defaults to `-1h`. |
+| `auth.secretRef` | no | k8s Secret whose value is `LOKI_AUTH_TOKEN`. Omit for unauthenticated in-cluster Loki. |
 
 ## Engine / model
 
