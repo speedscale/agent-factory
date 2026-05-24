@@ -48,11 +48,22 @@ spec:
                   properties:
                     kind:
                       type: string
-                      enum: [speedscale-cloud, speedscale-onprem, local-fs]
+                      enum: [speedscale-cloud, speedscale-onprem, local-fs, loki]
                     endpoint:
                       type: string
                     path:
                       type: string
+                    logql:
+                      type: string
+                      description: >
+                        Loki-only: full LogQL query selecting the traffic slice.
+                        Required when kind is "loki" and no scope filters are
+                        provided. Bypasses the cluster/service label filters.
+                    window:
+                      type: string
+                      description: >
+                        Loki-only: time window passed to loki-gather (e.g. "-1h",
+                        "-15m", or RFC3339). Defaults to "-1h" when unset.
                     auth:
                       type: object
                       required: [secretRef]

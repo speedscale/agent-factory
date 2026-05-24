@@ -73,6 +73,27 @@ CLI flag > env var > default. CLI flags are only honored by the one-shot `llm-ru
 | `AF_HEALTHZ_PORT` | controller | `8081` | Liveness probe port. |
 | `KUBERNETES_SERVICE_HOST` | controller/k8s | (set by k8s) | Used to detect in-cluster vs out-of-cluster. |
 
+## Traffic materializer (Loki / BYOC)
+
+The controller materialises `TrafficSource` objects with `store.kind: loki` into
+local snapshot directories before running an agent. This requires `python3` and
+the `loki-gather` script to be present in the Docker image (included by default
+since the Dockerfile downloads it at build time from the speedscale/demo reference
+architecture at a pinned commit).
+
+| Var | Consumer | Default | Notes |
+|---|---|---|---|
+| `AF_LOKI_GATHER_PATH` | controller (traffic-materializer) | `/usr/local/bin/loki-gather` | Absolute path to the `loki-gather` Python script. Override for custom installs or local dev where the script lives elsewhere. |
+
+**Loki TrafficSource fields** (`spec.store` when `kind: loki`):
+
+| Field | Required | Notes |
+|---|---|---|
+| `endpoint` | yes | Base URL of the Loki HTTP API, e.g. `http://loki.monitoring:3100`. |
+| `logql` | no | Full LogQL query. When set, bypasses the `scope.clusters` / `scope.services` label filters. |
+| `window` | no | Time window for `--start` flag (e.g. `-1h`, `-15m`, RFC3339). Defaults to `-1h`. |
+| `auth.secretRef` | no | Reference to a k8s Secret whose value is passed to loki-gather as `LOKI_AUTH_TOKEN`. Omit for in-cluster Loki without auth. |
+
 ## Engine / model
 
 The agent loop picks an LLM provider from `AF_ENGINE_KIND`. The Helm

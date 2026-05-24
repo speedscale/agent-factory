@@ -19,6 +19,7 @@ import {
   type AgentRunRecord,
   type AgentRunTransition,
 } from "../agent-run-recorder.js";
+import { materializeTrafficSources } from "../traffic-materializer.js";
 
 export interface DispatcherOptions {
   clients: K8sClients;
@@ -128,10 +129,29 @@ export async function dispatchAgentRun(
   const runDir = path.join(opts.runRootDir, namespace, runName);
   await fs.mkdir(runDir, { recursive: true });
 
+  // Materialise remote TrafficSources (e.g. kind=loki) into local snapshot
+  // directories before the agent runs. Non-loki sources are passed through
+  // unchanged.  Failures here are surfaced as a terminal run error so
+  // operators see a clear "loki-gather failed" message rather than a silent
+  // agent failure.
+  let materializedSources: TrafficSource[];
+  try {
+    materializedSources = await materializeTrafficSources(trafficSources, {
+      runDir,
+      logger,
+      namespace,
+      readSecret: (ns, name, key) =>
+        readK8sSecretValue(opts.clients, ns, name, key),
+    });
+  } catch (err) {
+    await fail(opts, namespace, runName, "TrafficSourceMaterializationFailed", String(err), runLogger);
+    return;
+  }
+
   const ctx: AgentRunContext = {
     app,
     run,
-    trafficSources,
+    trafficSources: materializedSources,
     runDir,
     logger,
   };
@@ -307,4 +327,27 @@ function adaptAgentLogger(runLogger: Logger): AgentLogger {
     warn: (msg, fields) => runLogger.warn(msg, fields),
     error: (msg, fields) => runLogger.error(msg, fields),
   };
+}
+
+/**
+ * Read a single key from a Kubernetes Secret and return its decoded string
+ * value. Throws if the secret or key does not exist.
+ */
+async function readK8sSecretValue(
+  clients: K8sClients,
+  namespace: string,
+  name: string,
+  key: string,
+): Promise<string> {
+  const obj = await clients.objects.read({
+    apiVersion: "v1",
+    kind: "Secret",
+    metadata: { name, namespace },
+  });
+  // k8s Secret data values are base64-encoded strings.
+  const data = (obj as unknown as { data?: Record<string, string> }).data ?? {};
+  if (!(key in data)) {
+    throw new Error(`Secret "${name}" in namespace "${namespace}" has no key "${key}"`);
+  }
+  return Buffer.from(data[key], "base64").toString("utf8");
 }

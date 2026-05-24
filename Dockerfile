@@ -12,8 +12,18 @@ FROM node:20-bookworm-slim AS runtime
 WORKDIR /app
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends git make openjdk-17-jdk-headless \
+  && apt-get install -y --no-install-recommends git make openjdk-17-jdk-headless python3 curl \
   && rm -rf /var/lib/apt/lists/*
+
+# Download loki-gather.py from the canonical speedscale/demo reference architecture at a
+# pinned commit so the image is reproducible. The script stays in the demos repo as the
+# single source of truth; we pull it at build time rather than duplicating it here.
+# nocheck — commit SHA below is a git hash, not a secret
+ARG LOKI_GATHER_COMMIT=98e6f4ef742565bb09c719c0c93282eddc02850d # nocheck
+RUN curl -fsSL \
+    "https://raw.githubusercontent.com/speedscale/demo/${LOKI_GATHER_COMMIT}/reference-architectures/grafana/scripts/loki-gather.py" \
+    -o /usr/local/bin/loki-gather \
+  && chmod +x /usr/local/bin/loki-gather
 
 COPY package*.json ./
 COPY --from=build /app/node_modules ./node_modules
