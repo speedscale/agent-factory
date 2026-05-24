@@ -2,17 +2,26 @@
 /**
  * Triage fixture runner.
  *
- * Loads YAML fixtures from `evals/fixtures/triage/`, calls the in-process
+ * Loads YAML fixtures from a configurable directory, calls the in-process
  * `runTriage()` once per fixture (cluster-bypassing — no controller, no
  * worker, no k8s), and writes one JSONL line per result through the
  * archive abstraction.
+ *
+ * Fixture directory resolution (highest priority first):
+ *   1. --fixtures-dir <path> CLI flag
+ *   2. AF_FIXTURES_DIR env var
+ *   3. <repo>/evals/fixtures/triage (default; ships only the generic
+ *      example shape — real fixture suites live per-instance under
+ *      speedstack/instances/agent-factory/<instance>/evals/fixtures/triage/)
  *
  * Output key:
  *   eval-runs/<YYYY-MM-DD>-<git-sha>/run.jsonl
  *
  * Usage:
- *   pnpm eval:triage                 # all fixtures
- *   pnpm eval:triage 002 005          # subset
+ *   pnpm eval:triage                                  # all fixtures (default dir)
+ *   pnpm eval:triage 002 005                          # filter by id substring
+ *   pnpm eval:triage --fixtures-dir /path/to/suite    # custom suite
+ *   AF_FIXTURES_DIR=/path/to/suite pnpm eval:triage
  *   AF_EVAL_PROVIDER=ds4 pnpm eval:triage
  *
  * Provider note: this runner shells out to `runTriage()` with its
@@ -63,18 +72,41 @@ interface RunResultLine {
   error?: string;
 }
 
-const FIXTURE_DIR = path.resolve(
+const DEFAULT_FIXTURE_DIR = path.resolve(
   path.dirname(url.fileURLToPath(import.meta.url)),
   "..",
   "fixtures",
   "triage",
 );
 
-async function loadFixtures(filter: string[]): Promise<Fixture[]> {
-  const files = (await fs.readdir(FIXTURE_DIR)).filter((f) => f.endsWith(".yaml")).sort();
+function resolveFixtureDir(argv: string[], env: NodeJS.ProcessEnv): string {
+  const flagIdx = argv.indexOf("--fixtures-dir");
+  if (flagIdx >= 0 && argv[flagIdx + 1]) {
+    return path.resolve(argv[flagIdx + 1]);
+  }
+  if (env.AF_FIXTURES_DIR) {
+    return path.resolve(env.AF_FIXTURES_DIR);
+  }
+  return DEFAULT_FIXTURE_DIR;
+}
+
+function stripFlags(argv: string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === "--fixtures-dir") {
+      i++; // skip flag value
+      continue;
+    }
+    out.push(argv[i]);
+  }
+  return out;
+}
+
+async function loadFixtures(dir: string, filter: string[]): Promise<Fixture[]> {
+  const files = (await fs.readdir(dir)).filter((f) => f.endsWith(".yaml")).sort();
   const out: Fixture[] = [];
   for (const f of files) {
-    const raw = await fs.readFile(path.join(FIXTURE_DIR, f), "utf8");
+    const raw = await fs.readFile(path.join(dir, f), "utf8");
     const fx = parseYaml(raw) as Fixture;
     if (filter.length > 0 && !filter.some((sub) => fx.id.includes(sub))) continue;
     out.push(fx);
@@ -104,12 +136,17 @@ function resolveProviderAndModel(env: NodeJS.ProcessEnv): { provider: LLMProvide
 }
 
 async function main(): Promise<void> {
-  const filter = process.argv.slice(2);
-  const fixtures = await loadFixtures(filter);
+  const rawArgs = process.argv.slice(2);
+  const fixtureDir = resolveFixtureDir(rawArgs, process.env);
+  const filter = stripFlags(rawArgs);
+  const fixtures = await loadFixtures(fixtureDir, filter);
   if (fixtures.length === 0) {
-    console.error(`No fixtures matched${filter.length ? ` filter ${filter.join(",")}` : ""}`);
+    console.error(
+      `No fixtures matched${filter.length ? ` filter ${filter.join(",")}` : ""} in ${fixtureDir}`,
+    );
     process.exit(1);
   }
+  console.log(`[eval-triage] fixtures dir: ${fixtureDir}`);
 
   const sha = gitSha();
   const day = today();

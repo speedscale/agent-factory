@@ -1,0 +1,43 @@
+# Example triage fixture — illustrates the schema only.
+#
+# Real fixture suites live per-instance under
+#   speedstack/instances/agent-factory/<instance>/evals/fixtures/triage/
+# and are loaded by passing --fixtures-dir <path> or setting
+# AF_FIXTURES_DIR.
+#
+# This file exists so:
+#   1. The substrate's YAML parsing has something to chew on in CI.
+#   2. New operators can copy the shape without hunting for the schema.
+#
+# Keep this generic: no real codebase references, no real bug reports.
+
+id: example-wellformed-bug
+title: "Handler returns 500 on edge-case input that should be 400"
+
+body: |
+  Repro: send the documented edge-case input to the handler.
+
+  Expected (per the handler's own contract comment): a 400 response with
+  the documented error code. Currently the validator throws an
+  unhandled exception that bubbles up as a 500.
+
+  Acceptance criteria:
+    - the edge-case input returns HTTP 400
+    - response body matches the documented error shape
+    - the existing skipped unit test for this case is re-enabled and passes
+
+  Recording: see traffic snapshot `<your-snapshot-name>` slice
+  `<your-slice-name>` for the exact failing request shape.
+
+labels: [auto-fix, bug]
+
+expected:
+  verdict: dispatch
+  must_not: [needs-info, decline]
+
+notes: |
+  Well-formed bug report: named contract, explicit acceptance criteria,
+  repro recipe, recording reference. The engine should accept this
+  without comment. Use as a template; replace every <placeholder> with
+  real values from your codebase before adding to your instance's
+  fixture suite.

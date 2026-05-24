@@ -27,12 +27,31 @@ import OpenAI from "openai";
 import { callLLM, type LLMProvider } from "../../src/lib/llm-providers.js";
 import { getArchiveStorage } from "../../src/lib/archive/index.js";
 
-const FIXTURE_DIR = path.resolve(
+const DEFAULT_FIXTURE_DIR = path.resolve(
   path.dirname(url.fileURLToPath(import.meta.url)),
   "..",
   "fixtures",
   "triage",
 );
+
+/**
+ * Fixture directory resolution mirrors `evals/runner/run-triage.ts`:
+ *   1. --fixtures-dir <path> CLI flag
+ *   2. AF_FIXTURES_DIR env var
+ *   3. <repo>/evals/fixtures/triage (default; ships only the generic
+ *      example shape — real fixture suites live per-instance under
+ *      speedstack/instances/agent-factory/<instance>/evals/fixtures/triage/)
+ */
+function resolveFixtureDir(argv: string[], env: NodeJS.ProcessEnv): string {
+  const flagIdx = argv.indexOf("--fixtures-dir");
+  if (flagIdx >= 0 && argv[flagIdx + 1]) {
+    return path.resolve(argv[flagIdx + 1]);
+  }
+  if (env.AF_FIXTURES_DIR) {
+    return path.resolve(env.AF_FIXTURES_DIR);
+  }
+  return DEFAULT_FIXTURE_DIR;
+}
 
 interface Fixture {
   id: string;
@@ -127,11 +146,11 @@ function buildUserMessage(fx: Fixture, result: RunResultLine): string {
   ].join("\n");
 }
 
-async function loadFixtures(): Promise<Map<string, Fixture>> {
-  const files = (await fs.readdir(FIXTURE_DIR)).filter((f) => f.endsWith(".yaml"));
+async function loadFixtures(dir: string): Promise<Map<string, Fixture>> {
+  const files = (await fs.readdir(dir)).filter((f) => f.endsWith(".yaml"));
   const out = new Map<string, Fixture>();
   for (const f of files) {
-    const raw = await fs.readFile(path.join(FIXTURE_DIR, f), "utf8");
+    const raw = await fs.readFile(path.join(dir, f), "utf8");
     const fx = parseYaml(raw) as Fixture;
     out.set(fx.id, fx);
   }
@@ -145,12 +164,15 @@ function parseJudgeArg(argv: string[]): { runDir: string; judges: JudgeSpec[] } 
     const a = argv[i];
     if (a === "--judges") {
       judgesArg = argv[++i];
+    } else if (a === "--fixtures-dir") {
+      // consumed by resolveFixtureDir() directly off argv; skip its value here
+      i++;
     } else if (!runDir) {
       runDir = a;
     }
   }
   if (!runDir) {
-    console.error("Usage: pnpm eval:judge <run-dir> [--judges <a,b>]");
+    console.error("Usage: pnpm eval:judge <run-dir> [--judges <a,b>] [--fixtures-dir <path>]");
     process.exit(2);
   }
   const judges: JudgeSpec[] = judgesArg.split(",").map((name) => {
@@ -316,7 +338,9 @@ export function buildAgreementReport(perJudge: Map<string, Judgment[]>): string 
 }
 
 async function main(): Promise<void> {
-  const { runDir, judges } = parseJudgeArg(process.argv.slice(2));
+  const argv = process.argv.slice(2);
+  const { runDir, judges } = parseJudgeArg(argv);
+  const fixtureDir = resolveFixtureDir(argv, process.env);
   const storage = getArchiveStorage();
   const buf = await storage.get(`${runDir}/run.jsonl`);
   const results: RunResultLine[] = buf
@@ -324,9 +348,9 @@ async function main(): Promise<void> {
     .split("\n")
     .filter((l) => l.trim())
     .map((l) => JSON.parse(l) as RunResultLine);
-  const fixtures = await loadFixtures();
+  const fixtures = await loadFixtures(fixtureDir);
 
-  console.log(`[judge] ${results.length} result(s), ${judges.length} judge(s)`);
+  console.log(`[judge] ${results.length} result(s), ${judges.length} judge(s), fixtures: ${fixtureDir}`);
 
   const perJudge = new Map<string, Judgment[]>();
   for (const judge of judges) {
