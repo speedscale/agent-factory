@@ -2,13 +2,54 @@
 
 Agent Factory runs a complete software-delivery loop — **Spec → Generate → Validate → Deploy → Observe** — driven by an LLM grounded in real captured traffic. Every fix is validated against production RRPairs via `proxymock` before a human approves it.
 
-## What it does
+## The loop
+
+```mermaid
+flowchart LR
+    issue([Issue / Alert / PR]):::trigger --> spec
+    spec[<b>Spec</b><br/>name metric<br/>reproduce on master]:::phase
+    spec --> gen[<b>Generate</b><br/>LLM writes<br/>minimal fix]:::phase
+    gen --> val[<b>Validate</b><br/>confirm harness<br/>+ regression replay]:::phase
+    val --> dep[<b>Deploy</b><br/>open PR/MR<br/>with evidence]:::phase
+    dep --> obs[<b>Observe</b><br/>post-deploy<br/>snapshot diff]:::phase
+    obs -. feedback .-> spec
+
+    traffic[("RRPair traffic<br/>via proxymock")]:::evidence
+    traffic -. evidence .-> spec
+    traffic -. baseline .-> val
+    traffic -. post-deploy diff .-> obs
+
+    classDef phase fill:#1f6feb,stroke:#1f6feb,color:#fff
+    classDef trigger fill:#6e7681,stroke:#6e7681,color:#fff
+    classDef evidence fill:#1a7f37,stroke:#1a7f37,color:#fff
+```
 
 1. **Spec** — ingests an issue, alert, or PR; pulls a snapshot of captured traffic; identifies the measurable metric the bug violates; confirms the bug is reproducible.
 2. **Generate** — LLM reads the relevant source files and writes a minimal fix.
 3. **Validate** — runs the same reproduce harness against the patched code to confirm the metric is within bound; runs regression replay via proxymock.
 4. **Deploy** — opens a PR/MR with the fix, harness output, and quality report as evidence.
 5. **Observe** — post-deploy snapshot comparison closes the loop.
+
+## How traffic gets in (BYOC)
+
+In BYOC the customer's existing observability is the traffic source. The Grafana + Loki reference architecture is the canonical path:
+
+```mermaid
+flowchart LR
+    apps([Customer apps]):::ext --> fwd[Speedscale<br/>Forwarder<br/>DLP + filter]:::sp
+    fwd -->|OTLP gRPC| col[OTel<br/>Collector]:::sp
+    col --> loki[(Loki)]:::store
+    loki --> graf[Grafana<br/>dashboards]:::store
+    loki -. loki-gather.py .-> snap[(Snapshot dir<br/>proxymock-readable)]:::sp
+    snap --> af{{Agent Factory<br/>Spec phase}}:::af
+
+    classDef ext fill:#6e7681,stroke:#6e7681,color:#fff
+    classDef sp fill:#1f6feb,stroke:#1f6feb,color:#fff
+    classDef store fill:#8957e5,stroke:#8957e5,color:#fff
+    classDef af fill:#1a7f37,stroke:#1a7f37,color:#fff
+```
+
+Customer data never leaves the customer VPC. See the [Grafana reference architecture](https://github.com/speedscale/demo/tree/main/reference-architectures/grafana) for install steps.
 
 ## Deployment modes
 
