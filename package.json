@@ -7,7 +7,9 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "check": "tsc --noEmit -p tsconfig.json",
-    "test": "tsx --test src/lib/*.test.ts src/agents/*.test.ts",
+    "test": "tsx --test src/lib/*.test.ts src/lib/**/*.test.ts src/agents/*.test.ts",
+    "eval:triage": "tsx evals/runner/run-triage.ts",
+    "eval:judge": "tsx evals/judge/judge-triage.ts",
     "intake-api": "tsx src/bin/intake-api.ts",
     "controller": "tsx src/bin/controller.ts",
     "worker": "tsx src/bin/worker.ts",
@@ -28,6 +30,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.96.0",
+    "@google-cloud/storage": "^7.19.0",
     "@kubernetes/client-node": "^1.4.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "ajv": "^8.20.0",

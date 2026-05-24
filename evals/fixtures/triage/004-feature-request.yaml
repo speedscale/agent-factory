@@ -1,0 +1,19 @@
+id: 004-feature-request
+title: "add dark mode to the API"
+body: |
+  We should support dark mode in the REST API responses. Maybe a header
+  like `X-Theme: dark` that swaps colors in the JSON. Customers have
+  been asking.
+
+  No bug — this is a new feature.
+labels: [auto-fix, feature]
+expected:
+  verdict: needs-info
+  must_not: [dispatch]
+notes: |
+  Out-of-scope for a bug-fix engine. A "dark mode for a JSON API" is
+  also incoherent — there's no rendering surface to theme. The triage
+  step should refuse it for being a feature request, ideally also
+  flagging the conceptual confusion. We accept either "needs-info"
+  (asking for clarification) or "decline" (refusing scope) as a pass;
+  what's NOT acceptable is dispatching a worker to try to "fix" it.
