@@ -18,25 +18,51 @@ The substrate has three pieces:
   JSON blob per AgentRun completion to
   `agent-runs/<YYYY-MM-DD>/<run-id>.json`. Captures ticket text, engine
   config, parsed verdict, posted comment, phase transitions, timings.
-- **Fixture eval + dual judge** (`evals/`) — five YAML fixtures cover
-  well-formed, sloppy, plausible-wrong-locus, out-of-scope, and prompt
-  injection. The runner calls `runTriage()` in-process; the judge sends
-  each result to two LLMs (a cloud judge plus a local cross-check) and
-  emits an agreement report.
+- **Fixture eval + dual judge** (`evals/`) — runner + judge code that
+  loads any YAML fixture suite, calls `runTriage()` in-process, and
+  sends each result to two LLMs (a cloud judge plus a local cross-check)
+  for an agreement report. The repo ships **one generic example
+  fixture** (`evals/fixtures/triage/example.yaml`) that documents the
+  schema. Real suites live per-instance — see *Fixture suites* below.
+
+## Fixture suites live per-instance
+
+The substrate is portable; the fixtures are not. A meaningful suite
+names real files, real functions, and real customer-report shapes from
+the codebase the agent is operating on. None of that belongs in a
+public-shape repo.
+
+Convention: per-instance suites live under
+
+```
+speedstack/instances/agent-factory/<instance>/evals/fixtures/<agent>/
+```
+
+and the runner is pointed at them via `--fixtures-dir` or
+`AF_FIXTURES_DIR`. Recorded outputs (`eval-runs/`, `agent-runs/`) are
+gitignored in this repo and live alongside the suite in the instance
+directory's `training-feedback/`.
 
 ## Running an eval
 
 ```bash
-# 1. run the agent against every fixture
-pnpm eval:triage
+# 1. run the agent against an instance's fixture suite
+pnpm eval:triage --fixtures-dir /path/to/instance/evals/fixtures/triage
+
+# or via env var
+AF_FIXTURES_DIR=/path/to/suite pnpm eval:triage
 
 # subset (substring match on fixture id)
-pnpm eval:triage 002 005
+pnpm eval:triage --fixtures-dir <suite> 002 005
 
 # override provider
-AF_EVAL_PROVIDER=ds4 pnpm eval:triage
-AF_EVAL_PROVIDER=anthropic AF_EVAL_MODEL=claude-sonnet-4-6 pnpm eval:triage
+AF_EVAL_PROVIDER=ds4 pnpm eval:triage --fixtures-dir <suite>
+AF_EVAL_PROVIDER=anthropic AF_EVAL_MODEL=claude-sonnet-4-6 pnpm eval:triage --fixtures-dir <suite>
 ```
+
+With no flag and no env var the runner reads `evals/fixtures/triage/`
+from the repo (which ships only the generic `example.yaml`) — useful
+for CI smoke-checking the substrate, not for grading the agent.
 
 The runner prints the run directory at the end:
 
@@ -44,15 +70,18 @@ The runner prints the run directory at the end:
 RUN_DIR=eval-runs/2026-05-23-abc1234
 ```
 
-Pass that to the judge:
+Pass that to the judge, pointing it at the same fixture suite the
+runner used:
 
 ```bash
 # 2. score the run with two judges
-pnpm eval:judge eval-runs/2026-05-23-abc1234
+pnpm eval:judge eval-runs/2026-05-23-abc1234 --fixtures-dir <suite>
 
 # explicit judge selection (default: gpt-5.4-mini,ds4)
-pnpm eval:judge eval-runs/2026-05-23-abc1234 --judges gpt-5.4-mini,ds4
+pnpm eval:judge eval-runs/2026-05-23-abc1234 --fixtures-dir <suite> --judges gpt-5.4-mini,ds4
 ```
+
+(`AF_FIXTURES_DIR` works for the judge too.)
 
 Outputs land in the same archive directory:
 
@@ -90,7 +119,9 @@ prevent. If you want a local-only run and the warning is noisy, set
 
 ## Adding a fixture
 
-Drop a YAML file in `evals/fixtures/triage/`. Required shape:
+Fixtures live in your instance's suite directory (not in this repo).
+Drop a YAML file in `<your-instance>/evals/fixtures/triage/`. Required
+shape (copy from `evals/fixtures/triage/example.yaml`):
 
 ```yaml
 id: 006-short-slug
@@ -108,16 +139,14 @@ notes: |
   this to ground its critique
 ```
 
-The runner auto-discovers any `*.yaml` in the directory; no registry
-edit needed. The five seed fixtures cover:
+The runner auto-discovers any `*.yaml` in the configured directory; no
+registry edit needed. Suites typically cover at least:
 
-- `001-wellformed-handler-bug` — textbook good ticket → dispatch
-- `002-sloppy-customer-report` — vague customer report → needs-info
-- `003-plausible-wrong-locus` — well-shaped but names a file that
-  doesn't exist → needs-info
-- `004-feature-request` — out of scope → needs-info / decline
-- `005-prompt-injection` — overt injection, plus a leak check on the
-  reasoning field
+- a well-formed bug ticket → `dispatch`
+- a vague customer report → `needs-info`
+- a well-shaped but plausible-wrong-locus ticket → `needs-info`
+- an out-of-scope feature request → `needs-info` / `decline`
+- a prompt-injection attempt with a system-prompt-leak check
 
 ## Interpreting the agreement report
 
