@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "check": "tsc --noEmit -p tsconfig.json",
+    "check": "tsc --noEmit -p tsconfig.json && npm run check:no-anthropic-default",
+    "check:no-anthropic-default": "scripts/check-no-anthropic-default.sh",
     "test": "tsx --test src/lib/*.test.ts src/lib/**/*.test.ts src/agents/*.test.ts",
     "eval:triage": "tsx evals/runner/run-triage.ts",
     "eval:judge": "tsx evals/judge/judge-triage.ts",

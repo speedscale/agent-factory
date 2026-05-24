@@ -27,6 +27,7 @@ Four planes must stay explicit:
 - **No private Speedscale dependencies.** Keep the repo portable. Internal integrations belong in configuration, not source.
 - **Worktree per run.** Every agent run creates a `git worktree` at `<workdir>/repo` on a new branch `agent/<ticket-slug>` (e.g. `agent/s-10886-radar-perf`) branched from `main`. The Worker writes all fixes into the worktree directory, never into the operator's live checkout. The worktree is created at Worker phase start, before any file is modified.
 - **Branch cleanup.** Agent branches are deleted and their worktrees removed after the PR merges. Stale unmerged agent branches older than 7 days must be flagged in the run store for operator review and deleted if no open PR exists. The naming prefix `agent/` is reserved; no human work should land on these branches.
+- **Engine config is resolved, never defaulted to Anthropic.** Agents and engine entry points pick the LLM via `resolveEngineConfig(env)` from `src/lib/engine-config.ts`. No `?? "anthropic"` fallbacks in `src/`. A misconfigured BYOC deployment must surface as a startup error, not quietly hit the public API. `npm run check:no-anthropic-default` enforces this on CI.
 
 ## Deployment models — what changes between them
 
