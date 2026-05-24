@@ -98,8 +98,11 @@ See [`examples/instances/`](examples/instances/) for `internal/`, `customer/`, `
 - [`docs/agents/triage.md`](docs/agents/triage.md) — triage agent specifics
 
 **Quality**
-- [`docs/EVALS.md`](docs/EVALS.md) — eval recording + dual-judge runner
-- [`docs/eval-openrouter-2026-05-18.md`](docs/eval-openrouter-2026-05-18.md) — cross-provider eval results
+- [`docs/EVALS.md`](docs/EVALS.md) — eval substrate: fixtures, runner, dual-judge
+
+> Recorded eval runs and other local training feedback live in each instance's
+> directory under speedstack (e.g. `speedstack/instances/agent-factory/<instance>/training-feedback/`),
+> not in this repo.
 
 **Contributing**
 - [`docs/developers.md`](docs/developers.md) — development workflow, contracts, release
