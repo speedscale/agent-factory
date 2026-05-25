@@ -53,6 +53,46 @@ Deployer opens a PR/MR. PR body contains: spec, rationale, QualityReport, reprod
 
 ---
 
+## BYOC end-to-end on Grafana
+
+The loop above is engine-agnostic about where traffic comes from. The
+**BYOC Grafana** path wires Loki as the evidence store: every RRPair the
+Speedscale operator captures is shipped as a structured log line, and the
+controller pulls a fresh slice into a local snapshot directory at AgentRun
+start. Nothing downstream of the snapshot changes — the Worker reads it
+through the same `local-fs` interface used by the speedscale-cloud path.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as User / ticket
+    participant K as kube-apiserver
+    participant C as agent-factory controller
+    participant M as traffic-materializer
+    participant L as Loki (byoc-grafana)
+    participant W as Worker (LLM engine)
+    participant R as Target repo
+
+    U->>K: apply AgentRun (appRef + agent)
+    K->>C: watch event ADDED
+    C->>K: read AgentApp, TrafficSource(s)
+    C->>M: materializeTrafficSources(opts)
+    M->>L: loki-gather --logql ... --start -1h
+    L-->>M: RRPair log lines
+    M-->>C: local-fs snapshot dir (per source)
+    C->>W: dispatch agent.run(ctx, materializedSources)
+    W->>R: clone, read code, write harness
+    W-->>C: triage.json | patch.diff | quality-report.json
+    C->>K: status.phase = succeeded
+```
+
+The same shape applies to Elasticsearch (`store.kind: elasticsearch` →
+`es-gather`) and Speedscale Cloud (`store.kind: speedscale-cloud` → `proxymock
+cloud pull`). The materializer hides the difference behind a single
+`local-fs` rewrite — see `src/lib/traffic-materializer.ts`.
+
+---
+
 ## System planes
 
 ### Engine plane
