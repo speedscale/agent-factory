@@ -292,7 +292,9 @@ async function lokiAdapter(
     lokiGatherPath,
     "--loki-url", shellescape(endpoint),
     "--out-dir", shellescape(snapshotDir),
-    "--start", shellescape(source.spec.store.window ?? "-1h"),
+    // Use --start=<value> (no space) so argparse doesn't mis-parse the
+    // negative offset ("-1h") as a flag when the shell splits the command.
+    `--start=${shellescape(source.spec.store.window ?? "-1h")}`,
   ];
 
   if (source.spec.store.logql) {
@@ -340,7 +342,8 @@ async function elasticsearchAdapter(
     esGatherPath,
     "--es-url", shellescape(endpoint),
     "--out-dir", shellescape(snapshotDir),
-    "--start", shellescape(source.spec.store.window ?? "-1h"),
+    // Use --start=<value> (no space) — same reason as loki materializer above.
+    `--start=${shellescape(source.spec.store.window ?? "-1h")}`,
   ];
 
   if (source.spec.store.query) {
