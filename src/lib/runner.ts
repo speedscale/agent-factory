@@ -295,17 +295,20 @@ async function prepareWorkspace(context: RunnerContext): Promise<void> {
   await cloneRepoIntoWorkspace(context);
 }
 
-async function writeCommandLog(logPath: string, result: CommandResult): Promise<void> {
-  const payload = [
-    `> ${result.command}`,
-    result.stdout.trimEnd(),
-    result.stderr.trimEnd() ? "[stderr]" : "",
-    result.stderr.trimEnd()
-  ]
-    .filter((line) => line.length > 0)
-    .join("\n");
+async function writeCommandLog(logPath: string, results: CommandResult | CommandResult[]): Promise<void> {
+  const arr = Array.isArray(results) ? results : [results];
+  const sections = arr.map((result) =>
+    [
+      `> ${result.command}`,
+      result.stdout.trimEnd(),
+      result.stderr.trimEnd() ? "[stderr]" : "",
+      result.stderr.trimEnd()
+    ]
+      .filter((line) => line.length > 0)
+      .join("\n")
+  );
 
-  await writeFile(logPath, `${payload}\n`, "utf8");
+  await writeFile(logPath, `${sections.join("\n\n")}\n`, "utf8");
 }
 
 async function capturePatchArtifact(context: RunnerContext, buildCommand: string): Promise<void> {
@@ -382,38 +385,95 @@ export async function loadRunnerContext(runInput: string, sourceDir?: string): P
   };
 }
 
+/**
+ * Run the install (optional) then test commands for the build stage. Pure
+ * orchestration — no filesystem side effects, no workspace prep. Exported for
+ * unit tests; production callers should go through `runBuildStage`.
+ *
+ * Install is skipped when `installCommand` is undefined or whitespace-only.
+ * If install fails, the test command is not run; the install result becomes
+ * the stage's terminal result and `failedStage` is "install".
+ */
+export async function runBuildCommands(
+  installCommand: string | undefined,
+  testCommand: string,
+  runCmd: (command: string, stageName: "install" | "build") => Promise<CommandResult>,
+): Promise<{
+  stageResults: CommandResult[];
+  result: CommandResult;
+  failedStage: "install" | "build" | null;
+}> {
+  const stageResults: CommandResult[] = [];
+  const installCmd = installCommand?.trim() ? installCommand.trim() : undefined;
+
+  let installResult: CommandResult | undefined;
+  if (installCmd) {
+    installResult = await runCmd(installCmd, "install");
+    stageResults.push(installResult);
+  }
+
+  // Skip test if install failed; running it would only obscure the real error.
+  const installFailed = installResult !== undefined && installResult.exitCode !== 0;
+  let testResult: CommandResult | undefined;
+  if (!installFailed) {
+    testResult = await runCmd(testCommand, "build");
+    stageResults.push(testResult);
+  }
+
+  // testResult is undefined iff install failed; installResult is defined in that case.
+  const result: CommandResult = installFailed ? installResult! : testResult!;
+  const failedStage: "install" | "build" | null = installFailed
+    ? "install"
+    : result.exitCode === 0
+    ? null
+    : "build";
+
+  return { stageResults, result, failedStage };
+}
+
 export async function runBuildStage(context: RunnerContext): Promise<{ result: CommandResult; run: AgentRun }> {
   await prepareWorkspace(context);
 
   const workspaceCwd = path.join(context.workspaceDir, context.app.spec.repo.workdir);
   await ensureWorkdirExists(workspaceCwd);
-  const command = context.app.spec.build.test;
-  const result = await runShellCommandWithRetries(
-    command,
-    workspaceCwd,
-    {
-      timeoutSeconds: context.app.spec.build.timeoutSeconds,
-      maxNoOutputSeconds: context.app.spec.build.maxNoOutputSeconds
-    },
-    context.app.spec.build.retries ?? 0,
-    "build"
+
+  const buildSpec = context.app.spec.build;
+  const cmdOpts = {
+    timeoutSeconds: buildSpec.timeoutSeconds,
+    maxNoOutputSeconds: buildSpec.maxNoOutputSeconds
+  };
+  const retries = buildSpec.retries ?? 0;
+
+  const testCommand = buildSpec.test;
+  const { stageResults, result, failedStage } = await runBuildCommands(
+    buildSpec.install,
+    testCommand,
+    (command, stageName) => runShellCommandWithRetries(command, workspaceCwd, cmdOpts, retries, stageName),
   );
+  const installCommand = buildSpec.install?.trim() ? buildSpec.install.trim() : undefined;
 
   await Promise.all([
-    writeCommandLog(resolveFromRepo(context.run.status.artifacts.buildLog ?? path.posix.join("artifacts", context.run.metadata.name, "build.log")), result),
-    capturePatchArtifact(context, command)
+    writeCommandLog(
+      resolveFromRepo(context.run.status.artifacts.buildLog ?? path.posix.join("artifacts", context.run.metadata.name, "build.log")),
+      stageResults
+    ),
+    capturePatchArtifact(context, testCommand)
   ]);
+
+  const summary =
+    failedStage === "install"
+      ? `Install command failed: ${installCommand}`
+      : failedStage === "build"
+      ? `Build command failed: ${testCommand}`
+      : `Build command succeeded: ${testCommand}`;
 
   const nextRun: AgentRun = {
     ...context.run,
     status: {
       ...context.run.status,
-      phase: result.exitCode === 0 ? "validating" : "failed",
+      phase: failedStage === null ? "validating" : "failed",
       lastTransitionAt: new Date().toISOString(),
-      summary:
-        result.exitCode === 0
-          ? `Build command succeeded: ${command}`
-          : `Build command failed: ${command}`,
+      summary,
       artifacts: {
         ...context.run.status.artifacts
       }
@@ -423,9 +483,11 @@ export async function runBuildStage(context: RunnerContext): Promise<{ result: C
   await writeJsonFile(resolveFromRepo("artifacts", context.run.metadata.name, "run.json"), nextRun);
 
   if (nextRun.status.phase === "failed") {
+    // Report whichever stage actually failed in the result artifact so the
+    // downstream summary names the command the user needs to fix.
     await writeRunResultArtifact(nextRun, {
       build: {
-        command,
+        command: failedStage === "install" ? installCommand! : testCommand,
         exitCode: result.exitCode
       }
     });

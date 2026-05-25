@@ -63,7 +63,13 @@ export interface AgentApp {
       };
     };
     build: {
-      install: string;
+      /**
+       * Dependency-install command run before `test` (e.g. `npm ci`, `go mod
+       * download`, `pip install -r requirements.txt`). Optional — an empty
+       * string or omitted field skips the install step. Shares the same
+       * timeoutSeconds / maxNoOutputSeconds / retries as `test`.
+       */
+      install?: string;
       test: string;
       start: string;
       timeoutSeconds?: number;
