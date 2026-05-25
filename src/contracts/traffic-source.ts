@@ -6,7 +6,7 @@ export interface TrafficSource {
   };
   spec: {
     store: {
-      kind: "speedscale-cloud" | "speedscale-onprem" | "local-fs" | "loki";
+      kind: "speedscale-cloud" | "speedscale-onprem" | "local-fs" | "loki" | "elasticsearch";
       endpoint?: string;
       path?: string;
       auth?: {
@@ -17,15 +17,21 @@ export interface TrafficSource {
       };
       /**
        * Loki-only: LogQL query used to select the slice of RRPair traffic.
-       * Required when kind is "loki". See speedscale/demo's
-       * reference-architectures/grafana/scripts/loki-gather.py for the
-       * label set the BYOC forwarder produces.
+       * When set, overrides scope.clusters / scope.services label filters.
+       * See speedscale/demo's reference-architectures/grafana/scripts/loki-gather.py
+       * for the label set the BYOC forwarder produces.
        */
       logql?: string;
       /**
-       * Loki-only: time window passed to loki-gather (e.g. "-1h", "-15m",
-       * or an RFC3339 timestamp). Optional; defaults to "-1h" when
-       * unset. Same syntax as loki-gather's --start flag.
+       * Elasticsearch-only: raw ES Query DSL JSON clause passed to es-gather's
+       * --query flag. When set, overrides scope.clusters / scope.services filters.
+       * See speedscale/demo's reference-architectures/elasticsearch/scripts/es-gather.py.
+       */
+      query?: string;
+      /**
+       * Time window for gather scripts (loki-gather --start, es-gather --start).
+       * Accepts relative offsets like "-1h", "-15m", or RFC3339 timestamps.
+       * Defaults to "-1h" when unset.
        */
       window?: string;
     };

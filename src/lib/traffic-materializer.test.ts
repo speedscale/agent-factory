@@ -92,13 +92,13 @@ test("local-fs: returned unchanged (no exec, no dir creation)", async () => {
 test("unknown kind throws with helpful message", async () => {
   const source = makeSource("local-fs");
   // @ts-ignore — force an unknown kind to test the guard
-  source.spec.store.kind = "elasticsearch";
+  source.spec.store.kind = "fluent-bit";
   const runDir = await tempDir();
   try {
     await assert.rejects(
       () => materializeTrafficSource(source, { runDir, logger: noopLogger() }),
       (err: Error) => {
-        assert.ok(err.message.includes('"elasticsearch"'), "error should name the unknown kind");
+        assert.ok(err.message.includes('"fluent-bit"'), "error should name the unknown kind");
         assert.ok(err.message.includes("no adapter"), "error should say no adapter");
         return true;
       },
@@ -357,6 +357,122 @@ test("loki: auth secret failure logs warning but does not throw", async () => {
     });
     assert.ok(lines.some((l) => l.level === "warn"), "should warn on secret read failure");
     assert.equal(stub.lastEnv, undefined, "env should be undefined when auth fails");
+  } finally {
+    await fs.rm(runDir, { recursive: true, force: true });
+  }
+});
+
+// ── elasticsearch ─────────────────────────────────────────────────────────────
+
+test("elasticsearch: cmd includes --es-url and --out-dir", async () => {
+  const source = makeSource("elasticsearch", { endpoint: "http://es.observability:9200" });
+  const runDir = await tempDir();
+  try {
+    const stub = makeExecStub();
+    await materializeTrafficSource(source, { runDir, logger: noopLogger(), execFn: stub.execFn });
+    assert.ok(stub.lastCmd.includes("--es-url"), "cmd should include --es-url");
+    assert.ok(stub.lastCmd.includes("es.observability:9200"), "cmd should include the ES URL");
+    assert.ok(stub.lastCmd.includes("--out-dir"), "cmd should include --out-dir");
+  } finally {
+    await fs.rm(runDir, { recursive: true, force: true });
+  }
+});
+
+test("elasticsearch: result has kind=local-fs and correct path", async () => {
+  const source = makeSource("elasticsearch", { endpoint: "http://es:9200" }, {}, "es-ts");
+  const runDir = await tempDir();
+  try {
+    const stub = makeExecStub();
+    const result = await materializeTrafficSource(source, {
+      runDir, logger: noopLogger(), execFn: stub.execFn,
+    });
+    assert.equal(result.spec.store.kind, "local-fs");
+    assert.equal(result.spec.store.path, path.join(runDir, "snapshot", "es-ts"));
+  } finally {
+    await fs.rm(runDir, { recursive: true, force: true });
+  }
+});
+
+test("elasticsearch: --query flag used when store.query is set (no --cluster)", async () => {
+  const source = makeSource("elasticsearch", {
+    endpoint: "http://es:9200",
+    query: '{"match":{"service":"radar"}}',
+  });
+  const runDir = await tempDir();
+  try {
+    const stub = makeExecStub();
+    await materializeTrafficSource(source, { runDir, logger: noopLogger(), execFn: stub.execFn });
+    assert.ok(stub.lastCmd.includes("--query"), "cmd should include --query");
+    assert.ok(stub.lastCmd.includes("radar"), "cmd should include query content");
+    assert.ok(!stub.lastCmd.includes("--cluster"), "should not include --cluster when query is set");
+  } finally {
+    await fs.rm(runDir, { recursive: true, force: true });
+  }
+});
+
+test("elasticsearch: scope cluster/service filters used when no query", async () => {
+  const source = makeSource("elasticsearch", { endpoint: "http://es:9200" }, { clusters: ["prod"], services: ["frontend"] });
+  const runDir = await tempDir();
+  try {
+    const stub = makeExecStub();
+    await materializeTrafficSource(source, { runDir, logger: noopLogger(), execFn: stub.execFn });
+    assert.ok(stub.lastCmd.includes("--cluster"));
+    assert.ok(stub.lastCmd.includes("prod"));
+    assert.ok(stub.lastCmd.includes("--service"));
+    assert.ok(stub.lastCmd.includes("frontend"));
+  } finally {
+    await fs.rm(runDir, { recursive: true, force: true });
+  }
+});
+
+test("elasticsearch: default window is -1h", async () => {
+  const source = makeSource("elasticsearch", { endpoint: "http://es:9200" });
+  const runDir = await tempDir();
+  try {
+    const stub = makeExecStub();
+    await materializeTrafficSource(source, { runDir, logger: noopLogger(), execFn: stub.execFn });
+    assert.ok(stub.lastCmd.includes("-1h"));
+  } finally {
+    await fs.rm(runDir, { recursive: true, force: true });
+  }
+});
+
+test("elasticsearch: custom window passed as --start", async () => {
+  const source = makeSource("elasticsearch", { endpoint: "http://es:9200", window: "-30m" });
+  const runDir = await tempDir();
+  try {
+    const stub = makeExecStub();
+    await materializeTrafficSource(source, { runDir, logger: noopLogger(), execFn: stub.execFn });
+    assert.ok(stub.lastCmd.includes("--start"));
+    assert.ok(stub.lastCmd.includes("-30m"));
+  } finally {
+    await fs.rm(runDir, { recursive: true, force: true });
+  }
+});
+
+test("elasticsearch: custom esGatherPath used in command", async () => {
+  const source = makeSource("elasticsearch", { endpoint: "http://es:9200" });
+  const runDir = await tempDir();
+  try {
+    const stub = makeExecStub();
+    await materializeTrafficSource(source, {
+      runDir, logger: noopLogger(), execFn: stub.execFn,
+      esGatherPath: "/opt/es-gather",
+    });
+    assert.ok(stub.lastCmd.includes("/opt/es-gather"));
+  } finally {
+    await fs.rm(runDir, { recursive: true, force: true });
+  }
+});
+
+test("elasticsearch: throws when store.endpoint is missing", async () => {
+  const source = makeSource("elasticsearch"); // no endpoint
+  const runDir = await tempDir();
+  try {
+    await assert.rejects(
+      () => materializeTrafficSource(source, { runDir, logger: noopLogger(), execFn: makeExecStub().execFn }),
+      /store\.endpoint/,
+    );
   } finally {
     await fs.rm(runDir, { recursive: true, force: true });
   }

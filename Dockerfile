@@ -25,6 +25,12 @@ RUN curl -fsSL \
     -o /usr/local/bin/loki-gather \
   && chmod +x /usr/local/bin/loki-gather
 
+ARG ES_GATHER_COMMIT=923265b74add898979d08a0566a589cccacde8b5 # nocheck
+RUN curl -fsSL \
+    "https://raw.githubusercontent.com/speedscale/demo/${ES_GATHER_COMMIT}/reference-architectures/elasticsearch/scripts/es-gather.py" \
+    -o /usr/local/bin/es-gather \
+  && chmod +x /usr/local/bin/es-gather
+
 COPY package*.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist

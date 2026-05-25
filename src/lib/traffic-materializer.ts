@@ -18,10 +18,14 @@
  *                     store.logql    = full LogQL (optional; overrides scope filters)
  *                     store.window   = --start window e.g. "-1h" (default: "-1h")
  *                     store.auth     = secretRef whose value is LOKI_AUTH_TOKEN
+ *   elasticsearch     `python3 es-gather --es-url <endpoint> --out-dir <dir>`
+ *                     store.endpoint = Elasticsearch HTTP base URL (required)
+ *                     store.query    = raw ES Query DSL JSON (optional; overrides scope filters)
+ *                     store.window   = --start window e.g. "-1h" (default: "-1h")
+ *                     (no auth flags — secure with network policy or a proxy)
  *
  * Planned (TBD) adapters
  * ──────────────────────
- *   elasticsearch     Gather via Elasticsearch query API (script TBD)
  *   fluent-bit        Gather via Fluent Bit HTTP output endpoint (script TBD)
  *
  * Both planned adapters will follow the same pattern: implement the adapter
@@ -62,6 +66,11 @@ export interface MaterializerOptions {
    */
   lokiGatherPath?: string;
   /**
+   * Path to the es-gather Python script.
+   * Default: AF_ES_GATHER_PATH env var, then "/usr/local/bin/es-gather".
+   */
+  esGatherPath?: string;
+  /**
    * Path to the proxymock binary.
    * Default: AF_PROXYMOCK_PATH env var, then "proxymock" (resolved via PATH).
    */
@@ -91,8 +100,8 @@ const ADAPTERS: Record<string, AdapterFn> = {
   "speedscale-cloud": speedscaleCloudAdapter,
   "speedscale-onprem": speedscaleOnpremAdapter,
   "loki": lokiAdapter,
-  // "elasticsearch": elasticsearchAdapter,  ← add here when ready
-  // "fluent-bit": fluentBitAdapter,         ← add here when ready
+  "elasticsearch": elasticsearchAdapter,
+  // "fluent-bit": fluentBitAdapter,  ← add here when ready
 };
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -297,6 +306,53 @@ async function lokiAdapter(
 
   const env = await resolveTokenEnv(source, "LOKI_AUTH_TOKEN", opts);
   await runCmd(`python3 ${args.join(" ")}`, env, `loki-gather (${sourceName})`, logger, opts.execFn);
+}
+
+/**
+ * elasticsearch: gather RRPairs from Elasticsearch using es-gather.
+ *
+ *   python3 es-gather --es-url <endpoint> --out-dir <snapshotDir>
+ *                     [--query <dsl-json> | --cluster <c> --service <s>]
+ *                     [--start <window>]
+ *
+ * store.endpoint = Elasticsearch HTTP base URL (required), e.g. http://es:9200
+ * store.query    = raw ES Query DSL JSON clause (optional; overrides scope filters)
+ * store.window   = --start window e.g. "-1h" (optional; default "-1h")
+ * (no auth — secure with network policy or a proxy in front of ES)
+ * scope.clusters = [0] used as --cluster filter when query is absent
+ * scope.services = [0] used as --service filter when query is absent
+ */
+async function elasticsearchAdapter(
+  source: TrafficSource,
+  snapshotDir: string,
+  opts: MaterializerOptions,
+): Promise<void> {
+  const { logger } = opts;
+  const sourceName = source.metadata.name;
+  const esGatherPath = opts.esGatherPath ?? process.env.AF_ES_GATHER_PATH ?? "/usr/local/bin/es-gather";
+
+  const endpoint = source.spec.store.endpoint;
+  if (!endpoint) {
+    throw new Error(`store.endpoint (Elasticsearch URL) is required for kind "elasticsearch"`);
+  }
+
+  const args: string[] = [
+    esGatherPath,
+    "--es-url", shellescape(endpoint),
+    "--out-dir", shellescape(snapshotDir),
+    "--start", shellescape(source.spec.store.window ?? "-1h"),
+  ];
+
+  if (source.spec.store.query) {
+    args.push("--query", shellescape(source.spec.store.query));
+  } else {
+    const clusters = source.spec.scope.clusters ?? [];
+    if (clusters.length > 0) args.push("--cluster", shellescape(clusters[0]));
+    const services = source.spec.scope.services ?? [];
+    if (services.length > 0) args.push("--service", shellescape(services[0]));
+  }
+
+  await runCmd(`python3 ${args.join(" ")}`, undefined, `es-gather (${sourceName})`, logger, opts.execFn);
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

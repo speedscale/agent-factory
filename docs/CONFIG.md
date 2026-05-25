@@ -84,7 +84,7 @@ the `AgentRunContext` to an agent. Each `store.kind` maps to a specific adapter:
 | `speedscale-cloud` | `proxymock cloud pull snapshot <id> --out <dir>` | ✅ implemented |
 | `speedscale-onprem` | Same + `--app-url <store.endpoint>` | ✅ implemented |
 | `loki` | `python3 loki-gather --loki-url <endpoint> --out-dir <dir>` | ✅ implemented |
-| `elasticsearch` | Gather via Elasticsearch query API | 🚧 TBD |
+| `elasticsearch` | `python3 es-gather --es-url <endpoint> --out-dir <dir>` | ✅ implemented |
 | `fluent-bit` | Gather via Fluent Bit HTTP output | 🚧 TBD |
 
 Adding a new adapter: implement an `AdapterFn` in `src/lib/traffic-materializer.ts`,
@@ -96,6 +96,7 @@ add it to the `ADAPTERS` registry, extend the CRD enum and TS union.
 |---|---|---|
 | `AF_PROXYMOCK_PATH` | `proxymock` (resolved via `PATH`) | Override path to the `proxymock` binary. Used by `speedscale-cloud` and `speedscale-onprem` adapters. |
 | `AF_LOKI_GATHER_PATH` | `/usr/local/bin/loki-gather` | Override path to the `loki-gather` Python script. Used by the `loki` adapter. |
+| `AF_ES_GATHER_PATH` | `/usr/local/bin/es-gather` | Override path to the `es-gather` Python script. Used by the `elasticsearch` adapter. |
 
 **`store.kind: speedscale-cloud` fields:**
 
@@ -109,6 +110,15 @@ add it to the `ADAPTERS` registry, extend the CRD enum and TS union.
 | Field | Required | Notes |
 |---|---|---|
 | `endpoint` | yes | On-prem Speedscale app URL, e.g. `https://speedscale.mycompany.com`. |
+
+**`store.kind: elasticsearch` fields:**
+
+| Field | Required | Notes |
+|---|---|---|
+| `endpoint` | yes | Elasticsearch HTTP base URL, e.g. `http://elasticsearch.byoc-elasticsearch:9200`. |
+| `query` | no | Raw ES Query DSL JSON clause. Overrides `scope.clusters` / `scope.services` filters when set. |
+| `window` | no | `--start` window (e.g. `-1h`, `-15m`, RFC3339). Defaults to `-1h`. |
+| `auth` | — | Not supported by es-gather. Secure with network policy or a proxy. |
 
 **`store.kind: loki` fields:**
 
