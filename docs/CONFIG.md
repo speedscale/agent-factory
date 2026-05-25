@@ -73,6 +73,62 @@ CLI flag > env var > default. CLI flags are only honored by the one-shot `llm-ru
 | `AF_HEALTHZ_PORT` | controller | `8081` | Liveness probe port. |
 | `KUBERNETES_SERVICE_HOST` | controller/k8s | (set by k8s) | Used to detect in-cluster vs out-of-cluster. |
 
+## Traffic materializer (TrafficSource adapters)
+
+The controller runs a pluggable adapter for each `TrafficSource` before handing
+the `AgentRunContext` to an agent. Each `store.kind` maps to a specific adapter:
+
+| `store.kind` | Adapter | Status |
+|---|---|---|
+| `local-fs` | Pass-through — snapshot is already on disk | ✅ implemented |
+| `speedscale-cloud` | `proxymock cloud pull snapshot <id> --out <dir>` | ✅ implemented |
+| `speedscale-onprem` | Same + `--app-url <store.endpoint>` | ✅ implemented |
+| `loki` | `python3 loki-gather --loki-url <endpoint> --out-dir <dir>` | ✅ implemented |
+| `elasticsearch` | `python3 es-gather --es-url <endpoint> --out-dir <dir>` | ✅ implemented |
+| `fluent-bit` | Gather via Fluent Bit HTTP output | 🚧 TBD |
+
+Adding a new adapter: implement an `AdapterFn` in `src/lib/traffic-materializer.ts`,
+add it to the `ADAPTERS` registry, extend the CRD enum and TS union.
+
+**Environment variables:**
+
+| Var | Default | Notes |
+|---|---|---|
+| `AF_PROXYMOCK_PATH` | `proxymock` (resolved via `PATH`) | Override path to the `proxymock` binary. Used by `speedscale-cloud` and `speedscale-onprem` adapters. |
+| `AF_LOKI_GATHER_PATH` | `/usr/local/bin/loki-gather` | Override path to the `loki-gather` Python script. Used by the `loki` adapter. |
+| `AF_ES_GATHER_PATH` | `/usr/local/bin/es-gather` | Override path to the `es-gather` Python script. Used by the `elasticsearch` adapter. |
+
+**`store.kind: speedscale-cloud` fields:**
+
+| Field | Required | Notes |
+|---|---|---|
+| `path` | yes | Speedscale Cloud snapshot UUID, e.g. `e2d4a538-626d-465e-8bf3-1c5c6eb74600`. |
+| `auth.secretRef` | no | k8s Secret whose value is `SPEEDSCALE_API_KEY`. Omit when the key is already in the pod environment. |
+
+**`store.kind: speedscale-onprem` fields** (same as above, plus):
+
+| Field | Required | Notes |
+|---|---|---|
+| `endpoint` | yes | On-prem Speedscale app URL, e.g. `https://speedscale.mycompany.com`. |
+
+**`store.kind: elasticsearch` fields:**
+
+| Field | Required | Notes |
+|---|---|---|
+| `endpoint` | yes | Elasticsearch HTTP base URL, e.g. `http://elasticsearch.byoc-elasticsearch:9200`. |
+| `query` | no | Raw ES Query DSL JSON clause. Overrides `scope.clusters` / `scope.services` filters when set. |
+| `window` | no | `--start` window (e.g. `-1h`, `-15m`, RFC3339). Defaults to `-1h`. |
+| `auth` | — | Not supported by es-gather. Secure with network policy or a proxy. |
+
+**`store.kind: loki` fields:**
+
+| Field | Required | Notes |
+|---|---|---|
+| `endpoint` | yes | Loki HTTP base URL, e.g. `http://loki.monitoring:3100`. |
+| `logql` | no | Full LogQL query. Overrides `scope.clusters` / `scope.services` label filters when set. |
+| `window` | no | `--start` window (e.g. `-1h`, `-15m`, RFC3339). Defaults to `-1h`. |
+| `auth.secretRef` | no | k8s Secret whose value is `LOKI_AUTH_TOKEN`. Omit for unauthenticated in-cluster Loki. |
+
 ## Engine / model
 
 The agent loop picks an LLM provider from `AF_ENGINE_KIND`. The Helm

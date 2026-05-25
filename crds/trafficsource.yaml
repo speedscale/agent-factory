@@ -48,11 +48,27 @@ spec:
                   properties:
                     kind:
                       type: string
-                      enum: [speedscale-cloud, speedscale-onprem, local-fs]
+                      enum: [speedscale-cloud, speedscale-onprem, local-fs, loki, elasticsearch]
                     endpoint:
                       type: string
                     path:
                       type: string
+                    logql:
+                      type: string
+                      description: >
+                        Loki-only: full LogQL query selecting the traffic slice.
+                        Overrides cluster/service scope filters when set.
+                    query:
+                      type: string
+                      description: >
+                        Elasticsearch-only: raw ES Query DSL JSON clause passed
+                        to es-gather's --query flag. Overrides cluster/service
+                        scope filters when set.
+                    window:
+                      type: string
+                      description: >
+                        Loki-only: time window passed to loki-gather (e.g. "-1h",
+                        "-15m", or RFC3339). Defaults to "-1h" when unset.
                     auth:
                       type: object
                       required: [secretRef]
