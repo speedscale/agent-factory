@@ -23,16 +23,34 @@ agentDefaults:
   migration-safety:   { enabled: true,  autoCreatePR: false }
 
 trafficSources:
-  - name: demo-snapshot
+  # BYOC path — pull a fresh slice from Loki at run start.
+  # Update endpoint to match your Grafana stack.
+  - name: byoc-grafana-snapshot
     store:
-      kind: local-fs
-      path: /app/.work/demo-fixture/snapshots/sample
+      kind: loki
+      endpoint: http://loki.observability.svc.cluster.local:3100
+      window: -1h
     scope:
-      clusters: [demo]
+      clusters: []               # set to your cluster name, e.g. [minikube]
+      services: [outerspace-server]
     dlp:
       profile: standard
     tags:
       environment: demo
+      source: grafana-byoc
+
+  # Offline fallback — frozen fixture bundled in the container image.
+  # Swap in this source when no live Loki stack is available.
+  # - name: demo-snapshot
+  #   store:
+  #     kind: local-fs
+  #     path: /app/.work/demo-fixture/snapshots/sample
+  #   scope:
+  #     clusters: [demo]
+  #   dlp:
+  #     profile: standard
+  #   tags:
+  #     environment: demo
 
 intakeApi:
   replicas: 1

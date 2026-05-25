@@ -1,0 +1,29 @@
+apiVersion: agents.speedscale.io/v1alpha1
+kind: TrafficSource
+metadata:
+  name: byoc-grafana-snapshot
+  namespace: agent-factory
+spec:
+  store:
+    kind: loki
+    # Update to match your Grafana stack's Loki endpoint.
+    endpoint: http://loki.observability.svc.cluster.local:3100
+    window: -1h
+    # Optional: supply a full LogQL query to override the scope filters below.
+    # Useful when your Speedscale label set differs from the reference architecture.
+    # logql: '{source="speedscale", service="outerspace-server"} | json | body_l7protocol="http"'
+    #
+    # Uncomment if your Loki instance requires bearer-token auth.
+    # auth:
+    #   secretRef:
+    #     name: loki-auth-token
+    #     key: token
+  scope:
+    clusters: []                 # set to your cluster name (e.g. [minikube]) or leave empty for any
+    services: [outerspace-server]
+    retention: 7d
+  dlp:
+    profile: standard
+  tags:
+    environment: demo
+    source: grafana-byoc
