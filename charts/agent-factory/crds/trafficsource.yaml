@@ -48,11 +48,17 @@ spec:
                   properties:
                     kind:
                       type: string
-                      enum: [speedscale-cloud, speedscale-onprem, local-fs]
+                      enum: [speedscale-cloud, speedscale-onprem, local-fs, loki]
                     endpoint:
                       type: string
                     path:
                       type: string
+                    logql:
+                      type: string
+                      description: "LogQL query string for store.kind=loki"
+                    window:
+                      type: string
+                      description: "Lookback window for store.kind=loki, e.g. -1h, -30m"
                     auth:
                       type: object
                       required: [secretRef]
