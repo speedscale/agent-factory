@@ -69,7 +69,12 @@ export const bugFixAgent: AgentDef<BugFixInput> = {
     logger.info("bug-fix: snapshot", { snapshotDir: snapshotDir ?? "(none — source mode)" });
 
     // ── 2. Clone repo ───────────────────────────────────────────────────────
-    const repoDir = path.join(runDir, "repo");
+    // Clone into runDir/src (not runDir/repo) so that setupWorktree() can
+    // create the patch worktree at runDir/repo without path collision.
+    // setupWorktree() hardcodes worktreePath = path.join(workDir, "repo"),
+    // so workDir=runDir means the worktree lands at runDir/repo — which must
+    // be free at the time Worker runs.
+    const repoDir = path.join(runDir, "src");
     const repoUrl = app.spec.repo.url;
     const defaultBranch = app.spec.repo.defaultBranch || "main";
     logger.info("bug-fix: cloning repo", { url: repoUrl, branch: defaultBranch, dest: repoDir });
