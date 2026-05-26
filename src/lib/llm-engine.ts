@@ -394,13 +394,25 @@ async function toolCompareFileDeclarations(filePath: string): Promise<string> {
 }
 
 /**
+ * Default timeout for run_shell. Override with ENGINE_SHELL_TIMEOUT_MS env var.
+ * 300 s (5 min) accommodates slow first-run builds (go test compilation, npm ci)
+ * without letting runaway processes monopolise the worker indefinitely.
+ * The old 90 s default was too tight for any test suite that needs compilation.
+ */
+const DEFAULT_SHELL_TIMEOUT_MS = 300_000;
+const SHELL_TIMEOUT_MS = (() => {
+  const v = parseInt(process.env.ENGINE_SHELL_TIMEOUT_MS ?? "", 10);
+  return Number.isFinite(v) && v > 0 ? v : DEFAULT_SHELL_TIMEOUT_MS;
+})();
+
+/**
  * Run an arbitrary shell command. Used in source mode where the confirm
  * harness is a native unit test runner (`go test`, `npm test`, `pytest`).
- * 90s timeout — short enough that the model has to write focused tests, long
- * enough for go test compilation. Output is truncated to keep prompts small.
+ * Timeout defaults to 300 s; override with ENGINE_SHELL_TIMEOUT_MS.
+ * Output is truncated to keep prompts small.
  */
 export async function toolRunShell(command: string, cwd?: string): Promise<string> {
-  const opts: { timeout: number; cwd?: string } = { timeout: 90_000 };
+  const opts: { timeout: number; cwd?: string } = { timeout: SHELL_TIMEOUT_MS };
   if (cwd) opts.cwd = cwd;
   function cap(s: string): string {
     return s.length > 8000 ? `[truncated to 8000 chars]\n${s.slice(0, 8000)}` : s;
@@ -496,7 +508,7 @@ const TOOLS: ToolDef[] = [
   },
   {
     name: "run_shell",
-    description: "Execute an arbitrary shell command (e.g. `go test ./internal/foo/...`, `npm test`, `pytest -k mytest`). 90s timeout. Use this in source mode to run native unit tests as the confirm harness.",
+    description: `Execute an arbitrary shell command (e.g. \`go test ./internal/foo/...\`, \`npm test\`, \`pytest -k mytest\`). ${Math.round(SHELL_TIMEOUT_MS / 1000)}s timeout (override with ENGINE_SHELL_TIMEOUT_MS). Use this in source mode to run native unit tests as the confirm harness.`,
     inputSchema: {
       type: "object" as const,
       properties: {
