@@ -51,6 +51,11 @@ export interface ScannerOptions {
   linearLabelIds?: string[];
   /** BaselineStore used to check suppress list before filing tickets */
   baseline?: BaselineStore;
+  /**
+   * Skip the LLM call entirely. Ticket bodies are generated programmatically
+   * from signal data. Zero AI cost — suitable for scheduled CronJob runs.
+   */
+  noLLM?: boolean;
   verbose?: boolean;
 }
 
@@ -241,6 +246,7 @@ export async function interpretAndFile(
     linearTeamId,
     linearLabelIds = [],
     baseline,
+    noLLM = false,
     verbose = false,
   } = opts;
 
@@ -252,6 +258,11 @@ export async function interpretAndFile(
 
   if (eligible.length === 0) {
     return { signalsConsidered: signals.length, hypotheses: [], ticketsCreated: 0, ticketsSkipped: 0 };
+  }
+
+  // ── No-LLM path: build hypotheses directly from signal data ──────────────
+  if (noLLM) {
+    return fileWithoutLLM(eligible, snapshotDir, opts);
   }
 
   // ── Build compact stats summary for LLM ──────────────────────────────────
@@ -494,6 +505,131 @@ function buildTicketBody(
   lines.push(`**Snapshot:** \`${snapshotDir}\``);
   // Embed fingerprint for dedup on future scans
   lines.push(`<!-- traffic-scan-fingerprint: ${signal.fingerprint} -->`);
+  return lines.join("\n");
+}
+
+// ── No-LLM ticket filing ──────────────────────────────────────────────────────
+
+/**
+ * Build and file tickets from signal data directly — no LLM call.
+ * Bodies are templated from the evidence fields already computed in Pass 1.
+ */
+async function fileWithoutLLM(
+  eligible: Signal[],
+  snapshotDir: string,
+  opts: ScannerOptions,
+): Promise<ScannerResult> {
+  const {
+    maxTickets = 5,
+    dedupWindowDays = 7,
+    createTickets = true,
+    linearApiKey,
+    linearTeamId,
+    linearLabelIds = [],
+    baseline,
+    verbose = false,
+  } = opts;
+
+  const results: TicketHypothesis[] = [];
+  let ticketsCreated = 0;
+  let ticketsSkipped = 0;
+
+  for (const signal of eligible) {
+    const hypo: TicketHypothesis = {
+      signalFingerprint: signal.fingerprint,
+      title: signal.title.slice(0, 80),
+      body: buildNoLLMBody(signal, snapshotDir),
+      severity: signal.severity,
+    };
+
+    if (ticketsCreated >= maxTickets) {
+      hypo.skippedReason = `maxTickets cap (${maxTickets}) reached`;
+      ticketsSkipped++;
+      results.push(hypo);
+      continue;
+    }
+
+    if (baseline?.isSuppressed(signal.fingerprint)) {
+      hypo.skippedReason = "suppressed (closed as not-a-bug)";
+      ticketsSkipped++;
+      results.push(hypo);
+      continue;
+    }
+
+    if (createTickets && linearApiKey) {
+      const dup = await isDuplicate(linearApiKey, signal.fingerprint, dedupWindowDays);
+      if (dup) {
+        hypo.skippedReason = `duplicate found in Linear (last ${dedupWindowDays}d)`;
+        ticketsSkipped++;
+        results.push(hypo);
+        continue;
+      }
+    }
+
+    if (createTickets && linearApiKey && linearTeamId) {
+      try {
+        const issue = await createLinearIssue(
+          linearApiKey, linearTeamId, hypo.title, hypo.body,
+          linearLabelIds, severityToPriority(signal.severity),
+        );
+        hypo.linearIssueId = issue.id;
+        hypo.linearIssueUrl = issue.url;
+        ticketsCreated++;
+        if (verbose) console.error(`[traffic-scanner] created ${issue.url}`);
+      } catch (e) {
+        hypo.skippedReason = `Linear create failed: ${(e as Error).message}`;
+        ticketsSkipped++;
+      }
+    } else {
+      ticketsCreated++;
+    }
+
+    results.push(hypo);
+  }
+
+  return { signalsConsidered: eligible.length, hypotheses: results, ticketsCreated, ticketsSkipped };
+}
+
+/** Build a ticket body from signal evidence without any LLM call. */
+function buildNoLLMBody(signal: Signal, snapshotDir: string): string {
+  const lines: string[] = [];
+
+  // Lead paragraph: what was observed
+  lines.push(signal.details);
+  lines.push("");
+
+  // Fix direction by signal kind
+  const advice: Record<string, string> = {
+    "n+1": "Replace per-item loop with a batch or bulk API call.",
+    "slow-endpoint": "Investigate DB queries on this path, missing indexes, or synchronous blocking operations.",
+    "slow-query": "Check for a missing index. Use EXPLAIN ANALYZE to identify the bottleneck.",
+    "high-freq-query": "Add an application-level cache or batch the queries using ANY($1::text[]).",
+    "errors": "Check server logs for the stack trace. Verify upstream dependencies and input validation.",
+    "incident": "Correlated signals share a root cause — fix the slowest layer first.",
+  };
+  const hint = advice[signal.kind] ?? "Review recent changes to this code path.";
+  lines.push(`**Fix direction:** ${hint}`);
+  lines.push("");
+
+  // Evidence table
+  lines.push("---");
+  lines.push(`**Signal:** \`${signal.kind}\` | **Severity:** ${signal.severity} | **Count:** ${signal.evidence.count}`);
+  if (signal.evidence.latency) {
+    const { p50, p95, p99, max } = signal.evidence.latency;
+    lines.push(`**Latency:** p50=${p50}ms p95=${p95}ms p99=${p99}ms max=${max}ms`);
+  }
+  if (signal.evidence.errorRate !== undefined) {
+    lines.push(`**Error rate:** ${(signal.evidence.errorRate * 100).toFixed(1)}%`);
+  }
+  if (signal.evidence.baseline) {
+    lines.push(`**Baseline p95:** ${signal.evidence.baseline.p95}ms (over ${signal.evidence.baseline.sampleWindows} windows)`);
+  }
+  if (signal.evidence.examples.length > 0) {
+    lines.push(`**Examples:** ${signal.evidence.examples.slice(0, 2).join(", ")}`);
+  }
+  lines.push(`**Snapshot:** \`${snapshotDir}\``);
+  lines.push(`<!-- traffic-scan-fingerprint: ${signal.fingerprint} -->`);
+
   return lines.join("\n");
 }
 

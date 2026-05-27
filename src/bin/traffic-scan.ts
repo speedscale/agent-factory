@@ -129,6 +129,7 @@ async function runScan(argv: string[]): Promise<void> {
   const verbose = hasFlag(argv, ["--verbose", "-v"]);
   const createTickets = hasFlag(argv, ["--create-tickets"]);
   const noCorrelate = hasFlag(argv, ["--no-correlate"]);
+  const noLLM = hasFlag(argv, ["--no-llm"]);
   const serviceName = getArg(argv, ["--service"]) ?? "radar";
   const baselineDir = getArg(argv, ["--baseline-dir"]) ?? process.env.BASELINE_DIR;
 
@@ -189,12 +190,13 @@ async function runScan(argv: string[]): Promise<void> {
     repoDir: repoDir ? path.resolve(repoDir) : null,
     service: serviceName,
     baselineEnabled: !!baseline,
+    noLLM,
     minSeverity,
     maxTickets,
     dedupWindowDays,
     createTickets,
-    provider,
-    model,
+    provider: noLLM ? null : provider,
+    model: noLLM ? null : model,
   }));
 
   // ── Pass 1: programmatic analysis ──────────────────────────────────────────
@@ -277,6 +279,7 @@ async function runScan(argv: string[]): Promise<void> {
         linearTeamId,
         linearLabelIds,
         baseline,
+        noLLM,
         verbose,
       },
     );
