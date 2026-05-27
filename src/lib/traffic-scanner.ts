@@ -24,6 +24,7 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { callLLM, type LLMProvider } from "./llm-providers.js";
 import { type Signal, type Severity } from "./rrpair-stats.js";
+import { type BaselineStore } from "./baseline-store.js";
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -48,6 +49,8 @@ export interface ScannerOptions {
    * optional extras.  Pass empty array to skip labels.
    */
   linearLabelIds?: string[];
+  /** BaselineStore used to check suppress list before filing tickets */
+  baseline?: BaselineStore;
   verbose?: boolean;
 }
 
@@ -237,6 +240,7 @@ export async function interpretAndFile(
     linearApiKey,
     linearTeamId,
     linearLabelIds = [],
+    baseline,
     verbose = false,
   } = opts;
 
@@ -339,6 +343,14 @@ export async function interpretAndFile(
     // Check caps
     if (ticketsCreated >= maxTickets) {
       hypo.skippedReason = `maxTickets cap (${maxTickets}) reached`;
+      ticketsSkipped++;
+      results.push(hypo);
+      continue;
+    }
+
+    // Suppress list check (fingerprints closed as "not a bug")
+    if (baseline?.isSuppressed(h.signalFingerprint)) {
+      hypo.skippedReason = "suppressed (closed as not-a-bug)";
       ticketsSkipped++;
       results.push(hypo);
       continue;
@@ -497,4 +509,148 @@ function parseJsonArray(raw: string): Array<Record<string, unknown>> {
   const end = text.lastIndexOf("]");
   if (start === -1 || end === -1) throw new Error("no JSON array found");
   return JSON.parse(text.slice(start, end + 1)) as Array<Record<string, unknown>>;
+}
+
+// ── Fix verification ──────────────────────────────────────────────────────────
+
+export interface VerifyOptions {
+  linearApiKey: string;
+  dryRun?: boolean;
+  verbose?: boolean;
+}
+
+export interface VerifyResult {
+  fingerprint: string;
+  ticketId: string;
+  resolved: boolean;
+  /** Signal that was found (if not resolved) */
+  foundSignal?: Signal;
+  /** URL of the comment posted */
+  commentPosted?: boolean;
+  /** Whether the ticket was reopened */
+  reopened?: boolean;
+}
+
+/**
+ * Check whether a previously-filed signal is still present in the given snapshot.
+ *
+ * - If resolved: post a "✓ verified fixed" comment on the Linear ticket.
+ * - If still present: post updated metrics and reopen the ticket.
+ *
+ * @param fingerprint  The traffic-scan-fingerprint from the ticket description.
+ * @param ticketId     Linear issue ID.
+ * @param signals      Pass 1 signals from the current window.
+ * @param windowStart  Window start timestamp.
+ * @param windowEnd    Window end timestamp.
+ * @param opts         Linear credentials and dry-run flag.
+ */
+export async function verifySignalResolved(
+  fingerprint: string,
+  ticketId: string,
+  signals: Signal[],
+  windowStart: string,
+  windowEnd: string,
+  opts: VerifyOptions,
+): Promise<VerifyResult> {
+  const { linearApiKey, dryRun = false, verbose = false } = opts;
+
+  const found = signals.find((s) => s.fingerprint === fingerprint);
+  const resolved = !found;
+
+  if (verbose) {
+    console.error(`[verify] ${ticketId} fingerprint=${fingerprint} resolved=${resolved}`);
+  }
+
+  let commentPosted = false;
+  let reopened = false;
+
+  if (!dryRun) {
+    if (resolved) {
+      // Post "verified fixed" comment
+      const body = `✓ **Signal not detected** in traffic window ${windowStart} → ${windowEnd}.\n\nMetric returned to baseline. Fix confirmed via traffic-scan verification.`;
+      await linearComment(linearApiKey, ticketId, body);
+      commentPosted = true;
+    } else {
+      // Post updated metrics and reopen
+      const s = found!;
+      const lat = s.evidence.latency;
+      const metricLine = lat
+        ? `p50=${lat.p50}ms p95=${lat.p95}ms p99=${lat.p99}ms max=${lat.max}ms (count=${s.evidence.count})`
+        : `count=${s.evidence.count}`;
+      const body = `⚠️ **Signal still detected** in window ${windowStart} → ${windowEnd}.\n\n${metricLine}\n\nReopening — the fix did not resolve this signal.`;
+      await linearComment(linearApiKey, ticketId, body);
+      commentPosted = true;
+      await linearReopen(linearApiKey, ticketId);
+      reopened = true;
+    }
+  }
+
+  return { fingerprint, ticketId, resolved, foundSignal: found, commentPosted, reopened };
+}
+
+/** Post a comment on a Linear issue. */
+async function linearComment(apiKey: string, issueId: string, body: string): Promise<void> {
+  const mutation = `
+    mutation($input: CommentCreateInput!) {
+      commentCreate(input: $input) { success }
+    }`;
+  await linearRequest(apiKey, mutation, { input: { issueId, body } });
+}
+
+/** Reopen a Linear issue by moving it to an unstarted state. */
+async function linearReopen(apiKey: string, issueId: string): Promise<void> {
+  // First get the team's "Todo" state ID
+  const stateQuery = `
+    query($id: String!) {
+      issue(id: $id) {
+        team { states { nodes { id name type } } }
+      }
+    }`;
+  const data = await linearRequest(apiKey, stateQuery, { id: issueId }) as {
+    issue?: { team?: { states?: { nodes?: Array<{ id: string; name: string; type: string }> } } }
+  };
+  const states = data?.issue?.team?.states?.nodes ?? [];
+  const todoState = states.find((s) => s.type === "unstarted" && s.name.toLowerCase() === "todo")
+    ?? states.find((s) => s.type === "unstarted");
+  if (!todoState) return;
+
+  const mutation = `
+    mutation($id: String!, $input: IssueUpdateInput!) {
+      issueUpdate(id: $id, input: $input) { success }
+    }`;
+  await linearRequest(apiKey, mutation, { id: issueId, input: { stateId: todoState.id } });
+}
+
+/**
+ * Query Linear for recently-closed tickets with auto-fix + radar labels,
+ * returning { id, fingerprint } pairs for verify loop integration.
+ */
+export async function getRecentlyClosedSignalTickets(
+  apiKey: string,
+  labelNames: string[],
+  withinDays = 2,
+): Promise<Array<{ id: string; fingerprint: string | null; url: string }>> {
+  const since = new Date(Date.now() - withinDays * 86_400_000).toISOString();
+  const query = `
+    query($filter: IssueFilter!) {
+      issues(filter: $filter, first: 50) {
+        nodes { id url description updatedAt }
+      }
+    }`;
+  const filter = {
+    updatedAt: { gte: since },
+    state: { type: { eq: "completed" } },
+    and: labelNames.map((name) => ({ labels: { name: { eq: name } } })),
+  };
+  try {
+    const data = await linearRequest(apiKey, query, { filter }) as {
+      issues?: { nodes?: Array<{ id: string; url: string; description?: string }> }
+    };
+    return (data?.issues?.nodes ?? []).map((issue) => {
+      const m = (issue.description ?? "").match(/<!--\s*traffic-scan-fingerprint:\s*([a-f0-9]+)\s*-->/);
+      return { id: issue.id, fingerprint: m ? m[1] : null, url: issue.url };
+    });
+  } catch {
+    return [];
+  }
 }

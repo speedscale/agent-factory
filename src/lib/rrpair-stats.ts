@@ -20,6 +20,7 @@
 
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import { type BaselineStore } from "./baseline-store.js";
 
 // ── RRPair shape (the subset we actually read) ────────────────────────────────
 
@@ -50,7 +51,8 @@ export type SignalKind =
   | "slow-endpoint"
   | "slow-query"
   | "high-freq-query"
-  | "errors";
+  | "errors"
+  | "incident";
 
 export type Severity = "high" | "medium" | "low";
 
@@ -76,7 +78,19 @@ export interface Signal {
     errorRate?: number;
     /** Up to 3 example file paths from the snapshot */
     examples: string[];
+    /** Populated when relative baseline detection was used */
+    baseline?: { p95: number; sampleWindows: number };
   };
+  /** Set by signal-correlator when this signal is part of an incident */
+  components?: Signal[];
+}
+
+/** Per-endpoint stats emitted alongside signals, used to update BaselineStore. */
+export interface EndpointStat {
+  key: string;   // "GET /api/accounts" or "sql:SELECT ..."
+  p50: number; p95: number; p99: number;
+  count: number;
+  errorRate: number;
 }
 
 export interface ScanStats {
@@ -86,6 +100,8 @@ export interface ScanStats {
   totalFiles: number;
   parsedOk: number;
   signals: Signal[];
+  /** All observed HTTP endpoints + SQL patterns, for baseline accumulation */
+  endpointStats: EndpointStat[];
 }
 
 // ── Analysis thresholds — tune here, not in prompts ──────────────────────────
@@ -296,10 +312,15 @@ function percentiles(sorted: number[]): LatencyStats {
  *
  * @param snapshotDir  Absolute path to the proxymock snapshot directory.
  * @param thresholds   Optional overrides for detection thresholds.
+ * @param baseline     Optional BaselineStore for relative threshold detection.
+ *                     When provided and an endpoint has ≥7 sample windows,
+ *                     flags when observed p95 > 2× baseline p95 rather than
+ *                     the static slowEndpointP95Ms threshold.
  */
 export async function analyzeSnapshot(
   snapshotDir: string,
   thresholds: Partial<ScanThresholds> = {},
+  baseline?: BaselineStore,
 ): Promise<ScanStats> {
   const t: ScanThresholds = { ...DEFAULT_THRESHOLDS, ...thresholds };
 
@@ -395,11 +416,28 @@ export async function analyzeSnapshot(
 
   // ── Score signals ─────────────────────────────────────────────────────────
   const signals: Signal[] = [];
+  const endpointStats: EndpointStat[] = [];
 
   // --- HTTP signals ---
   for (const [, g] of httpGroups) {
     const sorted = [...g.durations].sort((a, b) => a - b);
     const lat = percentiles(sorted);
+    const epKey = `${g.method} ${g.pathPattern}`;
+
+    // Accumulate endpoint stats for baseline
+    if (g.direction === "IN" && sorted.length > 0) {
+      const total = g.count;
+      let errCnt = 0;
+      for (const [code, cnt] of g.statusCodes) {
+        if (code >= 400 || code === 0) errCnt += cnt;
+      }
+      endpointStats.push({
+        key: epKey,
+        p50: lat.p50, p95: lat.p95, p99: lat.p99,
+        count: g.count,
+        errorRate: total > 0 ? errCnt / total : 0,
+      });
+    }
 
     // N+1: high-count OUT calls to an external API
     if (g.direction === "OUT" && g.count >= t.n1MinCount) {
@@ -415,17 +453,31 @@ export async function analyzeSnapshot(
       });
     }
 
-    // Slow inbound endpoint
-    if (g.direction === "IN" && sorted.length >= 2 && lat.p95 >= t.slowEndpointP95Ms) {
-      const sev: Severity = lat.p95 >= 3000 ? "high" : lat.p95 >= 1500 ? "medium" : "low";
-      signals.push({
-        kind: "slow-endpoint",
-        severity: sev,
-        fingerprint: fingerprint("slow-endpoint", g.host, `${g.method}:${g.pathPattern}`),
-        title: `Slow endpoint: ${g.method} ${g.pathPattern} p95=${lat.p95}ms`,
-        details: `${g.count} requests to ${g.method} ${g.pathPattern}. p50=${lat.p50}ms p95=${lat.p95}ms p99=${lat.p99}ms max=${lat.max}ms.`,
-        evidence: { host: g.host, pattern: `${g.method}:${g.pathPattern}`, count: g.count, latency: lat, examples: g.examples },
-      });
+    // Slow inbound endpoint — use relative threshold when baseline available
+    if (g.direction === "IN" && sorted.length >= 2) {
+      const bl = baseline?.getBaseline(epKey) ?? null;
+      // Relative: flag when 2× baseline p95 AND above 500ms floor
+      // Static fallback: use configured threshold
+      const isSlowRelative = bl && lat.p95 >= bl.p95 * 2 && lat.p95 >= 500;
+      const isSlowStatic = !bl && lat.p95 >= t.slowEndpointP95Ms;
+
+      if (isSlowRelative || isSlowStatic) {
+        const sev: Severity = lat.p95 >= 3000 ? "high" : lat.p95 >= 1500 ? "medium" : "low";
+        const baselineNote = bl
+          ? ` (baseline p95=${bl.p95}ms over ${bl.sampleWindows} windows)`
+          : "";
+        signals.push({
+          kind: "slow-endpoint",
+          severity: sev,
+          fingerprint: fingerprint("slow-endpoint", g.host, `${g.method}:${g.pathPattern}`),
+          title: `Slow endpoint: ${g.method} ${g.pathPattern} p95=${lat.p95}ms`,
+          details: `${g.count} requests to ${g.method} ${g.pathPattern}. p50=${lat.p50}ms p95=${lat.p95}ms p99=${lat.p99}ms max=${lat.max}ms.${baselineNote}`,
+          evidence: {
+            host: g.host, pattern: `${g.method}:${g.pathPattern}`, count: g.count, latency: lat, examples: g.examples,
+            ...(bl ? { baseline: { p95: bl.p95, sampleWindows: bl.sampleWindows } } : {}),
+          },
+        });
+      }
     }
 
     // Error rate
@@ -460,6 +512,16 @@ export async function analyzeSnapshot(
 
     const sorted = [...g.durations].sort((a, b) => a - b);
     const lat = percentiles(sorted);
+
+    // Accumulate SQL stats for baseline
+    if (sorted.length > 0) {
+      endpointStats.push({
+        key: `sql:${g.queryPattern}`,
+        p50: lat.p50, p95: lat.p95, p99: lat.p99,
+        count: g.count,
+        errorRate: 0,
+      });
+    }
 
     // High-frequency query
     if (g.count >= t.highFreqSqlMinCount) {
@@ -513,6 +575,7 @@ export async function analyzeSnapshot(
     totalFiles: allFiles.length,
     parsedOk,
     signals: uniqueSignals,
+    endpointStats,
   };
 }
 
