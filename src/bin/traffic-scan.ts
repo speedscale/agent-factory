@@ -4,6 +4,8 @@
  * Subcommands:
  *   scan (default)   Pass 1 + Pass 2: analyze snapshot → file Linear tickets
  *   verify           Check whether a previously-filed signal is still present
+ *   verify-closed    Confirm a fixed signal is gone; reopen ticket if still present
+ *   verify-closed-batch  Batch verify all recently-closed radar tickets
  *   suppress         Add a fingerprint to the suppress list (not-a-bug)
  *
  * Scan usage:
@@ -35,9 +37,9 @@
  *     --baseline-dir <dir>      baseline directory
  *
  * Environment variables:
- *   LINEAR_API_KEY     required when --create-tickets or verify
+ *   LINEAR_API_KEY     required when --create-tickets, verify, or verify-closed
  *   LINEAR_TEAM_ID     required when --create-tickets
- *   LINEAR_LABEL_IDS   comma-separated label IDs to apply (optional)
+ *   LINEAR_LABEL_IDS   comma-separated label IDs to apply / filter by
  *   AF_ENGINE_KIND     LLM provider (overridden by --provider)
  *   AF_ENGINE_MODEL    LLM model   (overridden by --model)
  *
@@ -51,10 +53,14 @@ import path from "node:path";
 import { resolveEngineConfig } from "../lib/engine-config.js";
 import { defaultModelFor, type LLMProvider } from "../lib/llm-providers.js";
 import { analyzeSnapshot, type ScanThresholds, type Severity } from "../lib/rrpair-stats.js";
-import { interpretAndFile, verifySignalResolved, getRecentlyClosedSignalTickets } from "../lib/traffic-scanner.js";
+import { interpretAndFile, verifySignalResolved } from "../lib/traffic-scanner.js";
 import { correlateSignals } from "../lib/signal-correlator.js";
 import { BaselineStore, buildWindowStats } from "../lib/baseline-store.js";
 import { getInstanceConfig } from "../lib/instance-config.js";
+import {
+  verifyClosed,
+  getRecentlyClosedRadarTickets,
+} from "../lib/verify-closed.js";
 
 // ── CLI arg helpers ───────────────────────────────────────────────────────────
 
@@ -65,6 +71,153 @@ function getArg(argv: string[], flags: string[]): string | undefined {
 
 function hasFlag(argv: string[], flags: string[]): boolean {
   return argv.some((v) => flags.includes(v));
+}
+
+// ── Subcommand: verify-closed ─────────────────────────────────────────────────
+
+async function runVerifyClosed(argv: string[]): Promise<void> {
+  const snapshotDir = getArg(argv, ["--snapshot", "-s"]);
+  const fingerprint = getArg(argv, ["--fingerprint"]);
+  const ticketId = getArg(argv, ["--ticket"]);
+  const dryRun = hasFlag(argv, ["--dry-run"]);
+
+  if (!snapshotDir) {
+    console.error("error: verify-closed requires --snapshot <dir>");
+    process.exit(1);
+  }
+  if (!fingerprint) {
+    console.error("error: verify-closed requires --fingerprint <fp>");
+    process.exit(1);
+  }
+  if (!ticketId) {
+    console.error("error: verify-closed requires --ticket <linear-uuid>");
+    process.exit(1);
+  }
+
+  const linearApiKey = process.env.LINEAR_API_KEY;
+  if (!dryRun && !linearApiKey) {
+    console.error("error: verify-closed requires LINEAR_API_KEY env var (or --dry-run)");
+    process.exit(1);
+  }
+
+  try {
+    const result = await verifyClosed({
+      snapshotDir: path.resolve(snapshotDir),
+      fingerprint,
+      ticketId,
+      dryRun,
+      linearApiKey,
+    });
+    console.log(
+      JSON.stringify({
+        phase: "verify-closed-done",
+        ticketId,
+        fingerprint,
+        signalStillPresent: result.signalStillPresent,
+        reopened: result.reopened,
+      }),
+    );
+    // Exit 0 regardless — both outcomes are expected paths
+  } catch (e) {
+    console.error(`fatal: verify-closed failed: ${(e as Error).message}`);
+    process.exit(1);
+  }
+}
+
+// ── Subcommand: verify-closed-batch ──────────────────────────────────────────
+
+async function runVerifyClosedBatch(argv: string[]): Promise<void> {
+  const snapshotDir = getArg(argv, ["--snapshot", "-s"]);
+  const withinDays = parseInt(getArg(argv, ["--within-days"]) ?? "2", 10);
+  const dryRun = hasFlag(argv, ["--dry-run"]);
+
+  if (!snapshotDir) {
+    console.error("error: verify-closed-batch requires --snapshot <dir>");
+    process.exit(1);
+  }
+
+  const linearApiKey = process.env.LINEAR_API_KEY;
+  if (!dryRun && !linearApiKey) {
+    console.error("error: verify-closed-batch requires LINEAR_API_KEY env var (or --dry-run)");
+    process.exit(1);
+  }
+  if (!linearApiKey) {
+    console.error("error: verify-closed-batch requires LINEAR_API_KEY to query tickets");
+    process.exit(1);
+  }
+
+  const labelIds = (process.env.LINEAR_LABEL_IDS ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  console.log(
+    JSON.stringify({ phase: "verify-batch-start", withinDays, labelIds, dryRun }),
+  );
+
+  let tickets;
+  try {
+    tickets = await getRecentlyClosedRadarTickets(linearApiKey, labelIds, withinDays);
+  } catch (e) {
+    console.error(`fatal: could not fetch recently-closed tickets: ${(e as Error).message}`);
+    process.exit(1);
+  }
+
+  console.log(
+    JSON.stringify({
+      phase: "verify-batch-tickets",
+      count: tickets.length,
+      tickets: tickets.map((t) => ({ id: t.id, identifier: t.identifier, title: t.title })),
+    }),
+  );
+
+  if (tickets.length === 0) {
+    console.log("No recently-closed radar tickets with fingerprints. Done.");
+    return;
+  }
+
+  let resolved = 0;
+  let reopened = 0;
+  let errors = 0;
+
+  for (const ticket of tickets) {
+    console.log(
+      JSON.stringify({
+        phase: "verify-ticket",
+        identifier: ticket.identifier,
+        fingerprint: ticket.fingerprint,
+      }),
+    );
+    try {
+      const result = await verifyClosed({
+        snapshotDir: path.resolve(snapshotDir),
+        fingerprint: ticket.fingerprint!,
+        ticketId: ticket.id,
+        dryRun,
+        linearApiKey,
+      });
+      if (result.reopened) {
+        reopened++;
+      } else {
+        resolved++;
+      }
+    } catch (e) {
+      console.error(
+        `error verifying ${ticket.identifier}: ${(e as Error).message}`,
+      );
+      errors++;
+    }
+  }
+
+  console.log(
+    JSON.stringify({
+      phase: "verify-batch-done",
+      total: tickets.length,
+      resolved,
+      reopened,
+      errors,
+    }),
+  );
 }
 
 // ── Subcommand: suppress ──────────────────────────────────────────────────────
@@ -324,55 +477,6 @@ async function runScan(argv: string[]): Promise<void> {
   }));
 }
 
-// ── Verify loop helper (called by radar-traffic-monitor.sh) ──────────────────
-
-/**
- * Run verification for all recently-closed tickets.
- * Called with subcommand "verify-closed".
- */
-async function runVerifyClosed(argv: string[]): Promise<void> {
-  const snapshotDir = getArg(argv, ["--snapshot", "-s"]);
-  const dryRun = hasFlag(argv, ["--dry-run"]);
-  const verbose = hasFlag(argv, ["--verbose", "-v"]);
-  const withinDays = parseInt(getArg(argv, ["--within-days"]) ?? "2", 10);
-  const linearApiKey = process.env.LINEAR_API_KEY;
-  const labelNames = (getArg(argv, ["--labels"]) ?? "auto-fix,radar").split(",");
-
-  if (!snapshotDir) {
-    console.error("error: verify-closed requires --snapshot <dir>");
-    process.exit(1);
-  }
-  if (!dryRun && !linearApiKey) {
-    console.error("error: verify-closed requires LINEAR_API_KEY (or use --dry-run)");
-    process.exit(1);
-  }
-
-  const stats = await analyzeSnapshot(path.resolve(snapshotDir));
-  const closed = await getRecentlyClosedSignalTickets(linearApiKey ?? "", labelNames, withinDays);
-
-  if (closed.length === 0) {
-    console.log(JSON.stringify({ phase: "verify-closed", checked: 0, resolved: 0, reopened: 0 }));
-    return;
-  }
-
-  let resolved = 0;
-  let reopened = 0;
-
-  for (const ticket of closed) {
-    if (!ticket.fingerprint) continue;
-    const result = await verifySignalResolved(
-      ticket.fingerprint, ticket.id,
-      stats.signals, stats.windowStart, stats.windowEnd,
-      { linearApiKey: linearApiKey ?? "", dryRun, verbose },
-    );
-    if (result.resolved) resolved++;
-    if (result.reopened) reopened++;
-    console.log(JSON.stringify({ phase: "verify-closed-item", ...result }));
-  }
-
-  console.log(JSON.stringify({ phase: "verify-closed", checked: closed.length, resolved, reopened }));
-}
-
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
@@ -383,6 +487,8 @@ async function main(): Promise<void> {
     await runVerify(argv.slice(1));
   } else if (subcommand === "verify-closed") {
     await runVerifyClosed(argv.slice(1));
+  } else if (subcommand === "verify-closed-batch") {
+    await runVerifyClosedBatch(argv.slice(1));
   } else if (subcommand === "suppress") {
     await runSuppress(argv.slice(1));
   } else {
