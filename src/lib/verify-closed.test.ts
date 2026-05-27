@@ -7,6 +7,9 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -134,31 +137,37 @@ describe("verify-closed: dry-run skips Linear writes", () => {
   });
 });
 
+/** Walk up from startDir until node_modules/.bin/tsx is found (handles git worktrees). */
+function findTsx(startDir: string): string {
+  let dir = startDir;
+  for (let i = 0; i < 10; i++) {
+    const candidate = path.join(dir, "node_modules", ".bin", "tsx");
+    if (existsSync(candidate)) return candidate;
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  throw new Error(`tsx binary not found walking up from ${startDir}`);
+}
+
+const __repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+
 describe("verify-closed: CLI subcommand wiring", () => {
-  it("traffic-scan.js dist file exists and is executable", async () => {
-    const { existsSync } = await import("node:fs");
-    const path = await import("node:path");
-    const { fileURLToPath } = await import("node:url");
-    // dist/lib/verify-closed.test.js → go up 2 levels to repo root
-    const __dirname = path.dirname(fileURLToPath(import.meta.url));
-    const repoRoot = path.resolve(__dirname, "../..");
-    const cliPath = path.join(repoRoot, "dist/bin/traffic-scan.js");
-    assert.ok(existsSync(cliPath), `dist/bin/traffic-scan.js not found at ${cliPath}`);
+  it("traffic-scan source entry point exists", () => {
+    const srcPath = path.join(__repoRoot, "src/bin/traffic-scan.ts");
+    assert.ok(existsSync(srcPath), `src/bin/traffic-scan.ts not found at ${srcPath}`);
   });
 
   it("verify-closed subcommand exits with usage error when --snapshot missing", async () => {
     const { execFileSync } = await import("node:child_process");
-    const path = await import("node:path");
-    const { fileURLToPath } = await import("node:url");
-    const __dirname = path.dirname(fileURLToPath(import.meta.url));
-    const repoRoot = path.resolve(__dirname, "../..");
-    const cliPath = path.join(repoRoot, "dist/bin/traffic-scan.js");
+    const tsx = findTsx(__repoRoot);
+    const srcPath = path.join(__repoRoot, "src/bin/traffic-scan.ts");
 
     let threw = false;
     let stderr = "";
     try {
-      execFileSync("node", [cliPath, "verify-closed", "--fingerprint", "fp", "--ticket", "uuid"], {
-        timeout: 5000,
+      execFileSync(tsx, [srcPath, "verify-closed", "--fingerprint", "fp", "--ticket", "uuid"], {
+        timeout: 10000,
         encoding: "utf8",
       });
     } catch (e) {
@@ -171,17 +180,14 @@ describe("verify-closed: CLI subcommand wiring", () => {
 
   it("verify-closed-batch subcommand exits with usage error when --snapshot missing", async () => {
     const { execFileSync } = await import("node:child_process");
-    const path = await import("node:path");
-    const { fileURLToPath } = await import("node:url");
-    const __dirname = path.dirname(fileURLToPath(import.meta.url));
-    const repoRoot = path.resolve(__dirname, "../..");
-    const cliPath = path.join(repoRoot, "dist/bin/traffic-scan.js");
+    const tsx = findTsx(__repoRoot);
+    const srcPath = path.join(__repoRoot, "src/bin/traffic-scan.ts");
 
     let threw = false;
     let stderr = "";
     try {
-      execFileSync("node", [cliPath, "verify-closed-batch", "--dry-run"], {
-        timeout: 5000,
+      execFileSync(tsx, [srcPath, "verify-closed-batch", "--dry-run"], {
+        timeout: 10000,
         encoding: "utf8",
         env: { ...process.env, LINEAR_API_KEY: "test-key" },
       });
