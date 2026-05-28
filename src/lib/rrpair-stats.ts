@@ -529,7 +529,12 @@ export async function analyzeSnapshot(
       signals.push({
         kind: "high-freq-query",
         severity: sev,
-        fingerprint: fingerprint("high-freq-query", g.host, g.queryPattern),
+        // SQL fingerprints omit host — the query text alone is the discriminator.
+        // DB hostnames vary between scan windows (IP vs DNS alias for the same RDS
+        // instance), causing the same query to get a different fingerprint each run
+        // and bypassing the Linear dedup check. HTTP signals keep the host because
+        // different services share path patterns; SQL does not have that problem.
+        fingerprint: fingerprint("high-freq-query", "", g.queryPattern),
         title: `High-frequency query: ${g.count}× — ${g.queryPattern.slice(0, 80)}`,
         details: `Query executed ${g.count} times in the capture window. p50=${lat.p50}ms p95=${lat.p95}ms. ` +
           `Even at low per-call cost, this volume indicates a missing cache or per-item loop. Query: ${g.queryPattern}`,
@@ -544,7 +549,7 @@ export async function analyzeSnapshot(
       signals.push({
         kind: "slow-query",
         severity: sev,
-        fingerprint: fingerprint("slow-query", g.host, g.queryPattern),
+        fingerprint: fingerprint("slow-query", "", g.queryPattern),  // host omitted — see high-freq-query comment above
         title: `Slow query: max=${maxDur}ms — ${g.queryPattern.slice(0, 80)}`,
         details: `Query hit ${maxDur}ms in at least one execution (p95=${lat.p95}ms across ${g.count} executions). ` +
           `Likely missing index or full-table scan. Query: ${g.queryPattern}`,
