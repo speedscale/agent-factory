@@ -35,6 +35,22 @@ COPY package*.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 
+# Install proxymock CLI and speedctl so the radar-monitor CronJob can create
+# and pull traffic snapshots. Versions must match speedscale/kraken manifest.json
+# v2.5 channel. To update: bump both ARGs and rebuild.
+# nocheck — version tags, not secrets
+ARG PROXYMOCK_VERSION=v2.5.565
+ARG SPEEDCTL_VERSION=v2.5.565
+RUN ARCH="$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')" && \
+    curl -fsSL \
+      "https://downloads.speedscale.com/proxymock/${PROXYMOCK_VERSION}/proxymock-linux-${ARCH}" \
+      -o /usr/local/bin/proxymock && \
+    chmod +x /usr/local/bin/proxymock && \
+    curl -fsSL \
+      "https://downloads.speedscale.com/speedctl/${SPEEDCTL_VERSION}/speedctl-linux-${ARCH}" \
+      -o /usr/local/bin/speedctl && \
+    chmod +x /usr/local/bin/speedctl
+
 # Run as the built-in `node` user (UID 1000) so the chart's
 # securityContext.runAsNonRoot:true default is satisfied. /app is chowned so
 # the runtime can read its own files; PVC mounts at /app/artifacts and
