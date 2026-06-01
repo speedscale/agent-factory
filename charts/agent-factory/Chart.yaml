@@ -6,7 +6,7 @@ description: |
   mock-generation, migration-safety) entirely inside the customer's VPC.
 type: application
 version: 0.1.0
-appVersion: "0.1.72"
+appVersion: "0.1.73"
 kubeVersion: ">=1.27.0"
 keywords:
   - speedscale
