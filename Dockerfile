@@ -36,11 +36,13 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 
 # Install proxymock CLI and speedctl so the radar-monitor CronJob can create
-# and pull traffic snapshots. Versions must match speedscale/kraken manifest.json
-# v2.5 channel. To update: bump both ARGs and rebuild.
+# and pull traffic snapshots. v2.5.605 streams large snapshot artifacts to disk
+# and caps the Go runtime to the cgroup, so a pull no longer OOMs the 1Gi pod on
+# big windows (earlier builds buffered raw.jsonl whole in memory). To update:
+# bump both ARGs and rebuild.
 # nocheck — version tags, not secrets
-ARG PROXYMOCK_VERSION=v2.5.565
-ARG SPEEDCTL_VERSION=v2.5.565
+ARG PROXYMOCK_VERSION=v2.5.605
+ARG SPEEDCTL_VERSION=v2.5.605
 RUN ARCH="$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')" && \
     curl -fsSL \
       "https://downloads.speedscale.com/proxymock/${PROXYMOCK_VERSION}/proxymock-linux-${ARCH}" \
