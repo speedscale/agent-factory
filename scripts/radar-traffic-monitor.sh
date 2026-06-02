@@ -49,9 +49,16 @@
 #   MIN_SEVERITY        high|medium|low. Default: medium
 #   MAX_TICKETS         Cap on tickets created per run (per service). Default: 5
 #   DEDUP_WINDOW_DAYS   Skip signals filed within this many days. Default: 7
-#   SNAPSHOT_KEEP_DAYS  Delete snapshots older than this. Default: 2
+#   SNAPSHOT_KEEP_DAYS  Delete local snapshots older than this. Default: 2
 #   BASELINE_DIR        Directory for rolling baseline files.
 #                       Default: SNAPSHOT_BASE/.baseline
+#   RADAR_ARCHIVE_BUCKET  S3-compatible bucket for durable bug-traffic archive.
+#                       When set, a bug's snapshot is tarred + uploaded so it
+#                       survives deletion of the BYOC/cloud source; the ticket's
+#                       Replay line points at it. Unset = archive disabled.
+#   RADAR_ARCHIVE_ENDPOINT / _REGION / _ACCESS_KEY_ID / _SECRET_ACCESS_KEY
+#                       S3 endpoint + creds (from the radar-archive-s3 secret).
+#                       Works with DO Spaces today and AWS S3 unchanged.
 #   DRY_RUN             Set to "true" to skip ticket creation (analysis only)
 #   VERIFY_WITHIN_DAYS  Check tickets closed within this many days. Default: 2
 
@@ -139,15 +146,34 @@ delete_cloud_snapshot() {
     && echo "$lp Deleted cloud snapshot $id"
 }
 
-# keep_or_delete_snapshot <tickets_created> <snap_id> <log_prefix>
-# Keep the snapshot if the scan filed >=1 ticket against it; otherwise delete.
-keep_or_delete_snapshot() {
-  local created="$1" id="$2" lp="${3:-[snapshot]}"
+# settle_snapshot <tickets_created> <snap_id> <local_dir> <log_prefix>
+# Decide what happens to a snapshot once the scan result is known:
+#   - bug filed + archive bucket configured → tar the pulled dir and upload it
+#     to the factory's durable bucket (survives BYOC/source deletion), then
+#     drop the ephemeral cloud snapshot. The ticket's Replay line points at the
+#     bucket copy.
+#   - bug filed + NO archive bucket → keep the cloud snapshot as the fallback
+#     replay source.
+#   - no bug → delete the cloud snapshot.
+settle_snapshot() {
+  local created="$1" id="$2" dir="$3" lp="${4:-[snapshot]}"
   [[ -z "$id" ]] && return 0
-  if [[ "$created" =~ ^[0-9]+$ && "$created" -gt 0 ]]; then
-    echo "$lp Kept cloud snapshot $id for replay ($created ticket(s) filed)"
-  else
+  if [[ ! "$created" =~ ^[0-9]+$ || "$created" -le 0 ]]; then
     delete_cloud_snapshot "$id" "$lp"
+    return 0
+  fi
+  if [[ -n "${RADAR_ARCHIVE_BUCKET:-}" ]]; then
+    local tgz="${dir%/}.tgz"
+    if tar -czf "$tgz" -C "$dir" . 2>/dev/null; then
+      (cd "$AF_REPO_DIR" && node dist/bin/archive-snapshot.js --file "$tgz" --key "radar-monitor/${id}.tgz" 2>&1 | sed "s/^/$lp [archive] /") \
+        || echo "$lp WARNING: archive upload failed (non-fatal; ticket still filed)"
+      rm -f "$tgz"
+    else
+      echo "$lp WARNING: could not tar snapshot for archive (non-fatal)"
+    fi
+    delete_cloud_snapshot "$id" "$lp"   # durable copy now lives in the bucket
+  else
+    echo "$lp Kept cloud snapshot $id for replay ($created ticket(s) filed; no archive bucket)"
   fi
 }
 
@@ -292,7 +318,7 @@ scan_service() {
       echo "$svc_log Fast-path filed $FAST_CREATED critical ticket(s)"
     fi
     # Keep the snapshot only if a ticket references it; else reclaim it.
-    keep_or_delete_snapshot "$FAST_CREATED" "$fast_snap_id" "$svc_log"
+    settle_snapshot "$FAST_CREATED" "$fast_snap_id" "$fast_dir" "$svc_log"
   else
     echo "$svc_log Fast-path: no recent traffic"
     delete_cloud_snapshot "$fast_snap_id" "$svc_log"
@@ -326,7 +352,7 @@ scan_service() {
   echo "$svc_log Main scan done. Tickets created: $CREATED, skipped: $SKIPPED"
 
   # Keep the snapshot alive for replay only if it produced a ticket.
-  keep_or_delete_snapshot "$CREATED" "$main_snap_id" "$svc_log"
+  settle_snapshot "$CREATED" "$main_snap_id" "$snapshot_dir" "$svc_log"
 
   # ── Phase 2: verify loop (check recently-closed tickets) ──────────────────
   if [[ "$DRY_RUN" != "true" && -n "${LINEAR_API_KEY:-}" ]]; then

@@ -567,9 +567,20 @@ async function renderExampleTraffic(snapshotDir: string, examples: string[]): Pr
   return "";
 }
 
-/** A `Replay:` line pointing at the kept cloud snapshot, or "" when none. */
+/**
+ * A `Replay:` line so the bug's exact traffic can be re-fetched. Prefers the
+ * factory's own durable archive bucket (survives deletion of the BYOC/cloud
+ * source); falls back to re-pulling the (ephemeral) Speedscale cloud snapshot
+ * when no archive bucket is configured. Returns "" when neither is available.
+ */
 function replayLine(snapshotId?: string): string {
   if (!snapshotId) return "";
+  const bucket = process.env.RADAR_ARCHIVE_BUCKET;
+  if (bucket) {
+    const uri = `s3://${bucket}/radar-monitor/${snapshotId}.tgz`;
+    const ep = process.env.RADAR_ARCHIVE_ENDPOINT ? ` --endpoint-url ${process.env.RADAR_ARCHIVE_ENDPOINT}` : "";
+    return `**Replay:** exact traffic archived at \`${uri}\` — \`aws s3 cp ${uri} ./repro.tgz${ep} && mkdir -p repro && tar xzf repro.tgz -C repro\`, then \`proxymock replay --in ./repro\``;
+  }
   return `**Replay:** \`proxymock cloud pull snapshot ${snapshotId} --out ./repro\` — exact traffic kept for this bug`;
 }
 
