@@ -31,6 +31,10 @@ import { type BaselineStore } from "./baseline-store.js";
 export interface ScannerOptions {
   provider: LLMProvider;
   model: string;
+  /** Cloud snapshot ID this scan was pulled from. When set, tickets get a
+   *  `Replay:` line so the exact traffic can be re-pulled. The monitor keeps
+   *  the snapshot alive (instead of deleting it) when a ticket is filed. */
+  snapshotId?: string;
   /** Only process signals at or above this severity. Default: medium */
   minSeverity?: Severity;
   /** Maximum tickets to create per scan run. Default: 5 */
@@ -347,7 +351,7 @@ export async function interpretAndFile(
     const hypo: TicketHypothesis = {
       signalFingerprint: h.signalFingerprint,
       title: h.title.slice(0, 80),
-      body: buildTicketBody(h.body, signal, snapshotDir, h.codeLocus, traffic),
+      body: buildTicketBody(h.body, signal, snapshotDir, h.codeLocus, traffic, opts.snapshotId),
       codeLocus: h.codeLocus ?? undefined,
       severity: signal.severity,
     };
@@ -563,12 +567,19 @@ async function renderExampleTraffic(snapshotDir: string, examples: string[]): Pr
   return "";
 }
 
+/** A `Replay:` line pointing at the kept cloud snapshot, or "" when none. */
+function replayLine(snapshotId?: string): string {
+  if (!snapshotId) return "";
+  return `**Replay:** \`proxymock cloud pull snapshot ${snapshotId} --out ./repro\` — exact traffic kept for this bug`;
+}
+
 function buildTicketBody(
   llmBody: string,
   signal: Signal,
   snapshotDir: string,
   codeLocus?: string | null,
   traffic = "",
+  snapshotId?: string,
 ): string {
   const lines: string[] = [
     llmBody,
@@ -581,6 +592,8 @@ function buildTicketBody(
     lines.push(`**Latency:** p50=${p50}ms p95=${p95}ms p99=${p99}ms`);
   }
   if (codeLocus) lines.push(`**Code locus:** \`${codeLocus}\``);
+  const replay = replayLine(snapshotId);
+  if (replay) lines.push(replay);
   lines.push(`**Snapshot:** \`${snapshotDir}\``);
   // Embed fingerprint for dedup on future scans
   lines.push(`<!-- traffic-scan-fingerprint: ${signal.fingerprint} -->`);
@@ -619,7 +632,7 @@ async function fileWithoutLLM(
     const hypo: TicketHypothesis = {
       signalFingerprint: signal.fingerprint,
       title: signal.title.slice(0, 80),
-      body: buildNoLLMBody(signal, snapshotDir, traffic),
+      body: buildNoLLMBody(signal, snapshotDir, traffic, opts.snapshotId),
       severity: signal.severity,
     };
 
@@ -672,7 +685,7 @@ async function fileWithoutLLM(
 }
 
 /** Build a ticket body from signal evidence without any LLM call. */
-function buildNoLLMBody(signal: Signal, snapshotDir: string, traffic = ""): string {
+function buildNoLLMBody(signal: Signal, snapshotDir: string, traffic = "", snapshotId?: string): string {
   const lines: string[] = [];
 
   // Lead paragraph: what was observed
@@ -708,6 +721,8 @@ function buildNoLLMBody(signal: Signal, snapshotDir: string, traffic = ""): stri
   if (signal.evidence.examples.length > 0) {
     lines.push(`**Examples:** ${signal.evidence.examples.slice(0, 2).join(", ")}`);
   }
+  const replay = replayLine(snapshotId);
+  if (replay) lines.push(replay);
   lines.push(`**Snapshot:** \`${snapshotDir}\``);
   lines.push(`<!-- traffic-scan-fingerprint: ${signal.fingerprint} -->`);
   if (traffic) lines.push(traffic);

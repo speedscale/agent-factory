@@ -279,6 +279,9 @@ async function runScan(argv: string[]): Promise<void> {
 
   const repoDir = getArg(argv, ["--repo", "-r"]);
   const outputFile = getArg(argv, ["--output", "-o"]);
+  // Cloud snapshot ID this dir was pulled from — embedded in tickets as a
+  // `Replay:` line so the exact traffic can be re-pulled. Optional.
+  const snapshotId = getArg(argv, ["--snapshot-id"]);
   const verbose = hasFlag(argv, ["--verbose", "-v"]);
   const createTickets = hasFlag(argv, ["--create-tickets"]);
   const noCorrelate = hasFlag(argv, ["--no-correlate"]);
@@ -424,6 +427,7 @@ async function runScan(argv: string[]): Promise<void> {
       {
         provider,
         model,
+        snapshotId,
         minSeverity,
         maxTickets,
         dedupWindowDays,
