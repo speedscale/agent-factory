@@ -343,10 +343,11 @@ export async function interpretAndFile(
     const signal = fpToSignal.get(h.signalFingerprint);
     if (!signal) continue;
 
+    const traffic = await renderExampleTraffic(snapshotDir, signal.evidence.examples);
     const hypo: TicketHypothesis = {
       signalFingerprint: h.signalFingerprint,
       title: h.title.slice(0, 80),
-      body: buildTicketBody(h.body, signal, snapshotDir, h.codeLocus),
+      body: buildTicketBody(h.body, signal, snapshotDir, h.codeLocus, traffic),
       codeLocus: h.codeLocus ?? undefined,
       severity: signal.severity,
     };
@@ -485,11 +486,89 @@ async function collectMatchingFiles(
 
 // ── Ticket body builder ───────────────────────────────────────────────────────
 
+/** Max chars embedded per request/response block so a ticket stays readable. */
+const TRAFFIC_BLOCK_LIMIT = 1200;
+
+/** Pull the fenced body of a `### REQUEST ###` / `### RESPONSE ###` section. */
+function extractRRSection(raw: string, section: "REQUEST" | "RESPONSE"): string | null {
+  const m = raw.match(
+    new RegExp("###\\s*" + section + "\\s*###[\\s\\S]*?```[^\\n]*\\n([\\s\\S]*?)\\n```"),
+  );
+  return m ? m[1].trim() : null;
+}
+
+// Headers whose values carry credentials/session material. Snapshot DLP only
+// redacts Authorization at capture time, so the raw RRPair files still contain
+// cookies and tokens — we must not copy those into a Linear ticket.
+const SENSITIVE_HEADERS = new Set([
+  "cookie", "set-cookie", "authorization", "proxy-authorization",
+  "x-api-key", "api-key", "x-auth-token", "x-csrf-token", "x-amz-security-token",
+]);
+/** Any header value longer than this is elided — catches opaque tokens in
+ *  headers we don't explicitly know about. */
+const OPAQUE_VALUE_LIMIT = 200;
+
+/**
+ * Redact credential-bearing header values from a request/response block before
+ * it goes into a ticket. Defense-in-depth on top of capture-time DLP, not a
+ * replacement for it — request/response BODIES are still passed through (capped)
+ * and may carry PII, so born-redacted capture is the real fix.
+ */
+function sanitizeTrafficBlock(block: string): string {
+  return block
+    .split("\n")
+    .map((line) => {
+      const h = line.match(/^([A-Za-z0-9-]+):\s*(.*)$/);
+      if (!h) return line;
+      const [, name, value] = h;
+      if (SENSITIVE_HEADERS.has(name.toLowerCase()) || value.length > OPAQUE_VALUE_LIMIT) {
+        return `${name}: ‹redacted›`;
+      }
+      return line;
+    })
+    .join("\n");
+}
+
+function truncateBlock(s: string): string {
+  return s.length > TRAFFIC_BLOCK_LIMIT
+    ? s.slice(0, TRAFFIC_BLOCK_LIMIT) + "\n… (truncated)"
+    : s;
+}
+
+/**
+ * Read the first usable example RRPair off disk and render its actual
+ * request/response, so the ticket is reproducible without the (ephemeral)
+ * snapshot the signal was extracted from. Best-effort: a missing or malformed
+ * example just yields an empty string and the ticket falls back to the path
+ * reference. Only HTTP `.md` records carry request/response sections; other
+ * formats (e.g. SQL `.json`) yield nothing here and keep their path reference.
+ */
+async function renderExampleTraffic(snapshotDir: string, examples: string[]): Promise<string> {
+  for (const rel of examples.slice(0, 3)) {
+    let raw: string;
+    try {
+      raw = await readFile(path.join(snapshotDir, rel), "utf8");
+    } catch {
+      continue; // file gone / unreadable — try the next example
+    }
+    const req = extractRRSection(raw, "REQUEST");
+    const res = extractRRSection(raw, "RESPONSE");
+    if (!req && !res) continue;
+
+    const out = ["", "---", `**Reproducible traffic** — example RRPair \`${rel}\` (secrets redacted):`, ""];
+    if (req) out.push("_Request_", "```http", truncateBlock(sanitizeTrafficBlock(req)), "```");
+    if (res) out.push("_Response_", "```http", truncateBlock(sanitizeTrafficBlock(res)), "```");
+    return out.join("\n");
+  }
+  return "";
+}
+
 function buildTicketBody(
   llmBody: string,
   signal: Signal,
   snapshotDir: string,
   codeLocus?: string | null,
+  traffic = "",
 ): string {
   const lines: string[] = [
     llmBody,
@@ -505,6 +584,7 @@ function buildTicketBody(
   lines.push(`**Snapshot:** \`${snapshotDir}\``);
   // Embed fingerprint for dedup on future scans
   lines.push(`<!-- traffic-scan-fingerprint: ${signal.fingerprint} -->`);
+  if (traffic) lines.push(traffic);
   return lines.join("\n");
 }
 
@@ -535,10 +615,11 @@ async function fileWithoutLLM(
   let ticketsSkipped = 0;
 
   for (const signal of eligible) {
+    const traffic = await renderExampleTraffic(snapshotDir, signal.evidence.examples);
     const hypo: TicketHypothesis = {
       signalFingerprint: signal.fingerprint,
       title: signal.title.slice(0, 80),
-      body: buildNoLLMBody(signal, snapshotDir),
+      body: buildNoLLMBody(signal, snapshotDir, traffic),
       severity: signal.severity,
     };
 
@@ -591,7 +672,7 @@ async function fileWithoutLLM(
 }
 
 /** Build a ticket body from signal evidence without any LLM call. */
-function buildNoLLMBody(signal: Signal, snapshotDir: string): string {
+function buildNoLLMBody(signal: Signal, snapshotDir: string, traffic = ""): string {
   const lines: string[] = [];
 
   // Lead paragraph: what was observed
@@ -629,6 +710,7 @@ function buildNoLLMBody(signal: Signal, snapshotDir: string): string {
   }
   lines.push(`**Snapshot:** \`${snapshotDir}\``);
   lines.push(`<!-- traffic-scan-fingerprint: ${signal.fingerprint} -->`);
+  if (traffic) lines.push(traffic);
 
   return lines.join("\n");
 }
