@@ -16,6 +16,7 @@ export const agentRegistry: Record<AgentKind, AgentDef> = {
   "pr-replay-check": prReplayCheckAgent,
   "mock-generation": mockGenerationAgent,
   "migration-safety": migrationSafetyAgent,
+  "traffic-monitor": triageAgent,
 };
 
 export function getAgent(kind: AgentKind): AgentDef {

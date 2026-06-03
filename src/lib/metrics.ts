@@ -31,6 +31,7 @@ export const RUN_PHASES = [
   "queued",
   "planned",
   "building",
+  "scanning",
   "generating",
   "validating",
   "deploying",

@@ -142,6 +142,7 @@ export function countByPhase(runs: AgentRun[]): Record<AgentRunPhase, number> {
     queued: 0,
     planned: 0,
     building: 0,
+    scanning: 0,
     generating: 0,
     validating: 0,
     deploying: 0,
