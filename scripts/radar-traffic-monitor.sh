@@ -177,6 +177,47 @@ settle_snapshot() {
   fi
 }
 
+# upload_findings <service> <findings_file> <snap_id> <snap_dir> <log_prefix>
+# When findings contain signals, upload the analysis JSON and the snapshot
+# tarball to the archive bucket. This replaces Linear ticket creation as the
+# durable record of what the factory found.
+upload_findings() {
+  local service="$1" findings="$2" snap_id="$3" dir="$4" lp="${5:-[findings]}"
+  [[ -z "${RADAR_ARCHIVE_BUCKET:-}" ]] && return 0
+  [[ ! -f "$findings" ]] && return 0
+
+  local sig_count
+  sig_count=$(python3 -c "
+import json, sys
+with open(sys.argv[1]) as f:
+    d = json.load(f)
+sigs = d.get('signals', d.get('stats', {}).get('signals', []))
+print(len(sigs) if isinstance(sigs, list) else 0)
+" "$findings" 2>/dev/null || echo "0")
+
+  if [[ "$sig_count" -le 0 ]]; then
+    echo "$lp No signals — skipping bucket upload"
+    return 0
+  fi
+
+  local ts
+  ts=$(date -u +%Y%m%dT%H%M%SZ)
+  local findings_key="radar-monitor/findings/${service}-${ts}.json"
+  echo "$lp Uploading findings ($sig_count signals) to s3://${RADAR_ARCHIVE_BUCKET}/${findings_key}"
+  (cd "$AF_REPO_DIR" && node dist/bin/archive-snapshot.js --file "$findings" --key "$findings_key" 2>&1 | sed "s/^/$lp [archive] /") \
+    || echo "$lp WARNING: findings upload failed (non-fatal)"
+
+  if [[ -n "$snap_id" && -d "$dir" ]]; then
+    local tgz="${dir%/}.tgz"
+    if tar -czf "$tgz" -C "$dir" . 2>/dev/null; then
+      echo "$lp Archiving snapshot $snap_id for replay"
+      (cd "$AF_REPO_DIR" && node dist/bin/archive-snapshot.js --file "$tgz" --key "radar-monitor/snapshots/${snap_id}.tgz" 2>&1 | sed "s/^/$lp [archive] /") \
+        || echo "$lp WARNING: snapshot archive failed (non-fatal)"
+      rm -f "$tgz"
+    fi
+  fi
+}
+
 # ── Snapshot pull helper ──────────────────────────────────────────────────────
 # pull_snapshot <service> <out_dir> <start_mins_ago> <end_mins_ago> <log_prefix>
 # Creates a cloud snapshot for a relative time window and pulls RRPair files.
@@ -309,7 +350,8 @@ scan_service() {
   local fast_snap_id="$LAST_SNAP_ID"
 
   if [[ -n "$(find "$fast_dir" \( -name '*.json' -o -name '*.md' \) 2>/dev/null | head -1)" ]]; then
-    FAST_OUTPUT=$(run_traffic_scan "$service" "$fast_dir" "--min-severity high --max-tickets 3 --no-correlate" "$fast_snap_id" 2>&1)
+    local fast_findings="$SNAPSHOT_BASE/${service}-fast-${run_ts}-findings.json"
+    FAST_OUTPUT=$(run_traffic_scan "$service" "$fast_dir" "--min-severity high --max-tickets 3 --no-correlate --output $fast_findings" "$fast_snap_id" 2>&1)
     echo "$FAST_OUTPUT" | sed "s/^/$svc_log [fast] /"
 
     FAST_CREATED=$(echo "$FAST_OUTPUT" | grep '"phase":"summary"' | python3 -c \
@@ -317,7 +359,7 @@ scan_service() {
     if [[ "$FAST_CREATED" -gt 0 ]]; then
       echo "$svc_log Fast-path filed $FAST_CREATED critical ticket(s)"
     fi
-    # Keep the snapshot only if a ticket references it; else reclaim it.
+    upload_findings "$service" "$fast_findings" "$fast_snap_id" "$fast_dir" "$svc_log"
     settle_snapshot "$FAST_CREATED" "$fast_snap_id" "$fast_dir" "$svc_log"
   else
     echo "$svc_log Fast-path: no recent traffic"
@@ -342,7 +384,8 @@ scan_service() {
   rrpair_count=$(find "$snapshot_dir" \( -name '*.json' -o -name '*.md' \) ! -path '*/.metadata/*' | wc -l | tr -d ' ')
   echo "$svc_log Pulled $rrpair_count RRPair files"
 
-  OUTPUT=$(run_traffic_scan "$service" "$snapshot_dir" "" "$main_snap_id" 2>&1)
+  local main_findings="$SNAPSHOT_BASE/${service}-${run_ts}-findings.json"
+  OUTPUT=$(run_traffic_scan "$service" "$snapshot_dir" "--output $main_findings" "$main_snap_id" 2>&1)
   echo "$OUTPUT" | sed "s/^/$svc_log /"
 
   CREATED=$(echo "$OUTPUT" | grep '"phase":"summary"' | python3 -c \
@@ -351,7 +394,7 @@ scan_service() {
     "import json,sys; d=json.load(sys.stdin); print(d.get('skipped',0))" 2>/dev/null || echo "?")
   echo "$svc_log Main scan done. Tickets created: $CREATED, skipped: $SKIPPED"
 
-  # Keep the snapshot alive for replay only if it produced a ticket.
+  upload_findings "$service" "$main_findings" "$main_snap_id" "$snapshot_dir" "$svc_log"
   settle_snapshot "$CREATED" "$main_snap_id" "$snapshot_dir" "$svc_log"
 
   # ── Phase 2: verify loop (check recently-closed tickets) ──────────────────
