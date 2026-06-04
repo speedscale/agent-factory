@@ -5,7 +5,8 @@ export type AgentKind =
   | "coverage-fill"
   | "pr-replay-check"
   | "mock-generation"
-  | "migration-safety";
+  | "migration-safety"
+  | "traffic-monitor";
 
 export const AGENT_KINDS: readonly AgentKind[] = [
   "triage",
@@ -15,6 +16,7 @@ export const AGENT_KINDS: readonly AgentKind[] = [
   "pr-replay-check",
   "mock-generation",
   "migration-safety",
+  "traffic-monitor",
 ] as const;
 
 export interface AgentEnablement {

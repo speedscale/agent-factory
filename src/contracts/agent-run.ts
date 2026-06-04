@@ -4,6 +4,7 @@ export type AgentRunPhase =
   | "queued"
   | "planned"
   | "building"
+  | "scanning"
   | "validating"
   | "generating"
   | "deploying"

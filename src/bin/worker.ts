@@ -20,6 +20,7 @@ import { RUN_CLAIM_FILENAME, listRuns, writeRun } from "../lib/run-admin.js";
 import { writeRunResultArtifact } from "../lib/run-result.js";
 import { writeQualityArtifacts } from "../lib/quality-report.js";
 import { publishPrQualityComment } from "../lib/pr-quality-comment.js";
+import { processTrafficRun } from "../lib/traffic-worker.js";
 import type { AgentRun } from "../contracts/index.js";
 
 interface WorkerOptions {
@@ -311,7 +312,7 @@ async function failStaleActiveRuns(maxActivePhaseMs: number): Promise<number> {
   let staleRunsFailed = 0;
 
   for (const run of runs) {
-    if (run.status.phase !== "planned" && run.status.phase !== "building" && run.status.phase !== "validating") {
+    if (run.status.phase !== "planned" && run.status.phase !== "building" && run.status.phase !== "scanning" && run.status.phase !== "validating") {
       continue;
     }
 
@@ -462,12 +463,17 @@ async function runWorker(queue: RunQueue, options: WorkerOptions): Promise<void>
         }
 
         try {
-          await processRun(runName, options.sourceDir);
+          const run = await readJsonFile<AgentRun>(resolveRunJsonPath(runName));
+          if (run.spec.agent === "traffic-monitor") {
+            await processTrafficRun(run, (phase, summary) => updateRun(runName, phase, summary));
+          } else {
+            await processRun(runName, options.sourceDir);
+          }
           metrics.runsProcessed += 1;
           workerRegistry.runsProcessedTotal.inc({ result: "succeeded" });
           metrics.lastRun = runName;
           metrics.lastRunAt = new Date().toISOString();
-          console.log(JSON.stringify({ message: "run processed", run: runName }, null, 2));
+          console.log(JSON.stringify({ message: "run processed", run: runName, agent: run.spec.agent ?? "default" }, null, 2));
         } catch (error) {
           metrics.runsFailed += 1;
           workerRegistry.runsProcessedTotal.inc({ result: "failed" });
