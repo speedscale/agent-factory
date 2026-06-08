@@ -6,19 +6,41 @@ The binary is portable. Engine + control-plane code is identical across deployme
 
 ## Precedence
 
-CLI flag > env var > default. CLI flags are only honored by the one-shot `llm-run` entry-point. Long-running entry-points (`intake-api`, `controller`, `worker`) take env only.
+CLI flag > env var > default. CLI flags are only honored by the one-shot `llm-run` entry-point. Long-running entry-points (`intake-api`, `worker`) take env only.
+
+## OTLP streaming
+
+| Var | Consumer | Default | Notes |
+|---|---|---|---|
+| `OTLP_RECEIVER_ENABLED` | intake-api | `false` | Master switch — turn on the OTLP gRPC receiver |
+| `OTLP_RECEIVER_PORT` | intake-api | `4317` | gRPC listen port |
+| `OTLP_WINDOW_MS` | intake-api | `60000` | Tumbling window duration in milliseconds |
+| `OTLP_MAX_RECORDS_PER_SERVICE` | intake-api | `10000` | Per-service buffer high-water mark; oldest records dropped on overflow |
+| `BASELINE_DIR` | intake-api | `/app/.work/baselines` | Directory for per-endpoint rolling baseline NDJSON files |
+
+## Findings archive (S3-compatible)
+
+| Var | Consumer | Default | Notes |
+|---|---|---|---|
+| `RADAR_ARCHIVE_BUCKET` | intake-api | — | S3 bucket name for findings upload |
+| `RADAR_ARCHIVE_ENDPOINT` | intake-api | — | S3-compatible endpoint URL (e.g. `https://nyc3.digitaloceanspaces.com`) |
+| `RADAR_ARCHIVE_REGION` | intake-api | — | AWS region or equivalent |
+| `RADAR_ARCHIVE_ACCESS_KEY_ID` | intake-api | — | Secret. S3 access key |
+| `RADAR_ARCHIVE_SECRET_ACCESS_KEY` | intake-api | — | Secret. S3 secret key |
+
+These are mounted from a k8s Secret via `intakeApi.otlp.archiveSecret.name` in the Helm chart. When any of `BUCKET`, `ACCESS_KEY_ID`, or `SECRET_ACCESS_KEY` is missing, archival is silently skipped.
 
 ## Identity / observability
 
 | Var | Consumer | Default | Notes |
 |---|---|---|---|
-| `AF_INSTANCE` | all binaries | `local` | Free-form tag identifying this deployment in logs and metrics (e.g. `ken-local-cli`, `minikube-local`, `k8s-staging`). Surfaced in startup banner and in run-record JSON. CLI override: `--instance <name>` (llm-run only). |
+| `AF_INSTANCE` | all binaries | `local` | Free-form tag identifying this deployment in logs and metrics. CLI override: `--instance <name>` (llm-run only). |
 
 ## Ticket sourcing
 
 | Var | Consumer | Default | Notes |
 |---|---|---|---|
-| `AF_LINEAR_QUERY` | poller (Linear path) | — | Linear filter string passed to the Linear API. **Declared but unused today**: the Linear intake path is a separate ticket (see "Roadmap" below). Configs may pin this value in advance. |
+| `AF_LINEAR_QUERY` | poller (Linear path) | — | Linear filter string. Declared but unused today. |
 | `INTAKE_ALLOWED_REPOS` | intake-api, issue-poller | `""` | Comma-separated `owner/repo` allow-list for GitHub-issue intake. |
 | `INTAKE_ALLOW_UNKNOWN_REPOS` | intake-api | `false` | When `true`, allow repos outside the allow-list. |
 | `INTAKE_REPO_APP_MAP_FILE` | intake-api, issue-poller | — | Path to JSON mapping `owner/repo` → GitHub App install. |
@@ -35,7 +57,7 @@ CLI flag > env var > default. CLI flags are only honored by the one-shot `llm-ru
 
 | Var | Consumer | Default | Notes |
 |---|---|---|---|
-| `GITHUB_API_BASE_URL` | intake-api, poller, k8s-worker-job | `https://api.github.com` | Override for GHE or test stubs. |
+| `GITHUB_API_BASE_URL` | intake-api, poller | `https://api.github.com` | Override for GHE or test stubs. |
 | `GITHUB_WEBHOOK_SECRET` | intake-api | — | Secret. HMAC verification for inbound webhooks. |
 | `GITHUB_TOKEN` | poller, MR creation | — | Secret. Personal or app token. |
 | `GITHUB_APP_ID` | poller (App auth) | — | Secret. GitHub App identifier. |
@@ -48,124 +70,48 @@ CLI flag > env var > default. CLI flags are only honored by the one-shot `llm-ru
 | Var | Consumer | Default | Notes |
 |---|---|---|---|
 | `RUN_QUEUE_BACKEND` | worker | `filesystem` | `filesystem` or `redis`. |
-| `REDIS_URL` | run-queue | `redis://redis:6379` | Used when backend is `redis`; shared with poller state. |
+| `REDIS_URL` | run-queue | `redis://redis:6379` | Used when backend is `redis`. |
 | `REDIS_QUEUE_KEY` | run-queue | `agent-factory:runs:queued` | Redis list key. |
 | `RUN_QUEUE_BATCH_SIZE` | worker | `20` | Items dequeued per worker pass. |
 | `WORKER_MAX_ACTIVE_PHASE_MS` | worker | `0` (disabled) | Per-phase wall-clock cap. |
 | `WORKER_METRICS_PORT` | worker | — | If set, expose Prometheus metrics on this port. |
 
-## K8s worker-job dispatch
+## Controller (dead code)
+
+These env vars are consumed by the CRD controller which is no longer used. Listed for reference until the dead code is removed.
 
 | Var | Consumer | Default | Notes |
 |---|---|---|---|
-| `INTAKE_TRIGGER_WORKER_JOB` | k8s-worker-job | `false` | Master switch — when on, intake dispatches into a Worker `Job` instead of a long-running worker. |
-| `INTAKE_WORKER_JOB_NAMESPACE` | k8s-worker-job | (falls back to `POD_NAMESPACE` then SA file) | Where to create Jobs. |
-| `INTAKE_WORKER_JOB_IMAGE` | k8s-worker-job | — | Required when `INTAKE_TRIGGER_WORKER_JOB=true`. |
-| `INTAKE_WORKER_JOB_PVC` | k8s-worker-job | `agent-factory-data` | Persistent volume for the worker. |
-| `INTAKE_WORKER_JOB_SERVICE_ACCOUNT` | k8s-worker-job | — | Worker SA. |
-
-## Controller (k8s)
-
-| Var | Consumer | Default | Notes |
-|---|---|---|---|
-| `AF_WATCH_NAMESPACE` | controller | (all namespaces) | Restrict CRD watch to one namespace. Empty = cluster-scoped. |
+| `AF_WATCH_NAMESPACE` | controller | (all namespaces) | Restrict CRD watch to one namespace. |
 | `AF_RUN_ROOT_DIR` | controller | `/app/.work/runs` | Per-run scratch dir. |
 | `AF_HEALTHZ_PORT` | controller | `8081` | Liveness probe port. |
-| `KUBERNETES_SERVICE_HOST` | controller/k8s | (set by k8s) | Used to detect in-cluster vs out-of-cluster. |
-
-## Traffic materializer (TrafficSource adapters)
-
-The controller runs a pluggable adapter for each `TrafficSource` before handing
-the `AgentRunContext` to an agent. Each `store.kind` maps to a specific adapter:
-
-| `store.kind` | Adapter | Status |
-|---|---|---|
-| `local-fs` | Pass-through — snapshot is already on disk | ✅ implemented |
-| `speedscale-cloud` | `proxymock cloud pull snapshot <id> --out <dir>` | ✅ implemented |
-| `speedscale-onprem` | Same + `--app-url <store.endpoint>` | ✅ implemented |
-| `loki` | `python3 loki-gather --loki-url <endpoint> --out-dir <dir>` | ✅ implemented |
-| `elasticsearch` | `python3 es-gather --es-url <endpoint> --out-dir <dir>` | ✅ implemented |
-| `fluent-bit` | Gather via Fluent Bit HTTP output | 🚧 TBD |
-
-Adding a new adapter: implement an `AdapterFn` in `src/lib/traffic-materializer.ts`,
-add it to the `ADAPTERS` registry, extend the CRD enum and TS union.
-
-**Environment variables:**
-
-| Var | Default | Notes |
-|---|---|---|
-| `AF_PROXYMOCK_PATH` | `proxymock` (resolved via `PATH`) | Override path to the `proxymock` binary. Used by `speedscale-cloud` and `speedscale-onprem` adapters. |
-| `AF_LOKI_GATHER_PATH` | `/usr/local/bin/loki-gather` | Override path to the `loki-gather` Python script. Used by the `loki` adapter. |
-| `AF_ES_GATHER_PATH` | `/usr/local/bin/es-gather` | Override path to the `es-gather` Python script. Used by the `elasticsearch` adapter. |
-
-**`store.kind: speedscale-cloud` fields:**
-
-| Field | Required | Notes |
-|---|---|---|
-| `path` | yes | Speedscale Cloud snapshot UUID, e.g. `e2d4a538-626d-465e-8bf3-1c5c6eb74600`. |
-| `auth.secretRef` | no | k8s Secret whose value is `SPEEDSCALE_API_KEY`. Omit when the key is already in the pod environment. |
-
-**`store.kind: speedscale-onprem` fields** (same as above, plus):
-
-| Field | Required | Notes |
-|---|---|---|
-| `endpoint` | yes | On-prem Speedscale app URL, e.g. `https://speedscale.mycompany.com`. |
-
-**`store.kind: elasticsearch` fields:**
-
-| Field | Required | Notes |
-|---|---|---|
-| `endpoint` | yes | Elasticsearch HTTP base URL, e.g. `http://elasticsearch.byoc-elasticsearch:9200`. |
-| `query` | no | Raw ES Query DSL JSON clause. Overrides `scope.clusters` / `scope.services` filters when set. |
-| `window` | no | `--start` window (e.g. `-1h`, `-15m`, RFC3339). Defaults to `-1h`. |
-| `auth` | — | Not supported by es-gather. Secure with network policy or a proxy. |
-
-**`store.kind: loki` fields:**
-
-| Field | Required | Notes |
-|---|---|---|
-| `endpoint` | yes | Loki HTTP base URL, e.g. `http://loki.monitoring:3100`. |
-| `logql` | no | Full LogQL query. Overrides `scope.clusters` / `scope.services` label filters when set. |
-| `window` | no | `--start` window (e.g. `-1h`, `-15m`, RFC3339). Defaults to `-1h`. |
-| `auth.secretRef` | no | k8s Secret whose value is `LOKI_AUTH_TOKEN`. Omit for unauthenticated in-cluster Loki. |
 
 ## Engine / model
 
-The agent loop picks an LLM provider from `AF_ENGINE_KIND`. The Helm
-chart's `engine.kind` value is wired straight through to this env var,
-and `src/lib/engine-config.ts` is the single source of truth for the
-mapping. Unknown kinds throw at startup — there is no silent fallback to
-Anthropic, so misconfiguration is loud rather than billed.
-
 | Var | Consumer | Default | Notes |
 |---|---|---|---|
-| `AF_ENGINE_KIND` | engine | `claude-sdk` | One of: `claude-sdk`, `openrouter`, `ds4`, `omlx`, `generic-llm`, `private-llm`. See provider matrix below. |
-| `AF_ENGINE_MODEL` | engine | per-provider default | Model identifier. Defaults: `claude-sonnet-4-6` (anthropic), `openai/gpt-5.4` (openrouter), `deepseek-v4-flash` (ds4), `Qwen3.6-27B-4bit` (omlx). |
-| `AF_ENGINE_ENDPOINT` | engine | (per provider) | Optional base URL override. Today only consumed by the OpenAI-compatible providers via their own `*_BASE_URL` env vars. |
-| `ANTHROPIC_API_KEY` | engine (anthropic provider) | — | Secret. Mirrored from `engine.authSecret` by the chart when `engine.kind=claude-sdk`. |
-| `OPENROUTER_API_KEY` | engine (openrouter provider) | — | Secret. Required for the OpenRouter cloud client. |
-| `DS4_API_KEY` | engine (ds4 provider) | `ds4-local` | Optional. Local server doesn't validate. |
-| `DS4_BASE_URL` | engine (ds4 provider) | `http://127.0.0.1:38011/v1` | |
-| `OMLX_API_KEY` | engine (omlx provider) | `omlx-local` | Optional. Local server doesn't validate. |
-| `OMLX_BASE_URL` | engine (omlx provider) | `http://127.0.0.1:38010/v1` | |
+| `AF_ENGINE_KIND` | engine | `claude-sdk` | One of: `claude-sdk`, `openrouter`, `ds4`, `omlx`, `generic-llm`, `private-llm`. |
+| `AF_ENGINE_MODEL` | engine | per-provider default | Model identifier. |
+| `AF_ENGINE_ENDPOINT` | engine | (per provider) | Optional base URL override. |
+| `ANTHROPIC_API_KEY` | engine (anthropic) | — | Secret. |
+| `OPENROUTER_API_KEY` | engine (openrouter) | — | Secret. |
+| `DS4_API_KEY` | engine (ds4) | `ds4-local` | Optional. |
+| `DS4_BASE_URL` | engine (ds4) | `http://127.0.0.1:38011/v1` | |
+| `OMLX_API_KEY` | engine (omlx) | `omlx-local` | Optional. |
+| `OMLX_BASE_URL` | engine (omlx) | `http://127.0.0.1:38010/v1` | |
 | `ENGINE_MAX_LOOPS` | engine | `50` | Agent-loop iteration cap. |
 | `ENGINE_EVALUATOR_MAX_LOOPS` | engine | `20` | Evaluator-specific cap. |
 
 ### Provider matrix
 
-| `AF_ENGINE_KIND` / `engine.kind` | Internal provider | Auth required | Notes |
+| `AF_ENGINE_KIND` | Internal provider | Auth required | Notes |
 |---|---|---|---|
 | `claude-sdk` | `anthropic` | yes (`ANTHROPIC_API_KEY`) | Default. Anthropic cloud. |
 | `openrouter` | `openrouter` | yes (`OPENROUTER_API_KEY`) | OpenRouter cloud. |
-| `generic-llm` | `openrouter` | yes | Alias — operator-friendly name for an OpenAI-compatible HTTP endpoint. |
+| `generic-llm` | `openrouter` | yes | Alias for OpenAI-compatible HTTP endpoint. |
 | `private-llm` | `openrouter` | yes | Alias — same as `generic-llm`. |
-| `ds4` | `ds4` | no | Local DeepSeek-V4-Flash on `127.0.0.1`. |
-| `omlx` | `omlx` | no | Local MLX multi-model server on `127.0.0.1`. |
-
-The chart's `engine.authSecret` block is required for the cloud kinds
-and ignored for the local kinds (`ds4`, `omlx`). For local kinds, leave
-`engine.authSecret.name` empty; the chart will skip the secret mount
-rather than fail with `secretKeyRef.name=""`.
+| `ds4` | `ds4` | no | Local DeepSeek-V4-Flash. |
+| `omlx` | `omlx` | no | Local MLX multi-model server. |
 
 ## Bot identity (auto-PR author)
 
@@ -173,11 +119,6 @@ rather than fail with `secretKeyRef.name=""`.
 |---|---|---|---|
 | `AGENT_FACTORY_BOT_NAME` | run-to-pr | — | Commit author / committer name. |
 | `AGENT_FACTORY_BOT_EMAIL` | run-to-pr | — | Commit author / committer email. |
-| `AGENT_FACTORY_BOT_AUTHOR_NAME` | run-to-pr | `AGENT_FACTORY_BOT_NAME` | Override just the author. |
-| `AGENT_FACTORY_BOT_AUTHOR_EMAIL` | run-to-pr | `AGENT_FACTORY_BOT_EMAIL` | |
-| `AGENT_FACTORY_BOT_COMMITTER_NAME` | run-to-pr | `AGENT_FACTORY_BOT_NAME` | |
-| `AGENT_FACTORY_BOT_COMMITTER_EMAIL` | run-to-pr | `AGENT_FACTORY_BOT_EMAIL` | |
-| `AGENT_FACTORY_PROXYMOCK_MODE` | bot | — | `record` / `mock` / `replay`. |
 
 ## HTTP server
 
@@ -187,60 +128,30 @@ rather than fail with `secretKeyRef.name=""`.
 
 ## Metrics
 
-Both `intake-api` and `worker` expose Prometheus metrics. `/metrics` returns text/plain exposition format (Prometheus 0.0.4) and `/metrics.json` preserves the legacy JSON shape for non-Prometheus consumers. **Neither requires `INTAKE_API_TOKEN`** — they're read-only and meant for in-cluster scrape configs.
+Both `intake-api` and `worker` expose Prometheus metrics. `/metrics` returns text/plain exposition format (Prometheus 0.0.4). Neither requires `INTAKE_API_TOKEN`.
 
 | Endpoint | Format | Notes |
 |---|---|---|
-| `GET /metrics` (intake-api `:8080`) | text/plain | Prometheus exposition |
-| `GET /metrics.json` (intake-api `:8080`) | application/json | Legacy snapshot — `runTotals`, `queue` |
-| `GET /metrics` (worker, when `WORKER_METRICS_PORT` set) | text/plain | Prometheus exposition |
-| `GET /metrics.json` (worker, when `WORKER_METRICS_PORT` set) | application/json | Legacy `WorkerMetrics` JSON |
+| `GET /metrics` (intake-api `:8080`) | text/plain | All metrics: run lifecycle + OTLP streaming |
+| `GET /metrics.json` (intake-api `:8080`) | application/json | Legacy JSON shape |
+| `GET /metrics` (worker) | text/plain | Worker-specific metrics |
 
 Every metric carries an `instance` label sourced from `AF_INSTANCE`.
 
-### Metric inventory
+See `docs/operations.md` for the full metric inventory and thresholds.
 
-| Metric | Type | Labels | Surface | Notes |
-|---|---|---|---|---|
-| `agent_factory_runs_total` | gauge | `phase`, `instance` | intake-api | Run count by lifecycle phase. Pre-seeded with all six phases at 0. |
-| `agent_factory_queue_depth` | gauge | `backend`, `instance` | intake-api | Pending runs in the queue. |
-| `agent_factory_worker_loops_total` | counter | `instance` | worker | Queue-poll iterations since startup. |
-| `agent_factory_worker_runs_processed_total` | counter | `result` (`succeeded`/`failed`), `instance` | worker | Runs the worker took to a terminal state. |
-| `agent_factory_worker_run_claims_skipped_total` | counter | `instance` | worker | Runs the worker skipped because another worker held the claim file. |
-| `agent_factory_worker_stale_runs_failed_total` | counter | `instance` | worker | Active runs failed by the stale-claim sweep. |
-| `agent_factory_worker_queue_depth` | gauge | `backend`, `instance` | worker | Most recently observed pending-run count from the worker's perspective. |
-
-### Helm: ServiceMonitor for Prometheus Operator
+## Helm chart values (OTLP-specific)
 
 ```yaml
-# values.yaml
-serviceMonitor:
-  enabled: true
-  interval: 30s
-  scrapeTimeout: 10s
-  namespace: ""   # empty = release namespace
-  labels:
-    release: kube-prometheus-stack   # match your Prometheus' serviceMonitorSelector
+intakeApi:
+  otlp:
+    enabled: true              # maps to OTLP_RECEIVER_ENABLED
+    port: 4317                 # maps to OTLP_RECEIVER_PORT
+    windowMs: 60000            # maps to OTLP_WINDOW_MS
+    maxRecordsPerService: 10000 # maps to OTLP_MAX_RECORDS_PER_SERVICE
+    archiveSecret:
+      name: radar-archive-s3   # k8s Secret with RADAR_ARCHIVE_* keys
 ```
-
-Renders a `ServiceMonitor` CR scoped to the intake-api `Service` on its `http` port. The worker's `/metrics` is not yet fronted by a `Service` — separate follow-up if you want to scrape it too.
-
-### Helm: Grafana dashboard
-
-The chart ships a starter Grafana dashboard at `charts/agent-factory/dashboards/agent-factory.json`. Enable it to render a ConfigMap discoverable by kube-prometheus-stack's Grafana sidecar:
-
-```yaml
-# values.yaml
-dashboards:
-  enabled: true
-  namespace: ""   # empty = release namespace
-  labels:
-    grafana_dashboard: "1"   # default; matches kube-prometheus-stack sidecar
-```
-
-Panels: stat-per-phase (queued/planned/building/validating/succeeded/failed), queue depth + time-series, worker activity (loop rate, runs-processed rate, claim-skip + stale-fail rate). Variables: datasource (Prometheus type) + instance (`exported_instance` label, picks up multi-instance deployments).
-
-For Grafana setups without the sidecar, import the JSON via the Grafana UI (Dashboards → Import → Upload JSON) or HTTP API (`POST /api/dashboards/db`). The dashboard's `uid` is `agent-factory` — reimporting upgrades in place.
 
 ## CLI flags (llm-run only)
 
@@ -255,13 +166,8 @@ For Grafana setups without the sidecar, import the JSON via the Grafana UI (Dash
 | `--mode auto\|traffic\|source` | Override mode classifier. |
 | `--verbose` / `-v` | Verbose tool I/O. |
 
-Full usage: `npm run llm-run -- --help` (or read the doc comment at the top of `src/bin/llm-run.ts`).
-
-## Roadmap
-
-- **Linear intake path** — `AF_LINEAR_QUERY` declared above is wired through `getInstanceConfig()` but not yet consumed by any poller. Tracked as a separate `factory` ticket.
-- **Per-instance metrics labels** — Prometheus exports currently expose `AF_INSTANCE` only via stdout banners; need to flow into the `WORKER_METRICS_PORT` exporter labels as well.
+Full usage: `npm run llm-run -- --help`.
 
 ## Reference config bundles
 
-See [speedstack `instances/agent-factory/`](https://gitlab.com/speedscale/skunkworks/speedstack/-/tree/main/instances/agent-factory) for working `.env` files and chart values overrides per consumer (`ken-local-cli`, `minikube-local`, `do-nyc1-staging-decoy`). The `env-vars.md` index there links back to this doc.
+See [speedstack `instances/agent-factory/`](https://gitlab.com/speedscale/skunkworks/speedstack/-/tree/main/instances/agent-factory) for working `.env` files and chart values overrides per consumer.

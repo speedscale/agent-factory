@@ -4,134 +4,95 @@ Audience: Agent Factory developers and contributors.
 
 ## Goal
 
-Ship an LLM-driven fix loop — **Spec → Generate → Validate → Deploy → Observe** — that works reliably on Speedscale's own services (SOS/Cloud) and then packages as a Helm chart for BYOC customers.
+Ship the detect/confirm/replicate loop: Agent Factory continuously monitors production traffic, detects regressions against baselines, replays the failing traffic to confirm bugs are real, and files tickets with the evidence. No other tool can do this because nobody else has the full request/response data AND an AI agent.
 
-The SOS manual spike (2026-05-17) proved the loop works end-to-end. The outstanding work is automation, hardening, and productization.
+## Current state (2026-06-08)
 
----
-
-## Active: complete the internal spike
-
-### Observe step — Gmail concurrency fix
-
-Post-deploy validation after the Gmail concurrency MR merges:
-
-1. Pull a new prod snapshot 24–72h post-deploy with `--filter '(cluster IS "prod")'`
-2. Confirm Gmail 429 rate on the messages API dropped to near zero
-3. Store the post-deploy snapshot as the new evidence baseline
-
-Exit criteria: 429 rate ≤ 1% in the post-deploy snapshot.
-
-### API performance — pipeline and directory endpoints
-
-Radar `/api/pipeline/opportunities` and `/api/users/directory` endpoints are slow. Work this using the same reproduce → fix → confirm workflow:
-
-1. Pull fresh prod snapshot
-2. Identify P95 latency baseline for the affected endpoints
-3. Reproduce the latency in a harness
-4. Implement caching or query optimization
-5. Confirm P95 dropped below threshold
-
-### usr-mgmt unblock
-
-Waiting on prod cluster instrumentation for `usr-mgmt`. Once done:
-
-1. Pull prod snapshot with `--filter '(cluster IS "prod")'`
-2. Run data survey (originally planned)
+The OTLP streaming pipeline is live on staging (`do-nyc1-staging-decoy`). Six services are streaming traffic through the forwarder into intake-api. Signal detection and findings archival work end-to-end. The pipeline stops at S3 upload — nothing downstream reads the findings or acts on them.
 
 ---
 
-## Near-term: unblock automation
+## P0: Close the loop
 
-### 1 — `summarize_traffic` proxymock MCP tool
+### 1 — Baseline accumulation
 
-The single most labour-intensive manual step in the SOS spike was reading individual RRPair files to count 429s and identify burst patterns. This should be a single MCP tool call.
+The baseline store reads but never writes. `processClosedWindow` must call `baseline.append()` with the current window's endpoint stats after analysis. Without this, regression detection is impossible — every window runs against an empty or stale baseline.
 
-Required output: per-endpoint error rates (sorted by count), status code breakdown, burst detection (N requests within T ms), slowest endpoints by P95, cluster-scoped.
+Files: `src/lib/otlp-window-processor.ts`, `src/lib/baseline-store.ts`
 
-This unblocks automated Spec phase — the Planner can ask "what is broken and by how much" without hand-parsing snapshots.
+### 2 — Archive raw traffic for replay
 
-Owner: proxymock team. Blocks: Planner automation.
+The `finally` block in `processClosedWindow` deletes the temp dir containing the actual RRPairs. For replay to work, the failing requests must survive. Archive the records that triggered signals (not all records — just the evidence) to S3 alongside the findings JSON, keyed by signal fingerprint.
 
-### 2 — Isolated worktree per run
+Files: `src/lib/otlp-window-processor.ts`
 
-The Worker currently writes fixes directly to the operator's live source tree. Production requires:
+### 3 — Signal to AgentRun bridge
 
-- `git worktree add <workdir>/repo agent/<ticket-slug>` from `main` at Worker phase start, before any file is modified
-- Worker's `sourceDir` is set to the worktree path, not the operator's checkout
-- Deployer pushes the branch and opens the PR from it
-- After merge, `git worktree remove` + branch delete; stale unmerged worktrees older than 7 days are flagged for cleanup
+When a signal crosses a severity threshold AND represents a regression (not present in prior baseline), enqueue an AgentRun with a new `reproduce` mode. The run carries: signal fingerprint, archived traffic path, service name, evidence.
 
-Rule is now codified in `AGENTS.md`. Wire up the implementation: add `setupWorktree(repoPath, workdir, branchName)` in `llm-engine.ts` that runs `git worktree add`, returns the worktree path, and sets `sourceDir` to it before the Worker loop starts. Add a `cleanupAgentWorktrees(repoPath)` utility that removes merged worktrees and flags stale ones.
+Files: `src/lib/otlp-window-processor.ts`, `src/lib/run-store.ts`
 
-### 3 — Test harness scaffold generator
+### 4 — Reproduce worker handler
 
-Given a named metric and the source code context, the LLM should generate the reproduce harness in one pass rather than iteratively. The SOS spike showed this takes ~5–7 tool iterations; a good scaffold prompt reduces this to 1–2.
+New worker handler for `mode: "reproduce"`:
 
-Write a dedicated prompt for harness generation, separate from the main Planner prompt.
+1. Fetch archived traffic from S3
+2. Start proxymock mock for downstream deps
+3. Replay the failing requests via `proxymock replay`
+4. Run `analyzeSnapshot` on the replay output
+5. If the signal reproduces, confirm the bug is real
+6. File a Linear ticket with: signal description, traffic evidence, replay confirmation
 
-### 4 — Ticketing system intake
-
-The intake API currently requires a hand-crafted `AgentApp` manifest. The Planner should be able to accept a ticket ID from a supported system (Linear, Jira, Google Sheets) and pull title, description, acceptance criteria, and labels automatically to seed the `AgentRun`.
-
-Required:
-- Pluggable intake adapter interface: `resolveTicket(source, id) → AgentRunSeed`
-- Linear adapter (first): fetch issue by ID via Linear API, map title/description/labels to `AgentRunSeed`
-- `AgentApp.spec.intake.source` field: `linear | jira | gsheet | manual` (default: `manual`)
-- On run create, if source ≠ `manual`, fetch ticket and populate `AgentRun.spec` before enqueueing
-- After MR merges, mark the source ticket Done (write-back)
-
-Jira and Google Sheets adapters deferred until Linear adapter is validated in production.
-
-### 5 — Design review
-
-Half-day session: engineering lead + product + one customer-facing person. Review spike learnings, confirm near-term priority order, decide BYOC Helm chart scope and timeline.
+Files: new handler in worker, `src/lib/traffic-worker.ts`
 
 ---
 
-## Medium-term: BYOC productization
+## P1: Clean house
 
-### 5 — `validate_candidate` MCP tool
+### Dead code removal
 
-Orchestrates build → mock deps → replay → diff in one call. Returns a structured `ValidationResult`. Collapses the most error-prone code path in the Validate phase.
+~14 files from the CRD-era controller architecture and prior refactors:
 
-### 6 — Helm chart + CRDs
+| Category | Files |
+|---|---|
+| CRD controller | `src/lib/controller/` (5 files), `src/lib/k8s-runs.ts`, `src/lib/k8s-worker-job.ts` |
+| Orphaned tests | `src/lib/traffic-fingerprint.test.ts`, `src/lib/engine-tools.test.ts` |
+| Dead bins | `src/bin/archive-snapshot.ts`, `src/bin/traffic-scan.ts` |
+| Shadowed module | `src/lib/traffic/` (3 files) |
 
-Single chart installed alongside `speedscale-operator`. Includes:
-- `AgentRun` CRD
-- Intake API deployment
-- Worker deployment
-- Run store (PVC default; S3-compatible configurable)
-- RBAC (viewer + approver roles, OIDC)
-- Engine configuration (kind, model, endpoint, auth secret ref)
+### Grafana dashboard
 
-Three sizing profiles: small (1 worker), medium (3 workers), HA (3 workers + Redis queue).
+The OTLP streaming metrics exist in Prometheus format but there's no dashboard. Build one using the existing `dashboards.enabled` chart flag:
 
-### 7 — Customer OIDC + Review UI
+- Records received rate by service
+- Windows processed rate by service
+- Signals found rate by service (the money metric)
+- Buffer depth per service
+- Export RPC rate and error rate
+- Worker activity (existing metrics)
 
-Review UI (React SPA) where operators see run status, QualityReport, and reproduce/confirm harness output, and approve the PR. Auth via customer OIDC.
+---
 
-### 8 — Engine option 2 + 3 validation
+## P2: Productize
 
-Spike generic LLM SDK (OpenAI-compatible, targets Azure) and private-LLM path (vLLM in-cluster). Measure fix-acceptance rate vs Option 1 (Claude SDK). Decide quality floor before committing to option 3 for air-gapped customers.
+### LLM interpretation
+
+Flip `noLLM: false` in the streaming path so `interpretAndFile` uses the LLM to correlate signals, generate hypotheses, and produce human-readable findings. Gate behind a feature flag — LLM calls are expensive per window.
+
+### Suppress list management
+
+The baseline store supports a `.suppress` file for known false-positive fingerprints. Surface this in the intake-api as `POST /suppress` so operators can mute noisy signals without redeploying.
+
+### Multi-cluster federation
+
+Agent Factory runs per-cluster today. For customers with multiple clusters, federate findings by pushing to a shared archive bucket and deduplicating by signal fingerprint + service + cluster.
 
 ---
 
 ## Deferred
 
-- `extract_for_prompt` (DLP-aware RRPair extraction for LLM prompts) — needed for full BYOC privacy guarantee
-- Load mode on `replay_traffic` — load testing phase in Validate
-- `generate_rrpair_from_spec` + `coverage_check` — closes the loop for new-feature work
-- Cross-deploy filter on `search_traffic` — needed for high-confidence post-deploy observe
-- Multi-repo app support (`AgentApp.dependencies`)
-
----
-
-## Measurement targets
-
-| Metric | Target |
-|---|---|
-| Time from issue → confirmed fix (LLM) | < 10 minutes |
-| Fix acceptance rate (human approves MR) | > 60% |
-| False-positive regression rate (replay gate) | < 5% |
-| Post-deploy bug recurrence rate | < 10% |
+- Review UI (React SPA) — show findings, run status, approve PRs
+- `validate_candidate` proxymock MCP tool — orchestrates build/mock/replay/diff in one call
+- Load mode on `replay_traffic` — load testing in Validate phase
+- Cross-deploy filtering — correlate signals with deploy events
+- Multi-repo app support
