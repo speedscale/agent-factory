@@ -105,6 +105,11 @@ intakeApi:
     port: 4317
     windowMs: 60000
     maxRecordsPerService: 10000
+    # Secret containing S3/Spaces credentials for archiving stream findings.
+    # Expected keys: bucket, endpoint, region, access-key-id, secret-access-key.
+    # When empty, findings are detected but not persisted.
+    archiveSecret:
+      name: ""
   ingress:
     enabled: false
     className: ""
