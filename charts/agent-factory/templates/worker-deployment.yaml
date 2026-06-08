@@ -88,6 +88,58 @@ spec:
                   key: {{ .Values.linear.authSecret.key }}
                   optional: true
             {{- end }}
+            {{- /*
+              AF_TRAFFIC_ARCHIVE_* — the reproduce handler fetches archived
+              evidence back from the same S3 bucket intake-api wrote it to, so
+              the worker mirrors intake-api's archiveSecret. Without this the
+              reproduce run can't pull the failing traffic to replay.
+            */ -}}
+            {{- if .Values.intakeApi.otlp.archiveSecret.name }}
+            - name: AF_TRAFFIC_ARCHIVE_BUCKET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.intakeApi.otlp.archiveSecret.name }}
+                  key: bucket
+            - name: AF_TRAFFIC_ARCHIVE_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.intakeApi.otlp.archiveSecret.name }}
+                  key: endpoint
+            - name: AF_TRAFFIC_ARCHIVE_REGION
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.intakeApi.otlp.archiveSecret.name }}
+                  key: region
+            - name: AF_TRAFFIC_ARCHIVE_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.intakeApi.otlp.archiveSecret.name }}
+                  key: access-key-id
+            - name: AF_TRAFFIC_ARCHIVE_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.intakeApi.otlp.archiveSecret.name }}
+                  key: secret-access-key
+            {{- end }}
+            {{- /*
+              Reproduce handler config. All optional: no replayTarget → the
+              handler degrades to re-analysing the captured traffic; no
+              linearTeamId → it confirms but doesn't file a ticket.
+            */ -}}
+            {{- with .Values.worker.reproduce }}
+            {{- if .replayTarget }}
+            - name: REPRODUCE_REPLAY_TARGET
+              value: {{ .replayTarget | quote }}
+            {{- end }}
+            {{- if .linearTeamId }}
+            - name: LINEAR_REPRODUCE_TEAM_ID
+              value: {{ .linearTeamId | quote }}
+            {{- end }}
+            {{- if .linearLabelId }}
+            - name: LINEAR_REPRODUCE_LABEL_ID
+              value: {{ .linearLabelId | quote }}
+            {{- end }}
+            {{- end }}
           resources:
             {{- toYaml .Values.worker.resources | nindent 12 }}
           {{- with .Values.securityContext }}
