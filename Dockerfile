@@ -34,6 +34,7 @@ RUN curl -fsSL \
 COPY package*.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
+COPY src/protos ./dist/protos
 
 # Install proxymock CLI and speedctl so the radar-monitor CronJob can create
 # and pull traffic snapshots. v2.5.605 streams large snapshot artifacts to disk
