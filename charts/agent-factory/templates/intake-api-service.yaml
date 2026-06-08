@@ -14,3 +14,8 @@ spec:
     - name: http
       port: {{ .Values.intakeApi.service.port }}
       targetPort: http
+    {{- if .Values.intakeApi.otlp.enabled }}
+    - name: otlp-grpc
+      port: {{ .Values.intakeApi.otlp.port | default 4317 }}
+      targetPort: otlp-grpc
+    {{- end }}

@@ -36,6 +36,10 @@ spec:
           ports:
             - name: http
               containerPort: 8080
+            {{- if .Values.intakeApi.otlp.enabled }}
+            - name: otlp-grpc
+              containerPort: {{ .Values.intakeApi.otlp.port | default 4317 }}
+            {{- end }}
           env:
             # POD_NAMESPACE via downward API. The embedded Linear poller
             # uses this as the namespace for new AgentRun CRs when
@@ -89,6 +93,18 @@ spec:
                   name: {{ .Values.linear.authSecret.name }}
                   key: {{ .Values.linear.authSecret.key }}
                   optional: true
+            {{- end }}
+            {{- if .Values.intakeApi.otlp.enabled }}
+            - name: OTLP_RECEIVER_ENABLED
+              value: "true"
+            - name: OTLP_RECEIVER_PORT
+              value: {{ .Values.intakeApi.otlp.port | default 4317 | quote }}
+            - name: OTLP_WINDOW_MS
+              value: {{ .Values.intakeApi.otlp.windowMs | default 60000 | quote }}
+            - name: OTLP_MAX_RECORDS_PER_SERVICE
+              value: {{ .Values.intakeApi.otlp.maxRecordsPerService | default 10000 | quote }}
+            - name: BASELINE_DIR
+              value: /app/.work/baselines
             {{- end }}
           readinessProbe:
             httpGet: { path: /healthz, port: http }

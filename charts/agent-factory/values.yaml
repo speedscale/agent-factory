@@ -97,6 +97,14 @@ intakeApi:
   service:
     type: ClusterIP
     port: 8080
+  # OTLP gRPC receiver for streaming RRPairs from the Speedscale forwarder.
+  # When enabled, intake-api listens on a second port for OTLP log exports
+  # and runs windowed traffic analysis without creating cloud snapshots.
+  otlp:
+    enabled: false
+    port: 4317
+    windowMs: 60000
+    maxRecordsPerService: 10000
   ingress:
     enabled: false
     className: ""

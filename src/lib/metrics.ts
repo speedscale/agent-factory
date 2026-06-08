@@ -49,12 +49,24 @@ const QUEUE_BACKENDS = ["filesystem", "redis"] as const;
 
 // ---------- intake-api registry ----------
 
+export interface OtlpStreamingMetrics {
+  recordsReceived: Counter<"service">;
+  recordsDropped: Counter<"service">;
+  windowsProcessed: Counter<"service">;
+  signalsFound: Counter<"service">;
+  bufferSize: Gauge<"service">;
+  exportRequestsTotal: Counter<never>;
+  exportErrorsTotal: Counter<never>;
+}
+
 export interface IntakeRegistry {
   registry: Registry;
   /** Gauge by phase. Recomputed on every scrape from listRuns(). */
   runsTotal: Gauge<"phase">;
   /** Gauge by queue backend. Recomputed on every scrape. */
   queueDepth: Gauge<"backend">;
+  /** OTLP streaming metrics. Only populated when receiver is enabled. */
+  otlp?: OtlpStreamingMetrics;
 }
 
 export function createIntakeRegistry(instance: string): IntakeRegistry {
@@ -148,6 +160,67 @@ export function createWorkerRegistry(instance: string): WorkerRegistry {
     runClaimsSkippedTotal,
     staleRunsFailedTotal,
     queueDepth
+  };
+}
+
+// ---------- OTLP streaming metrics (intake-api, optional) ----------
+
+export function createOtlpMetrics(registry: Registry): OtlpStreamingMetrics {
+  const recordsReceived = new Counter({
+    name: "agent_factory_otlp_records_received_total",
+    help: "RRPair log records received from forwarder OTLP export.",
+    labelNames: ["service"] as const,
+    registers: [registry],
+  });
+
+  const recordsDropped = new Counter({
+    name: "agent_factory_otlp_records_dropped_total",
+    help: "Records dropped due to per-service buffer high-water mark.",
+    labelNames: ["service"] as const,
+    registers: [registry],
+  });
+
+  const windowsProcessed = new Counter({
+    name: "agent_factory_otlp_windows_processed_total",
+    help: "Tumbling windows closed and processed for signal detection.",
+    labelNames: ["service"] as const,
+    registers: [registry],
+  });
+
+  const signalsFound = new Counter({
+    name: "agent_factory_otlp_signals_found_total",
+    help: "Traffic signals detected across all processed windows.",
+    labelNames: ["service"] as const,
+    registers: [registry],
+  });
+
+  const bufferSize = new Gauge({
+    name: "agent_factory_otlp_buffer_size",
+    help: "Current number of buffered records per service.",
+    labelNames: ["service"] as const,
+    registers: [registry],
+  });
+
+  const exportRequestsTotal = new Counter({
+    name: "agent_factory_otlp_export_requests_total",
+    help: "Total OTLP Export RPCs received.",
+    registers: [registry],
+  });
+
+  const exportErrorsTotal = new Counter({
+    name: "agent_factory_otlp_export_errors_total",
+    help: "OTLP Export RPCs that encountered parse errors.",
+    registers: [registry],
+  });
+
+  return {
+    recordsReceived,
+    recordsDropped,
+    windowsProcessed,
+    signalsFound,
+    bufferSize,
+    exportRequestsTotal,
+    exportErrorsTotal,
   };
 }
 

@@ -12,6 +12,7 @@ import { triggerWorkerJobForRun } from "../lib/k8s-worker-job.js";
 import { getInstanceConfig, formatInstanceBanner } from "../lib/instance-config.js";
 import {
   createIntakeRegistry,
+  createOtlpMetrics,
   renderPrometheusText,
   PROMETHEUS_CONTENT_TYPE,
   type IntakeRegistry
@@ -23,6 +24,9 @@ import { createRunQueueFromEnv } from "../lib/run-queue.js";
 import { createRunFromRequest } from "../lib/run-store.js";
 import { resolveFromRepo } from "../lib/io.js";
 import { parse as parseYaml } from "yaml";
+import { OtlpBuffer } from "../lib/otlp-buffer.js";
+import { createOtlpReceiver } from "../lib/otlp-receiver.js";
+import { processClosedWindow } from "../lib/otlp-window-processor.js";
 
 const apiToken = process.env.INTAKE_API_TOKEN;
 const githubWebhookSecret = process.env.GITHUB_WEBHOOK_SECRET;
@@ -831,6 +835,60 @@ async function main(): Promise<void> {
   }).listen(port, () => {
     console.log(`intake-api listening on http://localhost:${port}`);
   });
+
+  // ── OTLP streaming receiver (opt-in via OTLP_RECEIVER_ENABLED=true) ──────
+  const otlpEnabled = process.env.OTLP_RECEIVER_ENABLED === "true";
+  if (otlpEnabled) {
+    const otlpPort = Number(process.env.OTLP_RECEIVER_PORT ?? "4317");
+    const windowMs = Number(process.env.OTLP_WINDOW_MS ?? "60000");
+    const maxRecordsPerService = Number(process.env.OTLP_MAX_RECORDS_PER_SERVICE ?? "10000");
+    const baselineDir = process.env.BASELINE_DIR ?? "/app/.work/baselines";
+
+    const otlpMetrics = createOtlpMetrics(intakeRegistry.registry);
+    intakeRegistry.otlp = otlpMetrics;
+
+    const buffer = new OtlpBuffer({ windowMs, maxRecordsPerService });
+
+    const grpcServer = createOtlpReceiver({
+      port: otlpPort,
+      buffer,
+      logger: log,
+      metrics: otlpMetrics,
+    });
+
+    // Timer: on each tick, close all non-empty windows and process them.
+    const stopTimer = buffer.startTimer((windows) => {
+      // Update buffer size metrics
+      const stats = buffer.stats();
+      for (const [svc, count] of stats.perService) {
+        otlpMetrics.bufferSize.set({ service: svc }, count);
+      }
+
+      // Process each closed window asynchronously
+      for (const win of windows) {
+        void processClosedWindow(win, { baselineDir, logger: log, metrics: otlpMetrics });
+      }
+    });
+
+    // Graceful shutdown: flush remaining windows before exit.
+    const shutdown = () => {
+      log.info("otlp-receiver shutting down, flushing windows");
+      stopTimer();
+      const remaining = buffer.flush();
+      const flushPromises = remaining.map((win) =>
+        processClosedWindow(win, { baselineDir, logger: log, metrics: otlpMetrics }),
+      );
+      void Promise.allSettled(flushPromises).then(() => {
+        grpcServer.forceShutdown();
+        log.info("otlp-receiver shutdown complete");
+      });
+    };
+
+    process.on("SIGTERM", shutdown);
+    process.on("SIGINT", shutdown);
+
+    console.log(`otlp-receiver enabled (port=${otlpPort}, windowMs=${windowMs}, maxPerService=${maxRecordsPerService})`);
+  }
 }
 
 void main().catch((error: unknown) => {
