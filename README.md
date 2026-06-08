@@ -1,87 +1,88 @@
 # Agent Factory
 
-Agent Factory runs a complete software-delivery loop — **Spec → Generate → Validate → Deploy → Observe** — driven by an LLM grounded in real captured traffic. Every fix is validated against production RRPairs via `proxymock` before a human approves it.
+Agent Factory is a streaming traffic analysis engine that detects bugs in production, confirms they're real, and replicates them — grounded in actual request/response data from the Speedscale forwarder.
 
-## The loop
-
-```mermaid
-flowchart TD
-    issue([Issue / Alert / PR])
-    issue --> spec
-    spec[Spec<br/>name metric, reproduce on master]
-    spec --> gen[Generate<br/>LLM writes minimal fix]
-    gen --> val[Validate<br/>confirm harness + regression replay]
-    val --> dep[Deploy<br/>open PR/MR with evidence]
-    dep --> obs[Observe<br/>post-deploy snapshot diff]
-    obs -- feedback --> spec
-
-    traffic[("RRPair traffic via proxymock")]
-    traffic -. evidence .-> spec
-    traffic -. baseline .-> val
-    traffic -. post-deploy diff .-> obs
-
-    style traffic fill:#1a7f37,stroke:#1a7f37,color:#fff
-    style issue fill:#6e7681,stroke:#6e7681,color:#fff
-    style spec fill:#1f6feb,stroke:#1f6feb,color:#fff
-    style gen fill:#1f6feb,stroke:#1f6feb,color:#fff
-    style val fill:#1f6feb,stroke:#1f6feb,color:#fff
-    style dep fill:#1f6feb,stroke:#1f6feb,color:#fff
-    style obs fill:#1f6feb,stroke:#1f6feb,color:#fff
-```
-
-1. **Spec** — ingests an issue, alert, or PR; pulls a snapshot of captured traffic; identifies the measurable metric the bug violates; confirms the bug is reproducible.
-2. **Generate** — LLM reads the relevant source files and writes a minimal fix.
-3. **Validate** — runs the same reproduce harness against the patched code to confirm the metric is within bound; runs regression replay via proxymock.
-4. **Deploy** — opens a PR/MR with the fix, harness output, and quality report as evidence.
-5. **Observe** — post-deploy snapshot comparison closes the loop.
-
-## How traffic gets in (BYOC)
-
-In BYOC the customer's existing observability is the traffic source. The Grafana + Loki reference architecture is the canonical path:
+## How it works
 
 ```mermaid
-flowchart TD
-    apps([Customer apps]) --> fwd[Speedscale Forwarder<br/>DLP + filter]
-    fwd -- OTLP gRPC --> col[OTel Collector]
-    col --> loki[(Loki)]
-    loki --> graf[Grafana dashboards]
-    loki -- loki-gather --> snap[(Snapshot dir<br/>proxymock-readable)]
-    snap --> af[Agent Factory<br/>Spec phase]
+flowchart LR
+    apps([Services]) --> fwd[Speedscale Forwarder]
+    fwd -- "OTLP gRPC\n(EXPORTERS fan-out)" --> intake[intake-api\nOTLP receiver :4317]
+    intake --> buf[Per-service buffer\n60s tumbling windows]
+    buf --> analyze[Signal detection\nbaseline comparison]
+    analyze --> archive[(Findings archive\nDO Spaces / S3)]
+    analyze -. "planned" .-> run[AgentRun queue\nreproduce + confirm]
+    run -. "planned" .-> worker[Worker\nproxymock replay]
+    worker -. "planned" .-> ticket[Linear ticket\nwith evidence]
 
     style apps fill:#6e7681,stroke:#6e7681,color:#fff
     style fwd fill:#1f6feb,stroke:#1f6feb,color:#fff
-    style col fill:#1f6feb,stroke:#1f6feb,color:#fff
-    style snap fill:#1f6feb,stroke:#1f6feb,color:#fff
-    style loki fill:#8957e5,stroke:#8957e5,color:#fff
-    style graf fill:#8957e5,stroke:#8957e5,color:#fff
-    style af fill:#1a7f37,stroke:#1a7f37,color:#fff
+    style intake fill:#1a7f37,stroke:#1a7f37,color:#fff
+    style buf fill:#1a7f37,stroke:#1a7f37,color:#fff
+    style analyze fill:#1a7f37,stroke:#1a7f37,color:#fff
+    style archive fill:#8957e5,stroke:#8957e5,color:#fff
+    style run fill:#6e7681,stroke:#6e7681,color:#fff
+    style worker fill:#6e7681,stroke:#6e7681,color:#fff
+    style ticket fill:#6e7681,stroke:#6e7681,color:#fff
 ```
 
-Customer data never leaves the customer VPC. See the [Grafana reference architecture](https://github.com/speedscale/demo/tree/main/reference-architectures/grafana) for install steps.
+The forwarder already captures all traffic (RRPairs) from instrumented services and streams it as OTLP log records. Agent Factory registers as another OTLP destination via the forwarder's `EXPORTERS` env var — no snapshot creation, no cloud round-trip, no batch processing.
 
-## Deployment modes
+### What works today
 
-The same binary runs three ways. See [`examples/instances/`](examples/instances/) for sample Helm values and [`speedstack/instances/agent-factory/`](https://gitlab.com/speedscale/skunkworks/speedstack/-/tree/main/instances/agent-factory) for the live deployments.
+1. **OTLP gRPC receiver** — intake-api accepts `LogsService/Export` RPCs from the forwarder on port 4317
+2. **Per-service buffering** — records grouped by service name in 60-second tumbling windows
+3. **Signal detection** — on window close, finds error rate spikes, latency anomalies, N+1 query patterns, slow endpoints
+4. **Baseline comparison** — signals compared against rolling per-endpoint baselines (2x p95 threshold)
+5. **Correlation** — related signals (slow endpoint + slow downstream query) merged into incident groups
+6. **Findings archive** — JSON findings with evidence uploaded to S3-compatible storage
+7. **Prometheus metrics** — records received, windows processed, signals found, buffer depth per service
 
-| Mode | Topology | When to use |
-|---|---|---|
-| **CLI** (`npm run llm-run`) | Single process on a laptop | One-off dispatches, local development, ticket-by-ticket runs |
-| **Kubernetes** (Helm chart) | `intake-api` + `controller` + `worker` pods, filesystem or Redis queue | Continuous polling against a ticket source (GitHub, Linear), shared environment |
-| **BYOC** (customer cluster) | Helm chart + customer's traffic store + customer's LLM endpoint | Production deployments where data must stay in the customer VPC |
+### What's next (the killer feature)
 
-In BYOC, the **traffic context** comes from the customer's existing observability — see the [Grafana + Loki reference architecture](https://github.com/speedscale/demo/tree/main/reference-architectures/grafana) in the demos repo, with the companion `loki-gather.py` script that turns a Loki slice into a `proxymock`-replayable directory.
+The closed loop: **detect, confirm, replicate**. No other tool can do this because nobody else has the full request/response payloads AND an AI agent that can act on them.
 
-### Configuration boundary
+See [`docs/plan.md`](docs/plan.md) for the roadmap.
 
-| | Speedscale Cloud (SOS) | Customer BYOC |
-|---|---|---|
-| Traffic data | Speedscale-hosted | Customer's proxymock + reference architecture |
-| LLM endpoint | Anthropic (Speedscale key) | Customer's choice (Anthropic, Bedrock, Azure, self-hosted) |
-| Code access | Speedscale's repos | Customer's git mirror |
-| Deployment | Speedscale-operated | Helm chart in customer's cluster |
-| Data boundary | Speedscale VPC | Customer VPC — data never leaves |
+## Architecture
 
-## Quick start — CLI
+Three processes, one image:
+
+| Process | Role |
+|---|---|
+| `intake-api` | HTTP API (:8080) + OTLP gRPC receiver (:4317) + run queue + metrics |
+| `worker` | Polls queue, executes agent runs (triage, bug-fix, reproduce) |
+
+See [`docs/architecture.md`](docs/architecture.md) for full system design.
+
+## Deployment
+
+Helm chart alongside `speedscale-operator`:
+
+```bash
+helm install agent-factory ./charts/agent-factory \
+  --namespace agent-factory --create-namespace \
+  --set engine.kind=claude-sdk \
+  --set engine.authSecret.name=anthropic-api-key \
+  --set intakeApi.otlp.enabled=true \
+  --set intakeApi.otlp.archiveSecret.name=radar-archive-s3
+```
+
+Then add Agent Factory as a forwarder OTLP destination in the operator ConfigMap or forwarder ConfigMap:
+
+```json
+{
+  "agent_factory": {
+    "otel_endpoint": "http://agent-factory-intake-api.agent-factory.svc.cluster.local:4317",
+    "dlp_config_id": "standard",
+    "filter_rule": "standard"
+  }
+}
+```
+
+## CLI mode
+
+For one-off runs against existing traffic:
 
 ```bash
 npm install
@@ -96,64 +97,16 @@ npm run llm-run -- \
   --verbose
 ```
 
-Artifacts land in `--workdir`: `plan.json` (Planner output), `reproduce.mjs`, `confirm.mjs`, `patch.json`.
-
-Check gate verdict for a specific run:
-
-```bash
-npm run gate:check -- --run <run-name>
-```
-
-## Quick start — Kubernetes
-
-Install the chart against a cluster running `speedscale-operator`:
-
-```bash
-helm install agent-factory ./charts/agent-factory \
-  --namespace agent-factory --create-namespace \
-  --set engine.kind=claude-sdk \
-  --set engine.authSecret.name=anthropic-api-key
-```
-
-See [`examples/instances/`](examples/instances/) for `internal/`, `customer/`, `demo/`, and `local/` value sets, and [`docs/users.md`](docs/users.md) for operator workflow.
-
-## Core artifacts per run
-
-| Artifact | Description |
-|---|---|
-| `plan.json` | Planner output: metric, baseline, hypothesis, target file |
-| `reproduce.mjs` | Self-contained harness measuring the bug metric on unpatched code |
-| `confirm.mjs` | Same harness run against patched code — the primary fix gate |
-| `patch.json` | Worker output: fix, rationale, confirm result |
-| `quality-report.json/.md` | Regression replay diff against baseline RRPairs |
-| `result.json` | Run summary with phase outcomes |
-
 ## Documentation
 
-**Design**
-- [`docs/architecture.md`](docs/architecture.md) — system planes, deployment models, contracts
-- [`docs/engine.md`](docs/engine.md) — LLM engine: tool catalog, agent loop, Planner/Worker
-- [`docs/engine-source-mode.md`](docs/engine-source-mode.md) — non-traffic-shaped fixes path
-- [`docs/engine-hardening.md`](docs/engine-hardening.md) — tool-call hardening: rescue, escalating nudges, prereqs, compaction
-- [`docs/multi-deliverable-tickets.md`](docs/multi-deliverable-tickets.md) — handling checklist-style specs
-
-**Operations**
-- [`docs/users.md`](docs/users.md) — operators: deployment, run submission
-- [`docs/operations.md`](docs/operations.md) — runbook
-- [`docs/CONFIG.md`](docs/CONFIG.md) — every env var the binary accepts
-- [`docs/release.md`](docs/release.md) — version bump + publish flow
-
-**Agents**
-- [`docs/agents/triage.md`](docs/agents/triage.md) — triage agent specifics
-
-**Quality**
-- [`docs/EVALS.md`](docs/EVALS.md) — eval substrate: fixtures, runner, dual-judge
-
-> Recorded eval runs and other local training feedback live in each instance's
-> directory under speedstack (e.g. `speedstack/instances/agent-factory/<instance>/training-feedback/`),
-> not in this repo.
-
-**Contributing**
-- [`docs/developers.md`](docs/developers.md) — development workflow, contracts, release
-- [`docs/plan.md`](docs/plan.md) — active roadmap
-- [`docs/history.md`](docs/history.md) — pivot history and design decisions
+| Doc | Audience |
+|---|---|
+| [`docs/architecture.md`](docs/architecture.md) | System design, streaming pipeline, deployment |
+| [`docs/plan.md`](docs/plan.md) | Roadmap: close the detect/confirm/replicate loop |
+| [`docs/CONFIG.md`](docs/CONFIG.md) | Every env var the binary accepts |
+| [`docs/operations.md`](docs/operations.md) | Metrics, thresholds, runbook |
+| [`docs/engine.md`](docs/engine.md) | LLM engine: tool catalog, agent loop |
+| [`docs/developers.md`](docs/developers.md) | Development workflow |
+| [`docs/history.md`](docs/history.md) | Refactor history and design decisions |
+| [`docs/release.md`](docs/release.md) | Version bump + publish flow |
+| [`docs/EVALS.md`](docs/EVALS.md) | Eval substrate |
