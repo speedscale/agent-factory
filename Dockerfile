@@ -61,4 +61,5 @@ RUN chown -R node:node /app
 USER node
 
 EXPOSE 8080
+EXPOSE 4317
 CMD ["node", "dist/bin/intake-api.js"]
