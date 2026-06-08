@@ -25,6 +25,7 @@ import path from "node:path";
 import { callLLM, type LLMProvider } from "./llm-providers.js";
 import { type Signal, type Severity } from "./rrpair-stats.js";
 import { type BaselineStore } from "./baseline-store.js";
+import { archiveEnv } from "./snapshot-archive.js";
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -575,10 +576,10 @@ async function renderExampleTraffic(snapshotDir: string, examples: string[]): Pr
  */
 function replayLine(snapshotId?: string): string {
   if (!snapshotId) return "";
-  const bucket = process.env.RADAR_ARCHIVE_BUCKET;
+  const bucket = archiveEnv("BUCKET");
   if (bucket) {
-    const uri = `s3://${bucket}/radar-monitor/${snapshotId}.tgz`;
-    const ep = process.env.RADAR_ARCHIVE_ENDPOINT ? ` --endpoint-url ${process.env.RADAR_ARCHIVE_ENDPOINT}` : "";
+    const uri = `s3://${bucket}/agent-factory/${snapshotId}.tgz`;
+    const ep = archiveEnv("ENDPOINT") ? ` --endpoint-url ${archiveEnv("ENDPOINT")}` : "";
     return `**Replay:** exact traffic archived at \`${uri}\` — \`aws s3 cp ${uri} ./repro.tgz${ep} && mkdir -p repro && tar xzf repro.tgz -C repro\`, then \`proxymock replay --in ./repro\``;
   }
   return `**Replay:** \`proxymock cloud pull snapshot ${snapshotId} --out ./repro\` — exact traffic kept for this bug`;

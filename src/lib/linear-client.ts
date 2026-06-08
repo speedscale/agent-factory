@@ -22,6 +22,15 @@ export interface LinearClientOptions {
   endpoint?: string;
 }
 
+export interface IssueCreateInput {
+  /** Linear team UUID the issue is filed under. */
+  teamId: string;
+  title: string;
+  description: string;
+  /** Optional label UUIDs to attach (e.g. an "auto-detected" label). */
+  labelIds?: string[];
+}
+
 export interface LinearClient {
   /**
    * Post a comment on the given issue. `issueId` must be Linear's internal
@@ -30,6 +39,12 @@ export interface LinearClient {
    * callers can decide whether the run as a whole still succeeded.
    */
   postComment(issueId: string, body: string): Promise<{ id: string }>;
+
+  /**
+   * Create a new issue. Returns the new issue's internal id plus its
+   * human-readable identifier (e.g. "ENG-123") and url. Throws on API error.
+   */
+  createIssue(input: IssueCreateInput): Promise<{ id: string; identifier: string; url: string }>;
 }
 
 const LINEAR_API_ENDPOINT = "https://api.linear.app/graphql";
@@ -48,6 +63,25 @@ interface CommentCreatePayload {
     commentCreate?: {
       success?: boolean;
       comment?: { id?: string } | null;
+    };
+  };
+  errors?: unknown;
+}
+
+const ISSUE_CREATE_MUTATION = /* GraphQL */ `
+  mutation AgentFactoryIssue($input: IssueCreateInput!) {
+    issueCreate(input: $input) {
+      success
+      issue { id identifier url }
+    }
+  }
+`;
+
+interface IssueCreatePayload {
+  data?: {
+    issueCreate?: {
+      success?: boolean;
+      issue?: { id?: string; identifier?: string; url?: string } | null;
     };
   };
   errors?: unknown;
@@ -97,6 +131,54 @@ export function createLinearClient(opts: LinearClientOptions): LinearClient {
         throw new Error(`commentCreate did not succeed: ${JSON.stringify(payload)}`);
       }
       return { id: created.comment.id };
+    },
+
+    createIssue: async (input) => {
+      if (!input.teamId || input.teamId.trim().length === 0) {
+        throw new Error("createIssue: teamId is required");
+      }
+      if (!input.title || input.title.trim().length === 0) {
+        throw new Error("createIssue: title is required");
+      }
+
+      const res = await fetchImpl(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: apiKey,
+        },
+        body: JSON.stringify({
+          query: ISSUE_CREATE_MUTATION,
+          variables: {
+            input: {
+              teamId: input.teamId,
+              title: input.title,
+              description: input.description,
+              ...(input.labelIds && input.labelIds.length > 0 ? { labelIds: input.labelIds } : {}),
+            },
+          },
+        }),
+      });
+
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`Linear API ${res.status}: ${text}`);
+      }
+
+      const payload = (await res.json()) as IssueCreatePayload;
+      if (payload.errors) {
+        throw new Error(`Linear GraphQL errors: ${JSON.stringify(payload.errors)}`);
+      }
+
+      const created = payload.data?.issueCreate;
+      if (!created?.success || !created.issue?.id) {
+        throw new Error(`issueCreate did not succeed: ${JSON.stringify(payload)}`);
+      }
+      return {
+        id: created.issue.id,
+        identifier: created.issue.identifier ?? "",
+        url: created.issue.url ?? "",
+      };
     },
   };
 }

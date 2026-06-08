@@ -17,6 +17,10 @@ export const agentRegistry: Record<AgentKind, AgentDef> = {
   "mock-generation": mockGenerationAgent,
   "migration-safety": migrationSafetyAgent,
   "traffic-monitor": triageAgent,
+  // reproduce is dispatched directly by the worker (see traffic-worker), never
+  // through the planner agent loop — this entry only satisfies the exhaustive
+  // registry map, same as traffic-monitor above.
+  "reproduce": triageAgent,
 };
 
 export function getAgent(kind: AgentKind): AgentDef {

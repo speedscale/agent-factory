@@ -29,7 +29,7 @@ async function main() {
   try {
     const r = await archiveFile(file, key);
     if (r.skipped) {
-      console.log(JSON.stringify({ phase: "archive", skipped: true, reason: "no RADAR_ARCHIVE_BUCKET" }));
+      console.log(JSON.stringify({ phase: "archive", skipped: true, reason: "no AF_TRAFFIC_ARCHIVE_BUCKET" }));
     } else {
       console.log(JSON.stringify({ phase: "archive", uri: r.uri, bytes: r.bytes }));
     }

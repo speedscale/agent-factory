@@ -6,7 +6,7 @@ Agent Factory is a streaming traffic analysis engine:
 
 **Detect → Confirm → Replicate**
 
-The Speedscale forwarder streams all RRPairs (request/response pairs) via OTLP gRPC into Agent Factory, which buffers them per-service in tumbling time windows, runs signal detection on each closed window, and archives findings. The killer feature — detecting a real bug, confirming it via replay, and filing a ticket with evidence — is partially built (detection + archival work; replay + ticketing are next).
+The Speedscale forwarder streams all RRPairs (request/response pairs) via OTLP gRPC into Agent Factory, which buffers them per-service in tumbling time windows, runs signal detection on each closed window, and archives findings. The killer feature — detecting a real bug, confirming it via replay, and filing a ticket with evidence — is now wired end-to-end: detection + archival, a signal→AgentRun bridge for high-severity regressions, and a `reproduce` worker that replays the evidence and files a ticket. Exercising it in production needs live config (`REPRODUCE_REPLAY_TARGET`, `LINEAR_API_KEY`, `LINEAR_REPRODUCE_TEAM_ID`).
 
 The system ships as a Helm chart alongside `speedscale-operator`.
 
@@ -33,7 +33,10 @@ Four planes must stay explicit:
 
 ```
 Forwarder EXPORTERS → OTLP/gRPC :4317 → intake-api → OtlpBuffer → [window close]
-  → analyzeSnapshot() → correlateSignals() → interpretAndFile() → archiveFile()
+  → analyzeSnapshot() → correlateSignals() → archiveSignalEvidence() → bridgeSignalsToRuns()
+  → interpretAndFile() → archiveFile()
+                                  ↓ (reproduce AgentRun, async via worker)
+  fetchArchive() → proxymock replay → analyzeSnapshot() → confirm → Linear createIssue()
 ```
 
 See `docs/architecture.md` for full design.
@@ -47,7 +50,10 @@ See `docs/architecture.md` for full design.
 - `src/lib/rrpair-stats.ts` — signal detection (errors, slow endpoints, N+1, slow queries)
 - `src/lib/baseline-store.ts` — per-endpoint rolling baseline stats
 - `src/lib/signal-correlator.ts` — merge related signals into incidents
-- `src/lib/snapshot-archive.ts` — S3/Spaces upload
+- `src/lib/snapshot-archive.ts` — S3/Spaces upload (`archiveFile`) + download (`fetchArchive`)
+- `src/lib/evidence-archive.ts` — tar+upload the failing RRPairs per signal, keyed by fingerprint
+- `src/lib/reproduce-bridge.ts` — enqueue `reproduce` AgentRuns for confirmed regressions
+- `src/lib/reproduce-worker.ts` — fetch evidence, replay, confirm, file ticket (the confirm/replicate step)
 - `src/lib/llm-engine.ts` — LLM agent loop, tool implementations, Planner/Worker phases
 - `src/agents/` — per-agent modules (triage, bug-fix, perf-investigation, coverage-fill, pr-replay-check)
 - `src/contracts/` — typed contracts: AgentRun, AgentApp, AgentPlan, QualityReport

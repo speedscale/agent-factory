@@ -15,8 +15,10 @@ import type { WindowContents } from "./otlp-buffer.js";
 import { analyzeSnapshot } from "./rrpair-stats.js";
 import { correlateSignals } from "./signal-correlator.js";
 import { interpretAndFile, type ScannerResult } from "./traffic-scanner.js";
-import { archiveFile } from "./snapshot-archive.js";
-import { BaselineStore } from "./baseline-store.js";
+import { archiveFile, archiveConfigFromEnv } from "./snapshot-archive.js";
+import { archiveSignalEvidence, type EvidenceArchiveResult } from "./evidence-archive.js";
+import { bridgeSignalsToRuns } from "./reproduce-bridge.js";
+import { BaselineStore, type WindowStats } from "./baseline-store.js";
 import type { OtlpStreamingMetrics } from "./metrics.js";
 
 export interface WindowProcessorConfig {
@@ -86,15 +88,35 @@ export async function processClosedWindow(
       await writeFile(path.join(hostDir, fileName), JSON.stringify(record));
     }
 
-    // Pass 1: signal detection
+    // Pass 1: signal detection. Load the service's rolling baseline first so
+    // analyzeSnapshot can flag relative regressions (2× baseline p95) rather
+    // than only static thresholds.
     await mkdir(config.baselineDir, { recursive: true });
     const baseline = new BaselineStore(config.baselineDir);
+    await baseline.load(service);
     const stats = await analyzeSnapshot(tempDir, {}, baseline);
+
+    // Accumulate this window's per-endpoint stats into the baseline. This runs
+    // on every window — including clean ones — because clean windows ARE the
+    // baseline. Without this the store reads forever against an empty history
+    // and relative regression detection can never fire.
+    const windowStats: WindowStats[] = stats.endpointStats.map((e) => ({
+      ts: windowEnd || new Date().toISOString(),
+      service,
+      endpoint: e.key,
+      p50: e.p50,
+      p95: e.p95,
+      p99: e.p99,
+      count: e.count,
+      errorRate: e.errorRate,
+    }));
+    await baseline.append(service, windowStats);
 
     if (stats.signals.length === 0) {
       logger.info("window processed, no signals", {
         service,
         rrpairCount: records.length,
+        endpointsTracked: windowStats.length,
         durationMs: Date.now() - startMs,
       });
       metrics.windowsProcessed.inc({ service });
@@ -103,6 +125,50 @@ export async function processClosedWindow(
 
     // Correlate signals
     const signals = correlateSignals(stats.signals);
+
+    // Archive the failing RRPairs for each signal before the temp dir is
+    // deleted in `finally`, then bridge confirmed regressions to reproduce
+    // runs. Both are gated on an archive backend being configured: without one
+    // the evidence can't be preserved, and a reproduce run with no traffic to
+    // replay is useless.
+    const evidenceByFingerprint = new Map<string, EvidenceArchiveResult>();
+    let reproduceRuns: string[] = [];
+    if (archiveConfigFromEnv()) {
+      for (const signal of signals) {
+        try {
+          const ev = await archiveSignalEvidence(
+            signal,
+            tempDir,
+            `agent-factory/stream-evidence/${service}`,
+            ts,
+          );
+          evidenceByFingerprint.set(signal.fingerprint, ev);
+        } catch (e) {
+          logger.warn("evidence archive failed (non-fatal)", {
+            service,
+            fingerprint: signal.fingerprint,
+            error: (e as Error).message,
+          });
+        }
+      }
+
+      // Bridge: enqueue a reproduce run for each high-severity regression.
+      try {
+        reproduceRuns = await bridgeSignalsToRuns(signals, baseline, {
+          service,
+          windowStart,
+          windowEnd,
+          ts,
+          evidenceByFingerprint,
+          logger,
+        });
+      } catch (e) {
+        logger.warn("signal→run bridge failed (non-fatal)", {
+          service,
+          error: (e as Error).message,
+        });
+      }
+    }
 
     // Pass 2: interpret (no LLM, no Linear tickets)
     let scanResult: ScannerResult | null = null;
@@ -136,11 +202,13 @@ export async function processClosedWindow(
       timestamp: new Date().toISOString(),
       stats,
       scanResult,
+      evidence: Object.fromEntries(evidenceByFingerprint),
+      reproduceRuns,
     }, null, 2));
 
     const archiveResult = await archiveFile(
       findingsPath,
-      `radar-monitor/stream-findings/${service}-${ts}.json`,
+      `agent-factory/stream-findings/${service}-${ts}.json`,
     );
 
     // Clean up findings file
@@ -154,6 +222,7 @@ export async function processClosedWindow(
       rrpairCount: records.length,
       signalsFound: signals.length,
       findingsArchived: !archiveResult.skipped,
+      reproduceRuns: reproduceRuns.length,
       durationMs: Date.now() - startMs,
     });
   } catch (err) {

@@ -21,6 +21,7 @@ import { writeRunResultArtifact } from "../lib/run-result.js";
 import { writeQualityArtifacts } from "../lib/quality-report.js";
 import { publishPrQualityComment } from "../lib/pr-quality-comment.js";
 import { processTrafficRun } from "../lib/traffic-worker.js";
+import { processReproduceRun } from "../lib/reproduce-worker.js";
 import type { AgentRun } from "../contracts/index.js";
 
 interface WorkerOptions {
@@ -466,6 +467,8 @@ async function runWorker(queue: RunQueue, options: WorkerOptions): Promise<void>
           const run = await readJsonFile<AgentRun>(resolveRunJsonPath(runName));
           if (run.spec.agent === "traffic-monitor") {
             await processTrafficRun(run, (phase, summary) => updateRun(runName, phase, summary));
+          } else if (run.spec.agent === "reproduce") {
+            await processReproduceRun(run, (phase, summary) => updateRun(runName, phase, summary));
           } else {
             await processRun(runName, options.sourceDir);
           }

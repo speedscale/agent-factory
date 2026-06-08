@@ -8,42 +8,46 @@ Ship the detect/confirm/replicate loop: Agent Factory continuously monitors prod
 
 ## Current state (2026-06-08)
 
-The OTLP streaming pipeline is live on staging (`do-nyc1-staging-decoy`). Six services are streaming traffic through the forwarder into intake-api. Signal detection and findings archival work end-to-end. The pipeline stops at S3 upload — nothing downstream reads the findings or acts on them.
+The OTLP streaming pipeline is live on staging (`do-nyc1-staging-decoy`). Six services are streaming traffic through the forwarder into intake-api. Signal detection and findings archival work end-to-end.
+
+**The detect → confirm → replicate loop is now wired end-to-end** (P0 below, all four items landed). `processClosedWindow` accumulates baselines, archives the failing RRPairs per signal, and bridges high-severity regressions to `reproduce` AgentRuns; the worker's reproduce handler fetches the evidence, replays it, confirms the signal reappears, and files a ticket. What remains for production is exercising it against live infrastructure (set `REPRODUCE_REPLAY_TARGET`, `LINEAR_API_KEY`, `LINEAR_REPRODUCE_TEAM_ID`) and tuning thresholds.
 
 ---
 
-## P0: Close the loop
+## P0: Close the loop — ✅ DONE
 
-### 1 — Baseline accumulation
+### 1 — Baseline accumulation ✅
 
-The baseline store reads but never writes. `processClosedWindow` must call `baseline.append()` with the current window's endpoint stats after analysis. Without this, regression detection is impossible — every window runs against an empty or stale baseline.
+`processClosedWindow` now loads the service baseline before analysis (so relative regression detection fires) and calls `baseline.append()` with every window's endpoint stats afterward — including clean windows, since clean windows are the baseline.
 
 Files: `src/lib/otlp-window-processor.ts`, `src/lib/baseline-store.ts`
 
-### 2 — Archive raw traffic for replay
+### 2 — Archive raw traffic for replay ✅
 
-The `finally` block in `processClosedWindow` deletes the temp dir containing the actual RRPairs. For replay to work, the failing requests must survive. Archive the records that triggered signals (not all records — just the evidence) to S3 alongside the findings JSON, keyed by signal fingerprint.
+Before the `finally` block deletes the temp dir, each signal's example RRPairs are tarred and uploaded to S3 keyed by signal fingerprint (`radar-monitor/stream-evidence/<service>/<fingerprint>-<ts>.tgz`). The tarball mirrors the snapshot's host-subdir layout so `proxymock replay` consumes it directly.
 
-Files: `src/lib/otlp-window-processor.ts`
+Files: `src/lib/evidence-archive.ts`, `src/lib/otlp-window-processor.ts`
 
-### 3 — Signal to AgentRun bridge
+### 3 — Signal to AgentRun bridge ✅
 
-When a signal crosses a severity threshold AND represents a regression (not present in prior baseline), enqueue an AgentRun with a new `reproduce` mode. The run carries: signal fingerprint, archived traffic path, service name, evidence.
+When a signal is high-severity AND a regression (relative-latency detection fired, or error rate climbed materially above its baseline) and is not suppressed, a `reproduce` AgentRun is enqueued carrying the signal, its archived evidence location, service, and window bounds. A dedup guard skips fingerprints that already have a live reproduce run.
 
-Files: `src/lib/otlp-window-processor.ts`, `src/lib/run-store.ts`
+Files: `src/lib/reproduce-bridge.ts`, `src/lib/otlp-window-processor.ts`, `src/contracts/agent-kind.ts`
 
-### 4 — Reproduce worker handler
+### 4 — Reproduce worker handler ✅
 
-New worker handler for `mode: "reproduce"`:
+Worker handler for `spec.agent: "reproduce"`:
 
-1. Fetch archived traffic from S3
-2. Start proxymock mock for downstream deps
-3. Replay the failing requests via `proxymock replay`
-4. Run `analyzeSnapshot` on the replay output
-5. If the signal reproduces, confirm the bug is real
-6. File a Linear ticket with: signal description, traffic evidence, replay confirmation
+1. Fetch archived traffic from S3 (`fetchArchive`)
+2. Extract it locally
+3. Replay the failing requests via `proxymock replay --test-against $REPRODUCE_REPLAY_TARGET` (degrades to re-analysing the capture when no target is set)
+4. Run `analyzeSnapshot` on the result
+5. Confirm the bug is real if the original signal reappears
+6. File a Linear ticket (via `createIssue`) with signal description, evidence URI, and replay confirmation
 
-Files: new handler in worker, `src/lib/traffic-worker.ts`
+External calls (S3, proxymock, Linear) are dependency-injected so the orchestration is unit-tested without live infra.
+
+Files: `src/lib/reproduce-worker.ts`, `src/lib/snapshot-archive.ts` (`fetchArchive`), `src/lib/linear-client.ts` (`createIssue`), `src/bin/worker.ts`
 
 ---
 
