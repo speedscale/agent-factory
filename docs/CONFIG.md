@@ -43,6 +43,8 @@ Consumed by the worker's `reproduce` handler (`spec.agent: "reproduce"`), which 
 | `LINEAR_REPRODUCE_TEAM_ID` | worker (reproduce) | — | Linear team UUID the auto-filed issue is created under. Required alongside `LINEAR_API_KEY` to file tickets. |
 | `LINEAR_REPRODUCE_LABEL_ID` | worker (reproduce) | — | Optional Linear label UUID attached to auto-filed issues. |
 
+In the Helm chart these map to `worker.reproduce.replayTarget`, `worker.reproduce.linearTeamId`, and `worker.reproduce.linearLabelId`; `LINEAR_API_KEY` comes from `linear.authSecret`. The worker also mounts `intakeApi.otlp.archiveSecret` (as `AF_TRAFFIC_ARCHIVE_*`) so the reproduce handler can fetch archived evidence back from S3.
+
 ## Identity / observability
 
 | Var | Consumer | Default | Notes |
