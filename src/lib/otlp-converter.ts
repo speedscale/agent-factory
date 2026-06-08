@@ -14,13 +14,21 @@
 // produces these shapes from the AnyValue oneof.
 
 export interface OtlpAnyValue {
+  // Support both camelCase (tests) and snake_case (proto-loader keepCase:true).
   stringValue?: string;
+  string_value?: string;
   boolValue?: boolean;
+  bool_value?: boolean;
   intValue?: string | number;   // proto-loader encodes int64 as string
+  int_value?: string | number;
   doubleValue?: number;
+  double_value?: number;
   arrayValue?: { values?: OtlpAnyValue[] };
+  array_value?: { values?: OtlpAnyValue[] };
   kvlistValue?: { values?: OtlpKeyValue[] };
+  kvlist_value?: { values?: OtlpKeyValue[] };
   bytesValue?: Buffer | Uint8Array | string;
+  bytes_value?: Buffer | Uint8Array | string;
 }
 
 export interface OtlpKeyValue {
@@ -29,32 +37,46 @@ export interface OtlpKeyValue {
 }
 
 export interface OtlpLogRecord {
+  // proto-loader with keepCase:true preserves snake_case from the proto.
+  // Support both snake_case (runtime) and camelCase (tests / manual construction).
   timeUnixNano?: string | number;
+  time_unix_nano?: string | number;
   observedTimeUnixNano?: string | number;
+  observed_time_unix_nano?: string | number;
   severityNumber?: number | string;
+  severity_number?: number | string;
   severityText?: string;
+  severity_text?: string;
   body?: OtlpAnyValue;
   attributes?: OtlpKeyValue[];
   droppedAttributesCount?: number;
+  dropped_attributes_count?: number;
   flags?: number;
   traceId?: Buffer | Uint8Array;
+  trace_id?: Buffer | Uint8Array;
   spanId?: Buffer | Uint8Array;
+  span_id?: Buffer | Uint8Array;
 }
 
 export interface OtlpScopeLogs {
   scope?: { name?: string; version?: string };
   logRecords?: OtlpLogRecord[];
+  log_records?: OtlpLogRecord[];
   schemaUrl?: string;
+  schema_url?: string;
 }
 
 export interface OtlpResourceLogs {
   resource?: { attributes?: OtlpKeyValue[] };
   scopeLogs?: OtlpScopeLogs[];
+  scope_logs?: OtlpScopeLogs[];
   schemaUrl?: string;
+  schema_url?: string;
 }
 
 export interface ExportLogsServiceRequest {
   resourceLogs?: OtlpResourceLogs[];
+  resource_logs?: OtlpResourceLogs[];
 }
 
 // ── Parsed output ────────────────────────────────────────────────────────────
@@ -75,30 +97,41 @@ export interface ParsedOtlpRecord {
 export function anyValueToJs(v: OtlpAnyValue | undefined | null): unknown {
   if (!v) return null;
 
-  if (typeof v.stringValue === "string") return v.stringValue;
-  if (typeof v.boolValue === "boolean") return v.boolValue;
-  if (v.intValue !== undefined && v.intValue !== null) {
-    const n = typeof v.intValue === "string" ? Number(v.intValue) : v.intValue;
+  // Handle both camelCase and snake_case field names (proto-loader keepCase:true).
+  const strVal = v.stringValue ?? v.string_value;
+  if (typeof strVal === "string") return strVal;
+
+  const boolVal = v.boolValue ?? v.bool_value;
+  if (typeof boolVal === "boolean") return boolVal;
+
+  const intVal = v.intValue ?? v.int_value;
+  if (intVal !== undefined && intVal !== null) {
+    const n = typeof intVal === "string" ? Number(intVal) : intVal;
     return Number.isFinite(n) ? n : 0;
   }
-  if (typeof v.doubleValue === "number") return v.doubleValue;
 
-  if (v.kvlistValue?.values) {
+  const dblVal = v.doubleValue ?? v.double_value;
+  if (typeof dblVal === "number") return dblVal;
+
+  const kvList = v.kvlistValue ?? v.kvlist_value;
+  if (kvList?.values) {
     const obj: Record<string, unknown> = {};
-    for (const kv of v.kvlistValue.values) {
+    for (const kv of kvList.values) {
       obj[kv.key] = anyValueToJs(kv.value);
     }
     return obj;
   }
 
-  if (v.arrayValue?.values) {
-    return v.arrayValue.values.map((item) => anyValueToJs(item));
+  const arrVal = v.arrayValue ?? v.array_value;
+  if (arrVal?.values) {
+    return arrVal.values.map((item) => anyValueToJs(item));
   }
 
-  if (v.bytesValue !== undefined && v.bytesValue !== null) {
-    if (Buffer.isBuffer(v.bytesValue)) return v.bytesValue.toString("base64");
-    if (v.bytesValue instanceof Uint8Array) return Buffer.from(v.bytesValue).toString("base64");
-    return String(v.bytesValue);
+  const bytesVal = v.bytesValue ?? v.bytes_value;
+  if (bytesVal !== undefined && bytesVal !== null) {
+    if (Buffer.isBuffer(bytesVal)) return bytesVal.toString("base64");
+    if (bytesVal instanceof Uint8Array) return Buffer.from(bytesVal).toString("base64");
+    return String(bytesVal);
   }
 
   return null;
@@ -162,13 +195,16 @@ export function parseOtlpLogRecord(record: OtlpLogRecord): ParsedOtlpRecord | nu
  * Yields ParsedOtlpRecord for each successfully parsed record.
  */
 export function* extractRecords(request: ExportLogsServiceRequest): Generator<ParsedOtlpRecord> {
-  if (!request.resourceLogs) return;
+  const resourceLogs = request.resourceLogs ?? request.resource_logs;
+  if (!resourceLogs) return;
 
-  for (const rl of request.resourceLogs) {
-    if (!rl.scopeLogs) continue;
-    for (const sl of rl.scopeLogs) {
-      if (!sl.logRecords) continue;
-      for (const lr of sl.logRecords) {
+  for (const rl of resourceLogs) {
+    const scopeLogs = rl.scopeLogs ?? rl.scope_logs;
+    if (!scopeLogs) continue;
+    for (const sl of scopeLogs) {
+      const logRecords = sl.logRecords ?? sl.log_records;
+      if (!logRecords) continue;
+      for (const lr of logRecords) {
         const parsed = parseOtlpLogRecord(lr);
         if (parsed) yield parsed;
       }
