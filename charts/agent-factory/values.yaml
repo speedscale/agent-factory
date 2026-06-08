@@ -132,6 +132,19 @@ worker:
   resources:
     requests: { cpu: 100m, memory: 256Mi }
     limits:   { cpu: 1000m, memory: 1Gi }
+  # Reproduce handler (the confirm + replicate step). Consumed by the
+  # `reproduce` AgentRun the streaming pipeline enqueues for regressions.
+  # The worker also mounts intakeApi.otlp.archiveSecret (as AF_TRAFFIC_ARCHIVE_*)
+  # so it can fetch archived evidence back from S3 to replay.
+  reproduce:
+    # Full or partial URL passed to `proxymock replay --test-against`.
+    # Empty = degrade to capture re-analysis (no live replay).
+    replayTarget: ""
+    # Linear team UUID auto-filed reproduce tickets are created under.
+    # Requires linear.authSecret to also be set. Empty = confirm but don't file.
+    linearTeamId: ""
+    # Optional Linear label UUID attached to auto-filed reproduce tickets.
+    linearLabelId: ""
 
 persistence:
   enabled: true
