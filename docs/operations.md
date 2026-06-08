@@ -95,7 +95,7 @@ rate(af_otlp_records_dropped_total[5m])
 
 ### Findings not archiving
 
-1. Check that `RADAR_ARCHIVE_BUCKET`, `RADAR_ARCHIVE_ACCESS_KEY_ID`, `RADAR_ARCHIVE_SECRET_ACCESS_KEY` are set
+1. Check that `AF_TRAFFIC_ARCHIVE_BUCKET`, `AF_TRAFFIC_ARCHIVE_ACCESS_KEY_ID`, `AF_TRAFFIC_ARCHIVE_SECRET_ACCESS_KEY` are set (legacy `RADAR_ARCHIVE_*` also honoured)
 2. Verify the k8s secret referenced by `intakeApi.otlp.archiveSecret.name` exists in the namespace
 3. Check intake-api logs for S3 upload errors
 4. Verify bucket exists and credentials have write access

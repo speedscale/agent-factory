@@ -93,6 +93,7 @@ function fakeLinearClient(
       calls.push({ issueId, body });
       return { id: `comment-${calls.length}` };
     },
+    createIssue: async () => ({ id: "issue-1", identifier: "ENG-1", url: "https://linear.app/x" }),
   });
 }
 

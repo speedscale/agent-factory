@@ -22,13 +22,26 @@ CLI flag > env var > default. CLI flags are only honored by the one-shot `llm-ru
 
 | Var | Consumer | Default | Notes |
 |---|---|---|---|
-| `RADAR_ARCHIVE_BUCKET` | intake-api | — | S3 bucket name for findings upload |
-| `RADAR_ARCHIVE_ENDPOINT` | intake-api | — | S3-compatible endpoint URL (e.g. `https://nyc3.digitaloceanspaces.com`) |
-| `RADAR_ARCHIVE_REGION` | intake-api | — | AWS region or equivalent |
-| `RADAR_ARCHIVE_ACCESS_KEY_ID` | intake-api | — | Secret. S3 access key |
-| `RADAR_ARCHIVE_SECRET_ACCESS_KEY` | intake-api | — | Secret. S3 secret key |
+| `AF_TRAFFIC_ARCHIVE_BUCKET` | intake-api, worker | — | S3 bucket name for findings + evidence upload |
+| `AF_TRAFFIC_ARCHIVE_ENDPOINT` | intake-api, worker | — | S3-compatible endpoint URL (e.g. `https://nyc3.digitaloceanspaces.com`) |
+| `AF_TRAFFIC_ARCHIVE_REGION` | intake-api, worker | — | AWS region or equivalent |
+| `AF_TRAFFIC_ARCHIVE_ACCESS_KEY_ID` | intake-api, worker | — | Secret. S3 access key |
+| `AF_TRAFFIC_ARCHIVE_SECRET_ACCESS_KEY` | intake-api, worker | — | Secret. S3 secret key |
 
-These are mounted from a k8s Secret via `intakeApi.otlp.archiveSecret.name` in the Helm chart. When any of `BUCKET`, `ACCESS_KEY_ID`, or `SECRET_ACCESS_KEY` is missing, archival is silently skipped.
+These are mounted from a k8s Secret via `intakeApi.otlp.archiveSecret.name` in the Helm chart. When any of `BUCKET`, `ACCESS_KEY_ID`, or `SECRET_ACCESS_KEY` is missing, archival is silently skipped. The **worker** also needs them — the reproduce handler uses them to `fetchArchive()` the evidence back from S3. Findings/evidence are stored under the `agent-factory/` key prefix in the bucket.
+
+> The legacy `RADAR_ARCHIVE_*` names (from the radar pilot) are still read as a fallback, so a new image runs against an older chart without a flag-day. Prefer `AF_TRAFFIC_ARCHIVE_*` going forward.
+
+## Reproduce loop (confirm + replicate)
+
+Consumed by the worker's `reproduce` handler (`spec.agent: "reproduce"`), which the streaming pipeline enqueues for high-severity regressions.
+
+| Var | Consumer | Default | Notes |
+|---|---|---|---|
+| `REPRODUCE_REPLAY_TARGET` | worker (reproduce) | — | Full or partial URL passed to `proxymock replay --test-against`. When unset, the handler degrades to re-analysing the captured traffic instead of a live replay. |
+| `LINEAR_API_KEY` | worker (reproduce) | — | Secret. Linear personal API key for filing confirmed bugs. When unset, confirmation is recorded but no ticket is filed. |
+| `LINEAR_REPRODUCE_TEAM_ID` | worker (reproduce) | — | Linear team UUID the auto-filed issue is created under. Required alongside `LINEAR_API_KEY` to file tickets. |
+| `LINEAR_REPRODUCE_LABEL_ID` | worker (reproduce) | — | Optional Linear label UUID attached to auto-filed issues. |
 
 ## Identity / observability
 
@@ -150,7 +163,7 @@ intakeApi:
     windowMs: 60000            # maps to OTLP_WINDOW_MS
     maxRecordsPerService: 10000 # maps to OTLP_MAX_RECORDS_PER_SERVICE
     archiveSecret:
-      name: radar-archive-s3   # k8s Secret with RADAR_ARCHIVE_* keys
+      name: agent-factory-archive-s3   # k8s Secret with keys: bucket, endpoint, region, access-key-id, secret-access-key
 ```
 
 ## CLI flags (llm-run only)

@@ -52,12 +52,13 @@
 #   SNAPSHOT_KEEP_DAYS  Delete local snapshots older than this. Default: 2
 #   BASELINE_DIR        Directory for rolling baseline files.
 #                       Default: SNAPSHOT_BASE/.baseline
-#   RADAR_ARCHIVE_BUCKET  S3-compatible bucket for durable bug-traffic archive.
+#   AF_TRAFFIC_ARCHIVE_BUCKET   S3-compatible bucket for durable bug-traffic archive.
 #                       When set, a bug's snapshot is tarred + uploaded so it
 #                       survives deletion of the BYOC/cloud source; the ticket's
 #                       Replay line points at it. Unset = archive disabled.
-#   RADAR_ARCHIVE_ENDPOINT / _REGION / _ACCESS_KEY_ID / _SECRET_ACCESS_KEY
-#                       S3 endpoint + creds (from the radar-archive-s3 secret).
+#                       (Legacy RADAR_ARCHIVE_BUCKET still honoured as fallback.)
+#   AF_TRAFFIC_ARCHIVE_ENDPOINT / _REGION / _ACCESS_KEY_ID / _SECRET_ACCESS_KEY
+#                       S3 endpoint + creds (from the archive secret).
 #                       Works with DO Spaces today and AWS S3 unchanged.
 #   DRY_RUN             Set to "true" to skip ticket creation (analysis only)
 #   VERIFY_WITHIN_DAYS  Check tickets closed within this many days. Default: 2
@@ -162,10 +163,10 @@ settle_snapshot() {
     delete_cloud_snapshot "$id" "$lp"
     return 0
   fi
-  if [[ -n "${RADAR_ARCHIVE_BUCKET:-}" ]]; then
+  if [[ -n "${AF_TRAFFIC_ARCHIVE_BUCKET:-${RADAR_ARCHIVE_BUCKET:-}}" ]]; then
     local tgz="${dir%/}.tgz"
     if tar -czf "$tgz" -C "$dir" . 2>/dev/null; then
-      (cd "$AF_REPO_DIR" && node dist/bin/archive-snapshot.js --file "$tgz" --key "radar-monitor/${id}.tgz" 2>&1 | sed "s/^/$lp [archive] /") \
+      (cd "$AF_REPO_DIR" && node dist/bin/archive-snapshot.js --file "$tgz" --key "agent-factory/${id}.tgz" 2>&1 | sed "s/^/$lp [archive] /") \
         || echo "$lp WARNING: archive upload failed (non-fatal; ticket still filed)"
       rm -f "$tgz"
     else
@@ -183,7 +184,8 @@ settle_snapshot() {
 # durable record of what the factory found.
 upload_findings() {
   local service="$1" findings="$2" snap_id="$3" dir="$4" lp="${5:-[findings]}"
-  [[ -z "${RADAR_ARCHIVE_BUCKET:-}" ]] && return 0
+  local archive_bucket="${AF_TRAFFIC_ARCHIVE_BUCKET:-${RADAR_ARCHIVE_BUCKET:-}}"
+  [[ -z "$archive_bucket" ]] && return 0
   [[ ! -f "$findings" ]] && return 0
 
   local sig_count
@@ -202,8 +204,8 @@ print(len(sigs) if isinstance(sigs, list) else 0)
 
   local ts
   ts=$(date -u +%Y%m%dT%H%M%SZ)
-  local findings_key="radar-monitor/findings/${service}-${ts}.json"
-  echo "$lp Uploading findings ($sig_count signals) to s3://${RADAR_ARCHIVE_BUCKET}/${findings_key}"
+  local findings_key="agent-factory/findings/${service}-${ts}.json"
+  echo "$lp Uploading findings ($sig_count signals) to s3://${archive_bucket}/${findings_key}"
   (cd "$AF_REPO_DIR" && node dist/bin/archive-snapshot.js --file "$findings" --key "$findings_key" 2>&1 | sed "s/^/$lp [archive] /") \
     || echo "$lp WARNING: findings upload failed (non-fatal)"
 
@@ -211,7 +213,7 @@ print(len(sigs) if isinstance(sigs, list) else 0)
     local tgz="${dir%/}.tgz"
     if tar -czf "$tgz" -C "$dir" . 2>/dev/null; then
       echo "$lp Archiving snapshot $snap_id for replay"
-      (cd "$AF_REPO_DIR" && node dist/bin/archive-snapshot.js --file "$tgz" --key "radar-monitor/snapshots/${snap_id}.tgz" 2>&1 | sed "s/^/$lp [archive] /") \
+      (cd "$AF_REPO_DIR" && node dist/bin/archive-snapshot.js --file "$tgz" --key "agent-factory/snapshots/${snap_id}.tgz" 2>&1 | sed "s/^/$lp [archive] /") \
         || echo "$lp WARNING: snapshot archive failed (non-fatal)"
       rm -f "$tgz"
     fi

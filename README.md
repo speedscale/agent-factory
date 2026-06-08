@@ -11,9 +11,9 @@ flowchart LR
     intake --> buf[Per-service buffer\n60s tumbling windows]
     buf --> analyze[Signal detection\nbaseline comparison]
     analyze --> archive[(Findings archive\nDO Spaces / S3)]
-    analyze -. "planned" .-> run[AgentRun queue\nreproduce + confirm]
-    run -. "planned" .-> worker[Worker\nproxymock replay]
-    worker -. "planned" .-> ticket[Linear ticket\nwith evidence]
+    analyze --> run[AgentRun queue\nreproduce + confirm]
+    run --> worker[Worker\nproxymock replay]
+    worker --> ticket[Linear ticket\nwith evidence]
 
     style apps fill:#6e7681,stroke:#6e7681,color:#fff
     style fwd fill:#1f6feb,stroke:#1f6feb,color:#fff
@@ -21,9 +21,9 @@ flowchart LR
     style buf fill:#1a7f37,stroke:#1a7f37,color:#fff
     style analyze fill:#1a7f37,stroke:#1a7f37,color:#fff
     style archive fill:#8957e5,stroke:#8957e5,color:#fff
-    style run fill:#6e7681,stroke:#6e7681,color:#fff
-    style worker fill:#6e7681,stroke:#6e7681,color:#fff
-    style ticket fill:#6e7681,stroke:#6e7681,color:#fff
+    style run fill:#1a7f37,stroke:#1a7f37,color:#fff
+    style worker fill:#1a7f37,stroke:#1a7f37,color:#fff
+    style ticket fill:#8957e5,stroke:#8957e5,color:#fff
 ```
 
 The forwarder already captures all traffic (RRPairs) from instrumented services and streams it as OTLP log records. Agent Factory registers as another OTLP destination via the forwarder's `EXPORTERS` env var — no snapshot creation, no cloud round-trip, no batch processing.
@@ -37,12 +37,15 @@ The forwarder already captures all traffic (RRPairs) from instrumented services 
 5. **Correlation** — related signals (slow endpoint + slow downstream query) merged into incident groups
 6. **Findings archive** — JSON findings with evidence uploaded to S3-compatible storage
 7. **Prometheus metrics** — records received, windows processed, signals found, buffer depth per service
+8. **Baseline accumulation** — every window's per-endpoint stats feed a rolling baseline so regressions are detected relative to normal, not just static thresholds
+9. **Evidence archival** — the failing RRPairs for each signal are tarred to S3, keyed by fingerprint, so the bug stays replayable
+10. **Detect → confirm → replicate loop** — high-severity regressions enqueue a `reproduce` AgentRun; the worker replays the archived traffic, confirms the signal reappears, and files a Linear ticket with the evidence
 
-### What's next (the killer feature)
+### The killer feature
 
-The closed loop: **detect, confirm, replicate**. No other tool can do this because nobody else has the full request/response payloads AND an AI agent that can act on them.
+The closed loop — **detect, confirm, replicate** — is wired end-to-end. No other tool can do this because nobody else has the full request/response payloads AND an AI agent that can act on them. Production rollout needs live config (`REPRODUCE_REPLAY_TARGET`, `LINEAR_API_KEY`, `LINEAR_REPRODUCE_TEAM_ID`) and threshold tuning.
 
-See [`docs/plan.md`](docs/plan.md) for the roadmap.
+See [`docs/plan.md`](docs/plan.md) for the roadmap and remaining P1/P2 work.
 
 ## Architecture
 
@@ -65,7 +68,7 @@ helm install agent-factory ./charts/agent-factory \
   --set engine.kind=claude-sdk \
   --set engine.authSecret.name=anthropic-api-key \
   --set intakeApi.otlp.enabled=true \
-  --set intakeApi.otlp.archiveSecret.name=radar-archive-s3
+  --set intakeApi.otlp.archiveSecret.name=agent-factory-archive-s3
 ```
 
 Then add Agent Factory as a forwarder OTLP destination in the operator ConfigMap or forwarder ConfigMap:

@@ -159,7 +159,7 @@ async function uploadFindings(
 
   const findingsResult = await archiveFile(
     findingsPath,
-    `radar-monitor/findings/${service}-${ts}.json`,
+    `agent-factory/findings/${service}-${ts}.json`,
   );
   if (findingsResult.skipped) return false;
 
@@ -171,7 +171,7 @@ async function uploadFindings(
       if (err) reject(err); else resolve();
     });
   });
-  await archiveFile(tgzPath, `radar-monitor/snapshots/${snapshotId}.tgz`);
+  await archiveFile(tgzPath, `agent-factory/snapshots/${snapshotId}.tgz`);
 
   // Clean up temp files
   await rm(findingsPath, { force: true });

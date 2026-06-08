@@ -76,7 +76,7 @@ The receiver walks `resourceLogs[].scopeLogs[].logRecords[]`, calls `extractReco
 
 `src/lib/otlp-window-processor.ts` writes a JSON findings file containing: source metadata, window timestamps, RRPair count, all detected signals with evidence, and the scan result. Uploaded to S3-compatible storage via `src/lib/snapshot-archive.ts`.
 
-Archive destination configured by env vars: `RADAR_ARCHIVE_BUCKET`, `RADAR_ARCHIVE_ENDPOINT`, `RADAR_ARCHIVE_ACCESS_KEY_ID`, `RADAR_ARCHIVE_SECRET_ACCESS_KEY`.
+Archive destination configured by env vars: `AF_TRAFFIC_ARCHIVE_BUCKET`, `AF_TRAFFIC_ARCHIVE_ENDPOINT`, `AF_TRAFFIC_ARCHIVE_ACCESS_KEY_ID`, `AF_TRAFFIC_ARCHIVE_SECRET_ACCESS_KEY` (the legacy `RADAR_ARCHIVE_*` names are still read as a fallback). Findings and evidence land under the `agent-factory/` key prefix.
 
 ---
 
@@ -117,7 +117,7 @@ intakeApi:
     windowMs: 60000        # tumbling window duration
     maxRecordsPerService: 10000
     archiveSecret:
-      name: radar-archive-s3  # k8s secret with S3 credentials
+      name: agent-factory-archive-s3  # k8s secret with S3 credentials
 ```
 
 ### Current staging

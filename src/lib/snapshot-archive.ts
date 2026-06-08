@@ -12,18 +12,26 @@
  * object per snapshot (not ~50k tiny RRPair files), uploaded as a streamed
  * multipart PUT so memory stays flat regardless of size.
  *
- * Config (env, mapped from the `radar-archive-s3` k8s secret):
- *   RADAR_ARCHIVE_BUCKET             bucket name (presence = archiving enabled)
- *   RADAR_ARCHIVE_ENDPOINT          S3 endpoint, e.g. https://nyc3.digitaloceanspaces.com
- *   RADAR_ARCHIVE_REGION            SigV4 region (default us-east-1)
- *   RADAR_ARCHIVE_ACCESS_KEY_ID     access key
- *   RADAR_ARCHIVE_SECRET_ACCESS_KEY secret key
+ * Config (env, mapped from the traffic-archive k8s secret). Distinct from the
+ * AF_ARCHIVE_* family in src/lib/archive/, which configures the GCS/local
+ * run-artifact store — this is the S3-compatible bug-traffic/findings archive.
+ *   AF_TRAFFIC_ARCHIVE_BUCKET             bucket name (presence = archiving enabled)
+ *   AF_TRAFFIC_ARCHIVE_ENDPOINT           S3 endpoint, e.g. https://nyc3.digitaloceanspaces.com
+ *   AF_TRAFFIC_ARCHIVE_REGION             SigV4 region (default us-east-1)
+ *   AF_TRAFFIC_ARCHIVE_ACCESS_KEY_ID      access key
+ *   AF_TRAFFIC_ARCHIVE_SECRET_ACCESS_KEY  secret key
+ *
+ * The legacy RADAR_ARCHIVE_* names (a holdover from the radar pilot) are still
+ * read as a fallback so a new image keeps working against an older chart that
+ * projects the old names — the rename rolls out without a flag-day.
  */
 
-import { S3Client } from "@aws-sdk/client-s3";
+import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
 import { Upload } from "@aws-sdk/lib-storage";
-import { createReadStream } from "node:fs";
+import { createReadStream, createWriteStream } from "node:fs";
 import { stat } from "node:fs/promises";
+import { pipeline } from "node:stream/promises";
+import type { Readable } from "node:stream";
 
 export interface ArchiveConfig {
   bucket: string;
@@ -33,16 +41,25 @@ export interface ArchiveConfig {
   secretAccessKey: string;
 }
 
+/**
+ * Read a traffic-archive env var, preferring the AF_TRAFFIC_ARCHIVE_* name and
+ * falling back to the legacy RADAR_ARCHIVE_* name from the radar pilot. Kept
+ * deliberately separate from the AF_ARCHIVE_* names in src/lib/archive/.
+ */
+export function archiveEnv(suffix: string): string | undefined {
+  return process.env[`AF_TRAFFIC_ARCHIVE_${suffix}`] ?? process.env[`RADAR_ARCHIVE_${suffix}`];
+}
+
 /** Read archive config from env, or null when archiving is not configured. */
 export function archiveConfigFromEnv(): ArchiveConfig | null {
-  const bucket = process.env.RADAR_ARCHIVE_BUCKET;
-  const accessKeyId = process.env.RADAR_ARCHIVE_ACCESS_KEY_ID;
-  const secretAccessKey = process.env.RADAR_ARCHIVE_SECRET_ACCESS_KEY;
+  const bucket = archiveEnv("BUCKET");
+  const accessKeyId = archiveEnv("ACCESS_KEY_ID");
+  const secretAccessKey = archiveEnv("SECRET_ACCESS_KEY");
   if (!bucket || !accessKeyId || !secretAccessKey) return null;
   return {
     bucket,
-    endpoint: process.env.RADAR_ARCHIVE_ENDPOINT || undefined,
-    region: process.env.RADAR_ARCHIVE_REGION || "us-east-1",
+    endpoint: archiveEnv("ENDPOINT") || undefined,
+    region: archiveEnv("REGION") || "us-east-1",
     accessKeyId,
     secretAccessKey,
   };
@@ -80,4 +97,38 @@ export async function archiveFile(
     client.destroy();
   }
   return { uri: `s3://${cfg.bucket}/${k}`, bytes: (await stat(localFile)).size };
+}
+
+export interface FetchResult {
+  skipped?: boolean;
+  /** Local path the object was written to (when not skipped). */
+  localFile?: string;
+}
+
+/**
+ * Download a single object from <bucket>/<key> to a local file. The inverse of
+ * archiveFile — used by the reproduce worker to pull back the failing traffic
+ * it needs to replay. Returns { skipped: true } when no archive is configured.
+ */
+export async function fetchArchive(
+  key: string,
+  localFile: string,
+  cfg = archiveConfigFromEnv(),
+): Promise<FetchResult> {
+  if (!cfg) return { skipped: true };
+  const k = key.replace(/^\/+/, "");
+
+  const client = new S3Client({
+    region: cfg.region,
+    endpoint: cfg.endpoint,
+    credentials: { accessKeyId: cfg.accessKeyId, secretAccessKey: cfg.secretAccessKey },
+  });
+  try {
+    const res = await client.send(new GetObjectCommand({ Bucket: cfg.bucket, Key: k }));
+    if (!res.Body) throw new Error(`empty object body for ${k}`);
+    await pipeline(res.Body as Readable, createWriteStream(localFile));
+  } finally {
+    client.destroy();
+  }
+  return { localFile };
 }
