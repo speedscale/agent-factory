@@ -9,6 +9,11 @@ metadata:
     app.kubernetes.io/component: worker
 spec:
   replicas: {{ .Values.worker.replicas }}
+  # The data PVC is ReadWriteOnce; an old and new pod can't both mount it
+  # during a rolling update, which deadlocks the rollout. Recreate tears the
+  # old pod down before starting the new one.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       {{- include "agent-factory.selectorLabels" . | nindent 6 }}
