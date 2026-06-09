@@ -110,32 +110,29 @@ spec:
               value: {{ .Values.intakeApi.otlp.maxRecordsPerService | default 10000 | quote }}
             - name: BASELINE_DIR
               value: /app/.work/baselines
-            {{- if .Values.intakeApi.otlp.archiveSecret.name }}
+            {{- with .Values.intakeApi.otlp.archive }}
+            {{- if .bucket }}
+            # Bucket/endpoint/region are plain config, not secrets.
             - name: AF_TRAFFIC_ARCHIVE_BUCKET
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.intakeApi.otlp.archiveSecret.name }}
-                  key: bucket
+              value: {{ .bucket | quote }}
             - name: AF_TRAFFIC_ARCHIVE_ENDPOINT
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.intakeApi.otlp.archiveSecret.name }}
-                  key: endpoint
+              value: {{ .endpoint | quote }}
             - name: AF_TRAFFIC_ARCHIVE_REGION
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.intakeApi.otlp.archiveSecret.name }}
-                  key: region
+              value: {{ .region | default "us-east-1" | quote }}
+            {{- if .secretName }}
+            # Only the S3 credentials come from the Secret.
             - name: AF_TRAFFIC_ARCHIVE_ACCESS_KEY_ID
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.intakeApi.otlp.archiveSecret.name }}
+                  name: {{ .secretName }}
                   key: access-key-id
             - name: AF_TRAFFIC_ARCHIVE_SECRET_ACCESS_KEY
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.intakeApi.otlp.archiveSecret.name }}
+                  name: {{ .secretName }}
                   key: secret-access-key
+            {{- end }}
+            {{- end }}
             {{- end }}
             {{- end }}
           readinessProbe:

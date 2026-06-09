@@ -105,11 +105,16 @@ intakeApi:
     port: 4317
     windowMs: 60000
     maxRecordsPerService: 10000
-    # Secret containing S3/Spaces credentials for archiving stream findings.
-    # Expected keys: bucket, endpoint, region, access-key-id, secret-access-key.
-    # When empty, findings are detected but not persisted.
-    archiveSecret:
-      name: ""
+    # Durable archive for stream findings + bug evidence (S3/Spaces).
+    # bucket/endpoint/region are plain config — NOT secrets. Only the S3
+    # credentials live in a Secret (secretName), with keys:
+    #   access-key-id, secret-access-key
+    # When bucket is empty, findings are detected but not persisted.
+    archive:
+      bucket: ""
+      endpoint: ""
+      region: us-east-1
+      secretName: ""
   ingress:
     enabled: false
     className: ""
@@ -134,7 +139,7 @@ worker:
     limits:   { cpu: 1000m, memory: 1Gi }
   # Reproduce handler (the confirm + replicate step). Consumed by the
   # `reproduce` AgentRun the streaming pipeline enqueues for regressions.
-  # The worker also mounts intakeApi.otlp.archiveSecret (as AF_TRAFFIC_ARCHIVE_*)
+  # The worker also mounts intakeApi.otlp.archive (as AF_TRAFFIC_ARCHIVE_*)
   # so it can fetch archived evidence back from S3 to replay.
   reproduce:
     # Full or partial URL passed to `proxymock replay --test-against`.

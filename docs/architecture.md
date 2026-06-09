@@ -116,8 +116,11 @@ intakeApi:
     port: 4317
     windowMs: 60000        # tumbling window duration
     maxRecordsPerService: 10000
-    archiveSecret:
-      name: agent-factory-archive-s3  # k8s secret with S3 credentials
+    archive:
+      bucket: do-nyc1-staging-decoy-agent-factory   # plain config, not a secret
+      endpoint: https://nyc3.digitaloceanspaces.com
+      region: us-east-1
+      secretName: agent-factory-archive-s3          # Secret: access-key-id, secret-access-key
 ```
 
 ### Current staging

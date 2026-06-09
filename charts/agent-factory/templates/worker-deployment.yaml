@@ -96,35 +96,30 @@ spec:
             {{- /*
               AF_TRAFFIC_ARCHIVE_* — the reproduce handler fetches archived
               evidence back from the same S3 bucket intake-api wrote it to, so
-              the worker mirrors intake-api's archiveSecret. Without this the
-              reproduce run can't pull the failing traffic to replay.
+              the worker mirrors intake-api's archive config. Bucket/endpoint/
+              region are plain config; only the credentials come from a Secret.
             */ -}}
-            {{- if .Values.intakeApi.otlp.archiveSecret.name }}
+            {{- with .Values.intakeApi.otlp.archive }}
+            {{- if .bucket }}
             - name: AF_TRAFFIC_ARCHIVE_BUCKET
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.intakeApi.otlp.archiveSecret.name }}
-                  key: bucket
+              value: {{ .bucket | quote }}
             - name: AF_TRAFFIC_ARCHIVE_ENDPOINT
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.intakeApi.otlp.archiveSecret.name }}
-                  key: endpoint
+              value: {{ .endpoint | quote }}
             - name: AF_TRAFFIC_ARCHIVE_REGION
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.intakeApi.otlp.archiveSecret.name }}
-                  key: region
+              value: {{ .region | default "us-east-1" | quote }}
+            {{- if .secretName }}
             - name: AF_TRAFFIC_ARCHIVE_ACCESS_KEY_ID
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.intakeApi.otlp.archiveSecret.name }}
+                  name: {{ .secretName }}
                   key: access-key-id
             - name: AF_TRAFFIC_ARCHIVE_SECRET_ACCESS_KEY
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.intakeApi.otlp.archiveSecret.name }}
+                  name: {{ .secretName }}
                   key: secret-access-key
+            {{- end }}
+            {{- end }}
             {{- end }}
             {{- /*
               Reproduce handler config. All optional: no replayTarget → the

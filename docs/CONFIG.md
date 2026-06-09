@@ -28,7 +28,7 @@ CLI flag > env var > default. CLI flags are only honored by the one-shot `llm-ru
 | `AF_TRAFFIC_ARCHIVE_ACCESS_KEY_ID` | intake-api, worker | — | Secret. S3 access key |
 | `AF_TRAFFIC_ARCHIVE_SECRET_ACCESS_KEY` | intake-api, worker | — | Secret. S3 secret key |
 
-These are mounted from a k8s Secret via `intakeApi.otlp.archiveSecret.name` in the Helm chart. When any of `BUCKET`, `ACCESS_KEY_ID`, or `SECRET_ACCESS_KEY` is missing, archival is silently skipped. The **worker** also needs them — the reproduce handler uses them to `fetchArchive()` the evidence back from S3. Findings/evidence are stored under the `agent-factory/` key prefix in the bucket.
+These are mounted from a k8s Secret via `intakeApi.otlp.archive.secretName` in the Helm chart. When any of `BUCKET`, `ACCESS_KEY_ID`, or `SECRET_ACCESS_KEY` is missing, archival is silently skipped. The **worker** also needs them — the reproduce handler uses them to `fetchArchive()` the evidence back from S3. Findings/evidence are stored under the `agent-factory/` key prefix in the bucket.
 
 > The legacy `RADAR_ARCHIVE_*` names (from the radar pilot) are still read as a fallback, so a new image runs against an older chart without a flag-day. Prefer `AF_TRAFFIC_ARCHIVE_*` going forward.
 
@@ -43,7 +43,7 @@ Consumed by the worker's `reproduce` handler (`spec.agent: "reproduce"`), which 
 | `LINEAR_REPRODUCE_TEAM_ID` | worker (reproduce) | — | Linear team UUID the auto-filed issue is created under. Required alongside `LINEAR_API_KEY` to file tickets. |
 | `LINEAR_REPRODUCE_LABEL_ID` | worker (reproduce) | — | Optional Linear label UUID attached to auto-filed issues. |
 
-In the Helm chart these map to `worker.reproduce.replayTarget`, `worker.reproduce.linearTeamId`, and `worker.reproduce.linearLabelId`; `LINEAR_API_KEY` comes from `linear.authSecret`. The worker also mounts `intakeApi.otlp.archiveSecret` (as `AF_TRAFFIC_ARCHIVE_*`) so the reproduce handler can fetch archived evidence back from S3.
+In the Helm chart these map to `worker.reproduce.replayTarget`, `worker.reproduce.linearTeamId`, and `worker.reproduce.linearLabelId`; `LINEAR_API_KEY` comes from `linear.authSecret`. The worker also mounts `intakeApi.otlp.archive` (as `AF_TRAFFIC_ARCHIVE_*`) so the reproduce handler can fetch archived evidence back from S3.
 
 ## Identity / observability
 
@@ -164,8 +164,11 @@ intakeApi:
     port: 4317                 # maps to OTLP_RECEIVER_PORT
     windowMs: 60000            # maps to OTLP_WINDOW_MS
     maxRecordsPerService: 10000 # maps to OTLP_MAX_RECORDS_PER_SERVICE
-    archiveSecret:
-      name: agent-factory-archive-s3   # k8s Secret with keys: bucket, endpoint, region, access-key-id, secret-access-key
+    archive:
+      bucket: do-nyc1-staging-decoy-agent-factory   # plain config, not a secret
+      endpoint: https://nyc3.digitaloceanspaces.com
+      region: us-east-1
+      secretName: agent-factory-archive-s3          # Secret with keys: access-key-id, secret-access-key
 ```
 
 ## CLI flags (llm-run only)
