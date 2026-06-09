@@ -39,12 +39,15 @@ jobs:
       - name: Bump patch version
         run: npm version patch --no-git-tag-version
 
-      - name: Sync Helm chart appVersion to package.json
+      - name: Sync Helm chart version + appVersion to package.json
         run: |
           VERSION=$(node -p "require('./package.json').version")
-          # Keep Chart.AppVersion in lockstep with package.json so consumers
-          # who don't override --set image.tag get the matching image.
+          # appVersion drives the default image tag, so keep it in lockstep
+          # with package.json. Bump the chart `version` too — otherwise it
+          # sits frozen at 0.1.0 and every chart change ships unversioned,
+          # with no way to track or pin which chart is deployed.
           sed -i "s/^appVersion:.*/appVersion: \"$VERSION\"/" charts/agent-factory/Chart.yaml
+          sed -i "s/^version:.*/version: $VERSION/" charts/agent-factory/Chart.yaml
 
       - name: Commit and push version bump
         run: |
