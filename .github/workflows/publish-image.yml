@@ -5,6 +5,12 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      force:
+        description: Republish even if this version's tag already exists in GHCR
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -79,6 +85,22 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      # A tag collision means a previous run published the image but failed
+      # to push its version-bump commit (e.g. rebase conflict on the version
+      # files), so this run recomputed the same version for different
+      # content. Overwriting would silently change what an already-published
+      # tag points to — the failure mode behind the 2026-06-09 staging-decoy
+      # outage. Fail loudly instead; force=true on workflow_dispatch is the
+      # deliberate-republish escape hatch.
+      - name: Fail if version tag already published
+        if: inputs.force != true
+        run: |
+          TAG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:v${{ steps.version.outputs.version }}"
+          if docker manifest inspect "$TAG" > /dev/null 2>&1; then
+            echo "::error::${TAG} already exists in GHCR; refusing to re-tag a published version. Dispatch with force=true to republish deliberately."
+            exit 1
+          fi
 
       - name: Build and push image
         uses: docker/build-push-action@v6
