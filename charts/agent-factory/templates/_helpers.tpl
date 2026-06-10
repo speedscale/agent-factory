@@ -191,6 +191,24 @@ true
     {{- end }}
     {{- end }}
     {{- /*
+      SPEEDSCALE_API_KEY / SPEEDSCALE_APP_URL — the reproduce handler
+      initializes proxymock with these before replaying (the CLI refuses
+      to run before `proxymock init`). Optional: without them, live
+      replay fails and the run records proxymock's own error.
+    */ -}}
+    {{- if .Values.speedscale.authSecret.name }}
+    - name: SPEEDSCALE_API_KEY
+      valueFrom:
+        secretKeyRef:
+          name: {{ .Values.speedscale.authSecret.name }}
+          key: {{ .Values.speedscale.authSecret.key }}
+          optional: true
+    {{- end }}
+    {{- if .Values.speedscale.appUrl }}
+    - name: SPEEDSCALE_APP_URL
+      value: {{ .Values.speedscale.appUrl | quote }}
+    {{- end }}
+    {{- /*
       Reproduce handler config. All optional: no replayTarget → the
       handler degrades to re-analysing the captured traffic; no
       linearTeamId → it confirms but doesn't file a ticket.
