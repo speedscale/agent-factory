@@ -5,8 +5,8 @@ description: |
   (triage, bug-fix, perf-investigation, coverage-fill, pr-replay-check,
   mock-generation, migration-safety) entirely inside the customer's VPC.
 type: application
-version: 0.1.92
-appVersion: "0.1.92"
+version: 0.1.93
+appVersion: "0.1.93"
 kubeVersion: ">=1.27.0"
 keywords:
   - speedscale
