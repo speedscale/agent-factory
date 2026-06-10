@@ -136,6 +136,33 @@ export function resolveReplayTarget(template: string | undefined, service: strin
 }
 
 /**
+ * proxymock refuses to run before `proxymock init --api-key …` has written
+ * ${HOME}/.speedscale/config.yaml. Initialize once per process from
+ * SPEEDSCALE_API_KEY, mirroring ensureSpeedctlConfig in traffic-worker.ts.
+ * Best-effort: when the key is missing the replay itself fails with
+ * proxymock's own clear "not initialized" error.
+ */
+let proxymockInitDone: Promise<void> | undefined;
+
+function ensureProxymockInit(): Promise<void> {
+  proxymockInitDone ??= (async () => {
+    const apiKey = process.env.SPEEDSCALE_API_KEY;
+    if (!apiKey) return;
+    const appUrl = process.env.SPEEDSCALE_APP_URL;
+    try {
+      await execFileAsync(
+        "proxymock",
+        ["init", "--api-key", apiKey, ...(appUrl ? ["--app-url", appUrl] : [])],
+        { timeout: 30_000 },
+      );
+    } catch (e) {
+      log.warn("proxymock init failed — replay may not work", { error: (e as Error).message });
+    }
+  })();
+  return proxymockInitDone;
+}
+
+/**
  * Replay against the target named by REPRODUCE_REPLAY_TARGET (a full or partial
  * URL passed to `proxymock replay --test-against`, with `{service}` expanded to
  * the signal's service). When unset there's no live target to drive, so we
@@ -145,6 +172,7 @@ async function defaultReplay(opts: { evidenceDir: string; outDir: string; servic
   const target = resolveReplayTarget(process.env.REPRODUCE_REPLAY_TARGET, opts.service);
   if (!target) return null;
 
+  await ensureProxymockInit();
   await mkdir(opts.outDir, { recursive: true });
   // Flag names are `--in` / `--out` (not --in-directory / --out-directory);
   // `--out-format json` because analyzeSnapshot parses RRPair JSON, and the

@@ -53,6 +53,16 @@ linear:
     name: ""        # e.g. "linear-api-key"
     key: token
 
+# Speedscale cloud auth for the proxymock/speedctl CLIs inside the worker.
+# The reproduce handler runs `proxymock init --api-key …` before its first
+# replay (the CLI refuses to run uninitialized). Optional: when unset, replay
+# fails and reproduce runs surface proxymock's "not initialized" error.
+speedscale:
+  authSecret:
+    name: ""        # e.g. "speedscale-api-key"
+    key: token
+  appUrl: ""        # e.g. "staging.speedscale.com" (proxymock --app-url)
+
 # Archive substrate. Where the controller writes per-AgentRun JSON
 # traces and where the eval runner writes its jsonl. One interface,
 # two backends:
