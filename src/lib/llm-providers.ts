@@ -176,8 +176,13 @@ async function callAnthropic(params: CallLLMParams): Promise<AssistantTurn> {
 // ---------- OpenAI-compatible providers (OpenRouter, local DS4, etc.) ----------
 
 const openrouterClient = new OpenAI({
-  apiKey: process.env.OPENROUTER_API_KEY || "openrouter-unset",
-  baseURL: "https://openrouter.ai/api/v1"
+  // AF_ENGINE_AUTH_TOKEN is what the chart mounts from engine.authSecret for
+  // every auth-requiring kind; OPENROUTER_API_KEY remains as a local-dev
+  // override so `llm-run --provider openrouter` keeps working outside k8s.
+  apiKey: process.env.AF_ENGINE_AUTH_TOKEN || process.env.OPENROUTER_API_KEY || "openrouter-unset",
+  // generic-llm / private-llm point this client at any OpenAI-compatible
+  // endpoint via the chart's engine.endpoint (AF_ENGINE_ENDPOINT).
+  baseURL: process.env.AF_ENGINE_ENDPOINT || "https://openrouter.ai/api/v1"
 });
 
 // DS4 is the local DeepSeek-V4-Flash server (antirez/ds4). No auth needed.
