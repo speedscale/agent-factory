@@ -1,63 +1,17 @@
 name: Version Bump
 
+# The actual bump on merge to main lives in publish-image.yml, ordered
+# *after* the image push so the chart appVersion never references an
+# unpublished tag. This workflow only carries the PR policy notice.
+
 on:
   pull_request:
-  push:
-    branches:
-      - main
-    paths-ignore:
-      - package.json
-      - package-lock.json
-      - charts/agent-factory/Chart.yaml
 
 jobs:
   version-policy:
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - name: Version policy notice
         run: |
           echo "Version bump is CI-managed on merge to main."
           echo "Per-PR package.json bumps are not required."
-
-  version-bump:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor != 'github-actions[bot]'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24
-
-      - name: Bump patch version
-        run: npm version patch --no-git-tag-version
-
-      - name: Sync Helm chart version + appVersion to package.json
-        run: |
-          VERSION=$(node -p "require('./package.json').version")
-          # appVersion drives the default image tag, so keep it in lockstep
-          # with package.json. Bump the chart `version` too — otherwise it
-          # sits frozen at 0.1.0 and every chart change ships unversioned,
-          # with no way to track or pin which chart is deployed.
-          sed -i "s/^appVersion:.*/appVersion: \"$VERSION\"/" charts/agent-factory/Chart.yaml
-          sed -i "s/^version:.*/version: $VERSION/" charts/agent-factory/Chart.yaml
-
-      - name: Commit and push version bump
-        run: |
-          if git diff --quiet -- package.json package-lock.json charts/agent-factory/Chart.yaml; then
-            echo "No version file changes detected; skipping commit."
-            exit 0
-          fi
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add package.json package-lock.json charts/agent-factory/Chart.yaml
-          git commit -m "chore: bump version [skip ci]"
-          git push

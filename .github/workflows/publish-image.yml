@@ -7,8 +7,14 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   packages: write
+
+# Serialize runs so back-to-back merges each see the previous run's
+# version-bump commit and never race on the same tag or the push to main.
+concurrency:
+  group: publish-main
+  cancel-in-progress: false
 
 env:
   REGISTRY: ghcr.io
@@ -20,17 +26,46 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Build the tip of main (not the triggering SHA) so a queued run
+          # picks up the version-bump commit from the run before it.
+          ref: main
+          fetch-depth: 0
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 24
 
+      # Ordering is the contract here: bump locally, publish the image under
+      # the bumped tag, and only push the version commit after the image
+      # exists in ghcr. ArgoCD tracks main with selfHeal, so the moment
+      # Chart.yaml appVersion changes the cluster pulls that exact tag —
+      # committing first (or bumping in a separate workflow) causes
+      # ImagePullBackOff until the next merge.
+      # workflow_dispatch skips the bump and (re)publishes the version
+      # already in package.json.
+      - name: Bump patch version
+        if: github.event_name == 'push'
+        run: npm version patch --no-git-tag-version
+
+      - name: Sync Helm chart version + appVersion to package.json
+        if: github.event_name == 'push'
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          # appVersion drives the default image tag, so keep it in lockstep
+          # with package.json. Bump the chart `version` too — otherwise it
+          # sits frozen at 0.1.0 and every chart change ships unversioned,
+          # with no way to track or pin which chart is deployed.
+          sed -i "s/^appVersion:.*/appVersion: \"$VERSION\"/" charts/agent-factory/Chart.yaml
+          sed -i "s/^version:.*/version: $VERSION/" charts/agent-factory/Chart.yaml
+
       - name: Resolve version
         id: version
         run: |
           VERSION=$(node -p "require('./package.json').version")
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Setup QEMU
         uses: docker/setup-qemu-action@v3
@@ -51,9 +86,32 @@ jobs:
           context: .
           push: true
           platforms: linux/amd64,linux/arm64
+          # Both v-prefixed and bare tags: the chart helper defaults the tag
+          # to .Chart.AppVersion verbatim (no "v"), deploy overlays use "v".
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:v${{ steps.version.outputs.version }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ steps.version.outputs.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # Runs only after the image is in ghcr. If the build fails, this never
+      # runs and the chart keeps pointing at the last published version.
+      - name: Commit and push version bump
+        if: github.event_name == 'push'
+        run: |
+          if git diff --quiet -- package.json package-lock.json charts/agent-factory/Chart.yaml; then
+            echo "No version file changes detected; skipping commit."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json charts/agent-factory/Chart.yaml
+          git commit -m "chore: bump version to v${{ steps.version.outputs.version }} [skip ci]"
+          # A human merge can land during the multi-arch build; rebase the
+          # bump commit onto it rather than failing the push. That merge's
+          # own queued run then bumps and publishes again on top.
+          git pull --rebase origin main
+          git push origin HEAD:main
