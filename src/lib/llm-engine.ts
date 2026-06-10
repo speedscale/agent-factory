@@ -17,7 +17,7 @@
  */
 
 import { exec } from "node:child_process";
-import { readFile, writeFile, mkdir, readdir, stat } from "node:fs/promises";
+import { readFile, writeFile, mkdir, readdir, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import { promisify } from "node:util";
 import path from "node:path";
@@ -160,6 +160,14 @@ export interface WorktreeResult {
 /**
  * Creates a git worktree at <workDir>/repo on a new branch from main.
  * Returns the worktree path and the remapped sourceDir.
+ *
+ * Self-heals leftovers from a previous crashed run: a stale worktree
+ * registered at the target path is force-removed, and a stale branch with
+ * the same name is deleted IF it has no commits beyond the default branch
+ * (the engine creates these branches itself, and a failed run leaves them
+ * pointing at the default branch head). A same-named branch that DOES carry
+ * unique commits aborts with an actionable error instead — we never discard
+ * work we can't prove is disposable.
  */
 export async function setupWorktree(
   repoDir: string,
@@ -171,6 +179,32 @@ export async function setupWorktree(
   // Detect default branch (main or master)
   const { stdout: branchOut } = await execAsync(`git -C ${JSON.stringify(repoDir)} symbolic-ref refs/remotes/origin/HEAD 2>/dev/null || git -C ${JSON.stringify(repoDir)} rev-parse --abbrev-ref HEAD`);
   const defaultBranch = branchOut.trim().replace(/^.*\//, '') || "main";
+
+  // Clear a stale worktree registration at our target path (previous run
+  // crashed before teardown, or the dir was deleted out from under git).
+  await execAsync(`git -C ${JSON.stringify(repoDir)} worktree remove --force ${JSON.stringify(worktreePath)}`).catch(() => { /* not a worktree */ });
+  await execAsync(`git -C ${JSON.stringify(repoDir)} worktree prune`).catch(() => { /* best effort */ });
+  // Engine-owned scratch path — clear any plain-dir leftover git no longer tracks.
+  await rm(worktreePath, { recursive: true, force: true });
+
+  const branchExists = await execAsync(
+    `git -C ${JSON.stringify(repoDir)} rev-parse --verify --quiet refs/heads/${branchName}`
+  ).then(() => true, () => false);
+  if (branchExists) {
+    const disposable = await execAsync(
+      `git -C ${JSON.stringify(repoDir)} merge-base --is-ancestor ${JSON.stringify(branchName)} ${JSON.stringify(defaultBranch)}`
+    ).then(() => true, () => false);
+    if (!disposable) {
+      throw new Error(
+        `branch ${branchName} already exists in ${repoDir} and has commits not on ${defaultBranch} ` +
+        `(likely a previous run's work). Delete it (git -C ${repoDir} branch -D ${branchName}) ` +
+        `or re-dispatch with a different --branch.`
+      );
+    }
+    await execAsync(`git -C ${JSON.stringify(repoDir)} branch -D ${JSON.stringify(branchName)}`);
+    console.warn(`[engine] removed stale branch ${branchName} left by a previous run (no unique commits)`);
+  }
+
   await execAsync(`git -C ${JSON.stringify(repoDir)} worktree add -b ${JSON.stringify(branchName)} ${JSON.stringify(worktreePath)} ${defaultBranch}`);
   // Remap sourceDir: replace the repoDir prefix with the worktree path
   const rel = path.relative(repoDir, originalSourceDir);

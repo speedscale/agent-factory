@@ -1,6 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildWorktreeGuard, guardToolCall, findForbiddenReference } from "./worktree-guard.js";
+import { mkdtemp, mkdir, symlink, rm, realpath } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { buildWorktreeGuard, guardToolCall, findForbiddenReference, MUTATING_TOOLS, PASSTHROUGH_TOOLS } from "./worktree-guard.js";
 
 // Mirrors the observed incident layout: llm-run invoked with
 // --source /Users/op/dev/radar/src --repo /Users/op/dev/radar
@@ -166,4 +169,90 @@ test("read tools are not guarded — reads from the live checkout stay allowed",
   }
   const search = guardToolCall(guard, "search_code", { pattern: "foo", dir: LIVE_SRC });
   assert.ok(search.ok);
+});
+
+// ---------- symlinked roots (review finding #1) ----------
+
+test("regression: physical-path writes into a symlinked worktree root are allowed, not rejected", async () => {
+  // macOS aliases /tmp → /private/tmp. A model that runs `pwd` in the
+  // worktree learns the physical form and uses it for subsequent writes;
+  // lexical comparison alone rejected those as "outside the worktree".
+  const base = await mkdtemp(path.join(os.tmpdir(), "wt-guard-symlink-"));
+  try {
+    const realBase = path.join(base, "real");
+    const linkBase = path.join(base, "link");
+    await mkdir(path.join(realBase, "repo", "src"), { recursive: true });
+    await symlink(realBase, linkBase);
+
+    // Guard built with the symlinked form (what the operator typed).
+    const guard = buildWorktreeGuard({
+      worktreePath: path.join(linkBase, "repo"),
+      workDir: linkBase,
+      repoDir: LIVE_REPO,
+      sourceDir: LIVE_SRC,
+      worktreeSourceDir: path.join(linkBase, "repo", "src")
+    });
+
+    // The model writes using the fully-resolved physical path (pwd output).
+    const physicalWorktree = await realpath(path.join(linkBase, "repo"));
+    assert.notEqual(physicalWorktree, path.join(linkBase, "repo"));
+    const res = guardToolCall(guard, "write_file", {
+      path: path.join(physicalWorktree, "src", "x.js"),
+      content: "x"
+    });
+    assert.ok(res.ok, `physical-path write was rejected: ${res.ok ? "" : res.error}`);
+    assert.equal(res.input.path, path.join(physicalWorktree, "src", "x.js"));
+
+    // run_shell with the physical cwd is likewise allowed.
+    const shell = guardToolCall(guard, "run_shell", { command: "npm test", cwd: physicalWorktree });
+    assert.ok(shell.ok);
+    assert.equal(shell.input.cwd, physicalWorktree);
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+test("regression: forbidden-root references via the physical form are still caught", async () => {
+  // The live checkout can be symlinked too — both forms must reroot/block.
+  const base = await mkdtemp(path.join(os.tmpdir(), "wt-guard-symlink2-"));
+  try {
+    const realLive = path.join(base, "real-live");
+    const linkLive = path.join(base, "link-live");
+    await mkdir(path.join(realLive, "src"), { recursive: true });
+    await symlink(realLive, linkLive);
+    const worktree = path.join(base, "work", "repo");
+    await mkdir(path.join(worktree, "src"), { recursive: true });
+
+    const guard = buildWorktreeGuard({
+      worktreePath: worktree,
+      workDir: path.join(base, "work"),
+      repoDir: linkLive,
+      sourceDir: path.join(linkLive, "src"),
+      worktreeSourceDir: path.join(worktree, "src")
+    });
+
+    const physicalLive = await realpath(linkLive);
+    const res = guardToolCall(guard, "write_file", { path: path.join(physicalLive, "src", "server.js"), content: "x" });
+    assert.ok(res.ok);
+    assert.equal(res.input.path, path.join(worktree, "src", "server.js"));
+    assert.match(res.note ?? "", /READ-ONLY/);
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+// ---------- fail-closed classification (review finding #3) ----------
+
+test("unclassified tool is blocked while a worktree is active (fail closed)", () => {
+  const guard = makeGuard();
+  const res = guardToolCall(guard, "delete_file", { path: `${WORKTREE_SRC}/x.js` });
+  assert.equal(res.ok, false);
+  if (!res.ok) {
+    assert.match(res.error, /not classified by the worktree guard/);
+    assert.match(res.error, /MUTATING_TOOLS/);
+  }
+});
+
+test("MUTATING_TOOLS and PASSTHROUGH_TOOLS are disjoint", () => {
+  for (const t of MUTATING_TOOLS) assert.ok(!PASSTHROUGH_TOOLS.has(t), `${t} in both sets`);
 });

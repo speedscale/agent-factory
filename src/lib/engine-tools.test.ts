@@ -1,10 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
+import { exec } from "node:child_process";
+import { promisify } from "node:util";
 import os from "node:os";
 import path from "node:path";
-import { toolListSnapshotDir, toolRunShell, dispatchToolHardened, TOOLS } from "./llm-engine.js";
-import { buildWorktreeGuard } from "./worktree-guard.js";
+import { toolListSnapshotDir, toolRunShell, dispatchToolHardened, setupWorktree, TOOLS } from "./llm-engine.js";
+import { buildWorktreeGuard, MUTATING_TOOLS, PASSTHROUGH_TOOLS } from "./worktree-guard.js";
+
+const execAsync = promisify(exec);
 
 async function makeTmp(): Promise<string> {
   return mkdtemp(path.join(os.tmpdir(), "engine-tools-test-"));
@@ -221,6 +225,81 @@ test("guarded dispatch: read_file from the live checkout stays allowed", async (
     );
     assert.equal(outcome.kind, "ok");
     assert.equal(outcome.content, "live content");
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test("every engine tool is classified by the worktree guard (exhaustiveness)", () => {
+  // A tool in neither set is blocked at runtime while a worktree is active
+  // (fail closed), and this test makes the omission a CI failure: adding a
+  // new tool to TOOLS requires classifying it in worktree-guard.ts.
+  for (const tool of TOOLS) {
+    assert.ok(
+      MUTATING_TOOLS.has(tool.name) || PASSTHROUGH_TOOLS.has(tool.name),
+      `tool "${tool.name}" is not classified in worktree-guard.ts (MUTATING_TOOLS or PASSTHROUGH_TOOLS)`
+    );
+  }
+});
+
+// ---------- setupWorktree self-healing ----------
+
+async function makeGitRepo(dir: string): Promise<void> {
+  await mkdir(dir, { recursive: true });
+  const git = (cmd: string) => execAsync(`git -C ${JSON.stringify(dir)} ${cmd}`);
+  await execAsync(`git init -b main ${JSON.stringify(dir)}`);
+  await git(`config user.email test@example.com`);
+  await git(`config user.name Test`);
+  await writeFile(path.join(dir, "file.txt"), "hello", "utf8");
+  await git(`add .`);
+  await git(`commit -m init`);
+}
+
+test("setupWorktree: re-dispatch after a crashed run self-heals the stale worktree and branch", async () => {
+  const tmp = await makeTmp();
+  try {
+    const repo = path.join(tmp, "repo");
+    const workDir = path.join(tmp, "work");
+    await makeGitRepo(repo);
+    await mkdir(workDir, { recursive: true });
+
+    // First run creates the worktree; simulate a crash by NOT tearing down.
+    const first = await setupWorktree(repo, workDir, "agent/test-fix", repo);
+    assert.equal(first.branchName, "agent/test-fix");
+
+    // Re-dispatch with the same title → same branch name. Must succeed.
+    const second = await setupWorktree(repo, workDir, "agent/test-fix", repo);
+    assert.equal(second.worktreePath, path.join(workDir, "repo"));
+    const { stdout } = await execAsync(`git -C ${JSON.stringify(second.worktreePath)} rev-parse --abbrev-ref HEAD`);
+    assert.equal(stdout.trim(), "agent/test-fix");
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test("setupWorktree: refuses to delete a same-named branch that has unique commits", async () => {
+  const tmp = await makeTmp();
+  try {
+    const repo = path.join(tmp, "repo");
+    const workDir = path.join(tmp, "work");
+    await makeGitRepo(repo);
+    await mkdir(workDir, { recursive: true });
+    const git = (cmd: string) => execAsync(`git -C ${JSON.stringify(repo)} ${cmd}`);
+
+    // A branch with real work on it (not a disposable leftover).
+    await git(`checkout -b agent/busy`);
+    await writeFile(path.join(repo, "work.txt"), "important", "utf8");
+    await git(`add .`);
+    await git(`commit -m "real work"`);
+    await git(`checkout main`);
+
+    await assert.rejects(
+      setupWorktree(repo, workDir, "agent/busy", repo),
+      /already exists .* and has commits not on main/s
+    );
+    // The branch and its commit survive.
+    const { stdout } = await execAsync(`git -C ${JSON.stringify(repo)} log --oneline agent/busy`);
+    assert.match(stdout, /real work/);
   } finally {
     await rm(tmp, { recursive: true, force: true });
   }
