@@ -27,6 +27,7 @@
  */
 
 import path from "node:path";
+import { realpathSync } from "node:fs";
 
 export interface RerootEntry {
   /** A root that must never be mutated (the operator's live checkout). */
@@ -44,6 +45,26 @@ export interface WorktreeGuard {
   reroots: RerootEntry[];
 }
 
+/**
+ * The lexical resolution of a path plus its symlink-free physical form when
+ * they differ. The guard compares paths lexically, but on macOS the standard
+ * temp locations are symlinks (/tmp → /private/tmp, /var → /private/var) and
+ * the model can learn the physical form at runtime (e.g. run_shell "pwd"
+ * prints /private/tmp/...). Registering both forms for every root keeps
+ * legitimate worktree paths from being rejected as "outside the worktree".
+ * realpath requires the path to exist; roots are created before the guard is
+ * built, and we fall back to the lexical form if resolution fails.
+ */
+function canonicalForms(p: string): string[] {
+  const resolved = path.resolve(p);
+  try {
+    const real = realpathSync(resolved);
+    return real === resolved ? [resolved] : [resolved, real];
+  } catch {
+    return [resolved];
+  }
+}
+
 export function buildWorktreeGuard(opts: {
   worktreePath: string;
   workDir?: string;
@@ -55,15 +76,16 @@ export function buildWorktreeGuard(opts: {
   worktreeSourceDir?: string;
 }): WorktreeGuard {
   const worktreePath = path.resolve(opts.worktreePath);
-  const allowedRoots = [worktreePath];
-  if (opts.workDir) allowedRoots.push(path.resolve(opts.workDir));
+  const allowedRoots = [...canonicalForms(opts.worktreePath)];
+  if (opts.workDir) allowedRoots.push(...canonicalForms(opts.workDir));
 
   const reroots: RerootEntry[] = [];
   if (opts.sourceDir && opts.worktreeSourceDir) {
-    reroots.push({ from: path.resolve(opts.sourceDir), to: path.resolve(opts.worktreeSourceDir) });
+    const to = path.resolve(opts.worktreeSourceDir);
+    for (const from of canonicalForms(opts.sourceDir)) reroots.push({ from, to });
   }
   if (opts.repoDir) {
-    reroots.push({ from: path.resolve(opts.repoDir), to: worktreePath });
+    for (const from of canonicalForms(opts.repoDir)) reroots.push({ from, to: worktreePath });
   }
   // Longest prefix first so the more specific sourceDir mapping wins over the
   // repoDir mapping when sourceDir is nested inside repoDir (the normal case).
@@ -121,6 +143,32 @@ export function findForbiddenReference(
   }
   return undefined;
 }
+
+/**
+ * Tools guardToolCall actively confines. Every tool that can mutate the
+ * filesystem or run arbitrary commands MUST be listed here and handled in
+ * guardToolCall's switch.
+ */
+export const MUTATING_TOOLS = new Set(["write_file", "run_shell", "run_script"]);
+
+/**
+ * Tools known to be read-only or terminal (pure result emission) — safe to
+ * pass through unguarded. A tool in NEITHER set is blocked while a worktree
+ * is active: failing closed turns "someone added a mutating tool and forgot
+ * the guard" from a silent live-checkout write into a loud dispatch error
+ * plus a failing exhaustiveness test (see engine-tools.test.ts).
+ */
+export const PASSTHROUGH_TOOLS = new Set([
+  "read_file",
+  "search_code",
+  "list_snapshot_dir",
+  "read_rrpair",
+  "compare_file_declarations",
+  "emit_plan",
+  "emit_patch",
+  "emit_plan_source",
+  "emit_eval_report"
+]);
 
 export type GuardResult =
   /** Call may proceed. `input` may have been rerooted; `note` (if set) is
@@ -218,6 +266,18 @@ export function guardToolCall(
     }
 
     default:
-      return { ok: true, input };
+      if (PASSTHROUGH_TOOLS.has(toolName)) {
+        return { ok: true, input };
+      }
+      // Fail closed: an unclassified tool must not run while a worktree is
+      // active — it might mutate the live checkout. This is an engine bug
+      // (a new tool was added without classifying it), not a model error.
+      return {
+        ok: false,
+        error:
+          `tool "${toolName}" blocked: it is not classified by the worktree guard, so it cannot ` +
+          `run while a worktree is active. Engine bug — add the tool to MUTATING_TOOLS (and handle ` +
+          `it in guardToolCall) or PASSTHROUGH_TOOLS in src/lib/worktree-guard.ts.`
+      };
   }
 }
