@@ -42,6 +42,8 @@ Consumed by the worker's `reproduce` handler (`spec.agent: "reproduce"`), which 
 | `LINEAR_API_KEY` | worker (reproduce) | — | Secret. Linear personal API key for filing confirmed bugs. When unset, confirmation is recorded but no ticket is filed. |
 | `LINEAR_REPRODUCE_TEAM_ID` | worker (reproduce) | — | Linear team UUID the auto-filed issue is created under. Required alongside `LINEAR_API_KEY` to file tickets. |
 | `LINEAR_REPRODUCE_LABEL_ID` | worker (reproduce) | — | Optional Linear label UUID attached to auto-filed issues. |
+| `REPRODUCE_REFILE_COOLDOWN_MS` | intake-api (bridge) | `21600000` (6h) | After a reproduce run succeeds, how long before the same fingerprint may enqueue again. A persistent regression re-qualifies every window; without a cooldown it files a duplicate ticket every ~60s. |
+| `REPRODUCE_RETRY_BACKOFF_MS` | intake-api (bridge) | `900000` (15m) | After a reproduce run fails (e.g. transient S3 error), how long before the same fingerprint may retry. |
 
 In the Helm chart these map to `worker.reproduce.replayTarget`, `worker.reproduce.linearTeamId`, and `worker.reproduce.linearLabelId`; `LINEAR_API_KEY` comes from `linear.authSecret`. The worker also mounts `intakeApi.otlp.archive` (as `AF_TRAFFIC_ARCHIVE_*`) so the reproduce handler can fetch archived evidence back from S3.
 
