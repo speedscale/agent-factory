@@ -304,9 +304,20 @@ async function main(): Promise<void> {
   const workerStart = Date.now();
   console.log(`\n=== WORKER PHASE (${mode}) ===`);
 
-  const patchResult = mode === "traffic"
-    ? await runWorker(planResult as EmitPlanResult, { snapshotDir, sourceDir, workDir, verbose, repoDir, branchName, provider, model, worktree })
-    : await runWorkerSource(planResult as EmitPlanSourceResult, { snapshotDir, sourceDir, workDir, verbose, repoDir, branchName, provider, model, worktree });
+  let patchResult: Awaited<ReturnType<typeof runWorker>>;
+  try {
+    patchResult = mode === "traffic"
+      ? await runWorker(planResult as EmitPlanResult, { snapshotDir, sourceDir, workDir, verbose, repoDir, branchName, provider, model, worktree })
+      : await runWorkerSource(planResult as EmitPlanSourceResult, { snapshotDir, sourceDir, workDir, verbose, repoDir, branchName, provider, model, worktree });
+  } catch (err) {
+    // No patch produced — remove the worktree + branch so a failed Worker
+    // doesn't leave a stale agent/<slug> branch that blocks re-dispatch.
+    // (plan.json/patch.json artifacts in workDir survive for debugging.)
+    if (worktree && repoDir) {
+      await teardownWorktree(repoDir, worktree.worktreePath, worktree.branchName);
+    }
+    throw err;
+  }
 
   const workerMs = Date.now() - workerStart;
   const patchOutput = path.join(workDir, "patch.json");
