@@ -30,7 +30,11 @@ image:
 engine:
   kind: claude-sdk   # claude-sdk | openrouter | ds4 | omlx | generic-llm | private-llm
   model: claude-opus-4-7
-  endpoint: https://api.anthropic.com
+  # Base URL for OpenAI-compatible kinds (openrouter, generic-llm,
+  # private-llm) — e.g. https://api.openai.com/v1. Ignored by claude-sdk
+  # (the Anthropic SDK uses its own default). Empty = the openrouter
+  # client's built-in default (https://openrouter.ai/api/v1).
+  endpoint: ""
   # Secret holding the API key for cloud providers. The chart never reads
   # the value. Required when `kind` is claude-sdk or openrouter (or their
   # generic-llm / private-llm aliases). Local providers (ds4, omlx) don't
