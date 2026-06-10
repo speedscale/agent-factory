@@ -79,7 +79,7 @@ export interface ReproduceDeps {
    * Replay the failing requests against a target, returning the output dir to
    * analyse — or null when replay was not performed (no target configured).
    */
-  replay: (opts: { evidenceDir: string; outDir: string }) => Promise<{ outDir: string } | null>;
+  replay: (opts: { evidenceDir: string; outDir: string; service: string }) => Promise<{ outDir: string } | null>;
   /** Re-run signal detection on a directory of RRPairs. */
   analyze: (dir: string) => Promise<ScanStats>;
   /** File the confirmed bug. Returns whether it was filed and a reference. */
@@ -123,13 +123,26 @@ async function defaultExtractTar(tgz: string, destDir: string): Promise<void> {
 }
 
 /**
- * Replay against the target named by REPRODUCE_REPLAY_TARGET (a full or partial
- * URL passed to `proxymock replay --test-against`). When unset there's no live
- * target to drive, so we return null and the caller falls back to re-analysing
- * the captured traffic.
+ * Resolve the replay target for a service. REPRODUCE_REPLAY_TARGET may contain
+ * a `{service}` placeholder — evidence is archived per service, and replaying
+ * one service's inbound traffic against another's host would only produce
+ * false "not reproduced" verdicts. A templated target like
+ * `http://{service}.banking-app.svc.cluster.local` points each reproduce run
+ * at the service that emitted the signal.
  */
-async function defaultReplay(opts: { evidenceDir: string; outDir: string }): Promise<{ outDir: string } | null> {
-  const target = process.env.REPRODUCE_REPLAY_TARGET;
+export function resolveReplayTarget(template: string | undefined, service: string): string | null {
+  if (!template || template.trim().length === 0) return null;
+  return template.replaceAll("{service}", service);
+}
+
+/**
+ * Replay against the target named by REPRODUCE_REPLAY_TARGET (a full or partial
+ * URL passed to `proxymock replay --test-against`, with `{service}` expanded to
+ * the signal's service). When unset there's no live target to drive, so we
+ * return null and the caller falls back to re-analysing the captured traffic.
+ */
+async function defaultReplay(opts: { evidenceDir: string; outDir: string; service: string }): Promise<{ outDir: string } | null> {
+  const target = resolveReplayTarget(process.env.REPRODUCE_REPLAY_TARGET, opts.service);
   if (!target) return null;
 
   await mkdir(opts.outDir, { recursive: true });
@@ -243,7 +256,7 @@ export async function processReproduceRun(
 
     // 3: replay (or degrade to capture re-analysis)
     await updatePhase("scanning", `Replaying ${input.service} traffic`);
-    const replayResult = await deps.replay({ evidenceDir, outDir: replayOutDir });
+    const replayResult = await deps.replay({ evidenceDir, outDir: replayOutDir, service: input.service });
     const analyzeDir = replayResult?.outDir ?? evidenceDir;
     const method: ConfirmationMethod = replayResult ? "replay" : "capture-reanalysis";
 
