@@ -131,6 +131,16 @@ controller:
     limits:   { cpu: 500m, memory: 512Mi }
 
 worker:
+  # Run the worker as a second container in the intake-api pod instead of a
+  # separate Deployment. The two containers share the pod's data volume, so
+  # the filesystem run-queue handoff (intake-api writes run.json + enqueues,
+  # worker claims + processes) works without shared external storage. Use
+  # this when persistence is disabled: with emptyDir, separate pods cannot
+  # see each other's queued runs and the reproduce loop silently stalls.
+  # In this mode worker.replicas is ignored (the worker scales with
+  # intakeApi.replicas; keep intakeApi.replicas=1 so window state and the
+  # queue live in one pod).
+  colocated: false
   replicas: 2
   pollIntervalMs: 2000
   claimTtlMs: 900000
