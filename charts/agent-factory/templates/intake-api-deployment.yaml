@@ -152,6 +152,16 @@ spec:
           volumeMounts:
             - { name: agent-data, mountPath: /app/artifacts, subPath: artifacts }
             - { name: agent-data, mountPath: /app/.work,     subPath: work }
+        {{- /*
+          Colocated mode: the worker runs beside intake-api in the same pod,
+          sharing the agent-data volume. The filesystem run queue (run.json +
+          claim files under /app/artifacts) then hands off between the two
+          containers without a shared PVC — required for the streaming
+          reproduce loop when persistence is disabled (emptyDir is per-pod).
+        */ -}}
+        {{- if .Values.worker.colocated }}
+        {{- include "agent-factory.workerContainer" . | nindent 8 }}
+        {{- end }}
       volumes:
         - name: agent-data
           {{- if .Values.persistence.enabled }}
