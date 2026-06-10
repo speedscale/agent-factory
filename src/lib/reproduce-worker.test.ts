@@ -4,6 +4,7 @@ import {
   processReproduceRun,
   signalReproduces,
   renderTicketBody,
+  resolveReplayTarget,
   type ReproduceDeps,
 } from "./reproduce-worker.js";
 import type { AgentRun } from "../contracts/index.js";
@@ -140,4 +141,34 @@ test("renderTicketBody includes the evidence URI and reproduce hint", () => {
   assert.match(body, /s3:\/\/bucket\/abc\.tgz/);
   assert.match(body, /proxymock replay/);
   assert.match(body, /reproduced/);
+});
+
+test("resolveReplayTarget expands {service} and handles unset templates", () => {
+  assert.equal(resolveReplayTarget(undefined, "banking-user"), null);
+  assert.equal(resolveReplayTarget("", "banking-user"), null);
+  assert.equal(resolveReplayTarget("   ", "banking-user"), null);
+  assert.equal(
+    resolveReplayTarget("http://gateway.banking-app.svc.cluster.local", "banking-user"),
+    "http://gateway.banking-app.svc.cluster.local",
+  );
+  assert.equal(
+    resolveReplayTarget("http://{service}.banking-app.svc.cluster.local", "banking-user"),
+    "http://banking-user.banking-app.svc.cluster.local",
+  );
+});
+
+test("processReproduceRun passes the signal's service to replay", async () => {
+  let seenService: string | undefined;
+  const result = await processReproduceRun(
+    makeRun(),
+    async () => {},
+    fakeDeps({
+      replay: async ({ outDir, service }) => {
+        seenService = service;
+        return { outDir };
+      },
+    }),
+  );
+  assert.equal(seenService, "radar");
+  assert.equal(result.method, "replay");
 });

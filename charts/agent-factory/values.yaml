@@ -153,6 +153,9 @@ worker:
   # so it can fetch archived evidence back from S3 to replay.
   reproduce:
     # Full or partial URL passed to `proxymock replay --test-against`.
+    # `{service}` expands to the signal's service, so evidence replays
+    # against the service that emitted it, e.g.
+    #   http://{service}.banking-app.svc.cluster.local
     # Empty = degrade to capture re-analysis (no live replay).
     replayTarget: ""
     # Linear team UUID auto-filed reproduce tickets are created under.

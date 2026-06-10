@@ -38,7 +38,7 @@ Consumed by the worker's `reproduce` handler (`spec.agent: "reproduce"`), which 
 
 | Var | Consumer | Default | Notes |
 |---|---|---|---|
-| `REPRODUCE_REPLAY_TARGET` | worker (reproduce) | — | Full or partial URL passed to `proxymock replay --test-against`. When unset, the handler degrades to re-analysing the captured traffic instead of a live replay. |
+| `REPRODUCE_REPLAY_TARGET` | worker (reproduce) | — | Full or partial URL passed to `proxymock replay --test-against`. A `{service}` placeholder expands to the signal's service (e.g. `http://{service}.banking-app.svc.cluster.local`), so each reproduce run replays against the service that emitted the signal. When unset, the handler degrades to re-analysing the captured traffic instead of a live replay. |
 | `LINEAR_API_KEY` | worker (reproduce) | — | Secret. Linear personal API key for filing confirmed bugs. When unset, confirmation is recorded but no ticket is filed. |
 | `LINEAR_REPRODUCE_TEAM_ID` | worker (reproduce) | — | Linear team UUID the auto-filed issue is created under. Required alongside `LINEAR_API_KEY` to file tickets. |
 | `LINEAR_REPRODUCE_LABEL_ID` | worker (reproduce) | — | Optional Linear label UUID attached to auto-filed issues. |
