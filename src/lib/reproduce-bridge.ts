@@ -43,6 +43,65 @@ const ACTIVE_PHASES = new Set<AgentRun["status"]["phase"]>([
   "reporting",
 ]);
 
+/**
+ * How long after a reproduce run *succeeds* before the same fingerprint may
+ * file again. A persistent regression re-qualifies every window (the rolling
+ * baseline takes a while to absorb the new behavior), and reproduce runs
+ * complete in seconds — without a cooldown the same bug files a duplicate
+ * ticket every ~60s for as long as it persists.
+ */
+const DEFAULT_REFILE_COOLDOWN_MS = 6 * 60 * 60 * 1000; // 6h
+
+/**
+ * How long after a reproduce run *fails* (e.g. transient S3 error) before the
+ * same fingerprint may retry. Much shorter than the success cooldown — a
+ * failure didn't produce a ticket, so we want another attempt, just not a hot
+ * loop every window.
+ */
+const DEFAULT_RETRY_BACKOFF_MS = 15 * 60 * 1000; // 15m
+
+function envMs(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+/**
+ * Fingerprints that must not enqueue a new reproduce run right now: any with a
+ * run still live, one that succeeded within the refile cooldown, or one that
+ * failed within the retry backoff. A completed run with no parseable
+ * transition time blocks conservatively (treated as just-completed).
+ */
+export function blockedFingerprints(
+  runs: AgentRun[],
+  nowMs: number,
+  opts: { refileCooldownMs?: number; retryBackoffMs?: number } = {},
+): Set<string> {
+  const refileCooldownMs = opts.refileCooldownMs ?? envMs("REPRODUCE_REFILE_COOLDOWN_MS", DEFAULT_REFILE_COOLDOWN_MS);
+  const retryBackoffMs = opts.retryBackoffMs ?? envMs("REPRODUCE_RETRY_BACKOFF_MS", DEFAULT_RETRY_BACKOFF_MS);
+
+  const blocked = new Set<string>();
+  for (const run of runs) {
+    if (run.spec.agent !== "reproduce") continue;
+    const fp = (run.spec.input as { fingerprint?: string } | undefined)?.fingerprint;
+    if (!fp) continue;
+
+    const phase = run.status.phase;
+    if (ACTIVE_PHASES.has(phase)) {
+      blocked.add(fp);
+      continue;
+    }
+
+    const windowMs = phase === "succeeded" ? refileCooldownMs : retryBackoffMs;
+    const completedAt = run.status.lastTransitionAt ? Date.parse(run.status.lastTransitionAt) : NaN;
+    if (!Number.isFinite(completedAt) || nowMs - completedAt < windowMs) {
+      blocked.add(fp);
+    }
+  }
+  return blocked;
+}
+
 export interface ReproduceTriggerOptions {
   /** Lowest severity that qualifies for a reproduce run. Default "high". */
   minSeverity?: Severity;
@@ -225,23 +284,19 @@ export async function bridgeSignalsToRuns(
   const candidates = signals.filter((s) => isReproducibleSignal(s, baseline, ctx.options));
   if (candidates.length === 0) return [];
 
-  // One scan of existing runs to dedup against already-live reproduce runs.
-  const live = new Set<string>();
+  // One scan of existing runs to dedup: skip fingerprints with a live run,
+  // a recent success (refile cooldown), or a recent failure (retry backoff).
+  let blocked = new Set<string>();
   try {
-    for (const run of await listRuns()) {
-      if (run.spec.agent !== "reproduce") continue;
-      if (!ACTIVE_PHASES.has(run.status.phase)) continue;
-      const fp = (run.spec.input as { fingerprint?: string } | undefined)?.fingerprint;
-      if (fp) live.add(fp);
-    }
+    blocked = blockedFingerprints(await listRuns(), Date.now());
   } catch {
     /* best-effort dedup; fall through and enqueue */
   }
 
   const created: string[] = [];
   for (const signal of candidates) {
-    if (live.has(signal.fingerprint)) {
-      ctx.logger?.info("reproduce run already live, skipping", {
+    if (blocked.has(signal.fingerprint)) {
+      ctx.logger?.info("reproduce run live or in cooldown, skipping", {
         service: ctx.service,
         fingerprint: signal.fingerprint,
       });
@@ -257,7 +312,7 @@ export async function bridgeSignalsToRuns(
         ts: ctx.ts,
       });
       created.push(runName);
-      live.add(signal.fingerprint);
+      blocked.add(signal.fingerprint);
       ctx.logger?.info("enqueued reproduce run", {
         service: ctx.service,
         fingerprint: signal.fingerprint,

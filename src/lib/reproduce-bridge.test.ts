@@ -5,7 +5,9 @@ import {
   isRegression,
   isReproducibleSignal,
   enqueueReproduceRun,
+  blockedFingerprints,
 } from "./reproduce-bridge.js";
+import type { AgentRun } from "../contracts/index.js";
 import type { Signal } from "./rrpair-stats.js";
 import type { BaselineStore, EndpointBaseline } from "./baseline-store.js";
 import { resolveFromRepo } from "./io.js";
@@ -109,4 +111,62 @@ test("enqueueReproduceRun writes a valid queued reproduce run.json", async () =>
   } finally {
     if (runName) await rm(resolveFromRepo("artifacts", runName), { recursive: true, force: true });
   }
+});
+
+// ── blockedFingerprints — refile cooldown / retry backoff ───────────────────
+
+function reproduceRun(over: {
+  fingerprint: string;
+  phase: AgentRun["status"]["phase"];
+  lastTransitionAt?: string;
+}): AgentRun {
+  return {
+    apiVersion: "agents.speedscale.io/v1alpha1",
+    kind: "AgentRun",
+    metadata: { name: `reproduce-x-${over.fingerprint}` },
+    spec: {
+      appRef: { name: "x" },
+      agent: "reproduce",
+      input: { fingerprint: over.fingerprint },
+      issue: { id: over.fingerprint, title: "t", body: "" },
+      workspace: { root: ".work/x" },
+    },
+    status: { phase: over.phase, lastTransitionAt: over.lastTransitionAt, artifacts: {} },
+  };
+}
+
+const NOW = Date.parse("2026-06-10T12:00:00Z");
+const MIN = 60_000;
+const OPTS = { refileCooldownMs: 60 * MIN, retryBackoffMs: 10 * MIN };
+
+test("blockedFingerprints: live runs block regardless of age", () => {
+  const runs = [reproduceRun({ fingerprint: "a", phase: "scanning", lastTransitionAt: new Date(NOW - 999 * MIN).toISOString() })];
+  assert.deepEqual(blockedFingerprints(runs, NOW, OPTS), new Set(["a"]));
+});
+
+test("blockedFingerprints: recent success blocks, old success does not", () => {
+  const runs = [
+    reproduceRun({ fingerprint: "recent", phase: "succeeded", lastTransitionAt: new Date(NOW - 30 * MIN).toISOString() }),
+    reproduceRun({ fingerprint: "old", phase: "succeeded", lastTransitionAt: new Date(NOW - 90 * MIN).toISOString() }),
+  ];
+  assert.deepEqual(blockedFingerprints(runs, NOW, OPTS), new Set(["recent"]));
+});
+
+test("blockedFingerprints: failed runs use the shorter retry backoff", () => {
+  const runs = [
+    reproduceRun({ fingerprint: "just-failed", phase: "failed", lastTransitionAt: new Date(NOW - 5 * MIN).toISOString() }),
+    reproduceRun({ fingerprint: "failed-a-while-ago", phase: "failed", lastTransitionAt: new Date(NOW - 30 * MIN).toISOString() }),
+  ];
+  assert.deepEqual(blockedFingerprints(runs, NOW, OPTS), new Set(["just-failed"]));
+});
+
+test("blockedFingerprints: completed run without a transition time blocks conservatively", () => {
+  const runs = [reproduceRun({ fingerprint: "no-ts", phase: "succeeded" })];
+  assert.deepEqual(blockedFingerprints(runs, NOW, OPTS), new Set(["no-ts"]));
+});
+
+test("blockedFingerprints: non-reproduce runs are ignored", () => {
+  const run = reproduceRun({ fingerprint: "a", phase: "scanning" });
+  run.spec.agent = "triage";
+  assert.deepEqual(blockedFingerprints([run], NOW, OPTS), new Set());
 });
