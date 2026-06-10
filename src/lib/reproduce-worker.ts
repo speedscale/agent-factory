@@ -146,12 +146,16 @@ async function defaultReplay(opts: { evidenceDir: string; outDir: string; servic
   if (!target) return null;
 
   await mkdir(opts.outDir, { recursive: true });
+  // Flag names are `--in` / `--out` (not --in-directory / --out-directory);
+  // `--out-format json` because analyzeSnapshot parses RRPair JSON, and the
+  // CLI default is markdown.
   await execFileAsync(
     "proxymock",
     [
       "replay",
-      "--in-directory", opts.evidenceDir,
-      "--out-directory", opts.outDir,
+      "--in", opts.evidenceDir,
+      "--out", opts.outDir,
+      "--out-format", "json",
       "--test-against", target,
     ],
     { timeout: 300_000 },
@@ -190,7 +194,7 @@ export function renderTicketBody(payload: TicketPayload): string {
       : "Confirmed by re-analysing the captured failing traffic — the signal is present in the archived evidence.";
 
   const replayHint = evidenceUri
-    ? `\n\n**Reproduce locally:**\n\`\`\`\naws s3 cp ${evidenceUri} ./repro.tgz && mkdir -p repro && tar xzf repro.tgz -C repro\nproxymock replay --in-directory ./repro\n\`\`\``
+    ? `\n\n**Reproduce locally:**\n\`\`\`\naws s3 cp ${evidenceUri} ./repro.tgz && mkdir -p repro && tar xzf repro.tgz -C repro\nproxymock replay --in ./repro\n\`\`\``
     : "";
 
   return [
