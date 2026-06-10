@@ -22,9 +22,12 @@
  *     [--instance <name>]                         (override AF_INSTANCE for this run; tags logs so multi-instance deployments stay distinguishable) \
  *     [--verbose]
  *
- * When --repo is provided, the Worker creates a git worktree at <workdir>/repo
- * on a new branch before writing any files. The fix is committed to that branch.
- * The main checkout is never modified.
+ * When --repo is provided, a git worktree is created at <workdir>/repo on a
+ * new branch BEFORE the Planner phase, so every phase that can write (the
+ * source-mode Planner writes the baseline harness; the Worker writes the fix)
+ * operates inside the worktree. A write guard on the engine tools rejects or
+ * reroots any mutation that targets the live checkout — the main checkout is
+ * never modified (AGENTS.md: worktree per run).
  *
  * Measures:
  *   - Time to first useful plan (Planner phase)
@@ -37,8 +40,8 @@ import { exec } from "node:child_process";
 import { mkdir, writeFile, readdir, stat, unlink } from "node:fs/promises";
 import os from "node:os";
 import { promisify } from "node:util";
-import { runPlanner, runWorker, runPlannerSource, runWorkerSource, runEvaluator } from "../lib/llm-engine.js";
-import type { EmitPlanResult, EmitPlanSourceResult, AnyPlanResult } from "../lib/llm-engine.js";
+import { runPlanner, runWorker, runPlannerSource, runWorkerSource, runEvaluator, setupWorktree, teardownWorktree } from "../lib/llm-engine.js";
+import type { EmitPlanResult, EmitPlanSourceResult, AnyPlanResult, WorktreeResult } from "../lib/llm-engine.js";
 import { resolveEngineConfig } from "../lib/engine-config.js";
 import { defaultModelFor, type LLMProvider } from "../lib/llm-providers.js";
 import { classifySpec } from "../lib/spec-classifier.js";
@@ -243,13 +246,34 @@ async function main(): Promise<void> {
     }
   }
 
+  // ---- Worktree setup (pre-Planner) ----
+  // AGENTS.md core rule: worktree per run. The worktree is created BEFORE the
+  // Planner so every phase that can write is confined to it — the source-mode
+  // Planner writes the baseline harness colocated with the source, and without
+  // a worktree at that point it would land in the operator's live checkout.
+  let worktree: WorktreeResult | undefined;
+  if (repoDir && branchName) {
+    worktree = await setupWorktree(repoDir, workDir, branchName, sourceDir ?? repoDir);
+    console.log(`[engine] worktree: ${worktree.worktreePath} (branch: ${worktree.branchName})`);
+  }
+
   // ---- Planner phase ----
   const plannerStart = Date.now();
   console.log(`\n=== PLANNER PHASE (${mode}) ===`);
 
-  const planResult: AnyPlanResult = mode === "traffic"
-    ? await runPlanner({ title, body }, { snapshotDir, sourceDir, workDir, verbose, provider, model })
-    : { ...await runPlannerSource({ title, body }, { snapshotDir, sourceDir, workDir, verbose, provider, model }), mode: "source" as const };
+  let planResult: AnyPlanResult;
+  try {
+    planResult = mode === "traffic"
+      ? await runPlanner({ title, body }, { snapshotDir, sourceDir, workDir, verbose, provider, model, repoDir, worktree })
+      : { ...await runPlannerSource({ title, body }, { snapshotDir, sourceDir, workDir, verbose, provider, model, repoDir, worktree }), mode: "source" as const };
+  } catch (err) {
+    // No patch will be produced — remove the worktree + branch so a failed
+    // Planner (e.g. reproduce gate rejection) doesn't litter the target repo.
+    if (worktree && repoDir) {
+      await teardownWorktree(repoDir, worktree.worktreePath, worktree.branchName);
+    }
+    throw err;
+  }
 
   const plannerMs = Date.now() - plannerStart;
   const planOutput = path.join(workDir, "plan.json");
@@ -281,8 +305,8 @@ async function main(): Promise<void> {
   console.log(`\n=== WORKER PHASE (${mode}) ===`);
 
   const patchResult = mode === "traffic"
-    ? await runWorker(planResult as EmitPlanResult, { snapshotDir, sourceDir, workDir, verbose, repoDir, branchName, provider, model })
-    : await runWorkerSource(planResult as EmitPlanSourceResult, { snapshotDir, sourceDir, workDir, verbose, repoDir, branchName, provider, model });
+    ? await runWorker(planResult as EmitPlanResult, { snapshotDir, sourceDir, workDir, verbose, repoDir, branchName, provider, model, worktree })
+    : await runWorkerSource(planResult as EmitPlanSourceResult, { snapshotDir, sourceDir, workDir, verbose, repoDir, branchName, provider, model, worktree });
 
   const workerMs = Date.now() - workerStart;
   const patchOutput = path.join(workDir, "patch.json");

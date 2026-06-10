@@ -51,6 +51,7 @@ import {
   type NudgeTier,
   type CompactionPhase
 } from "./engine-hardening.js";
+import { buildWorktreeGuard, guardToolCall, type WorktreeGuard } from "./worktree-guard.js";
 
 const execAsync = promisify(exec);
 
@@ -139,6 +140,14 @@ export interface LLMRunOptions {
   provider: LLMProvider;
   /** Model identifier for the chosen provider. Required. */
   model: string;
+  /**
+   * Worktree created by the caller BEFORE any phase ran (llm-run creates it
+   * pre-Planner so the source-mode Planner's harness lands in the worktree,
+   * not the live checkout). When set, runWorker/runWorkerSource skip their
+   * own setupWorktree call and every phase gets a write guard confining
+   * mutating tools to the worktree.
+   */
+  worktree?: WorktreeResult;
 }
 
 export interface WorktreeResult {
@@ -179,6 +188,22 @@ export async function teardownWorktree(repoDir: string, worktreePath: string, br
   try {
     await execAsync(`git -C ${JSON.stringify(repoDir)} branch -D ${JSON.stringify(branchName)}`);
   } catch { /* already gone */ }
+}
+
+/**
+ * Build the write guard for a phase, confining mutating tools to the
+ * worktree + workDir. Returns undefined when the run has no worktree
+ * (legacy non---repo runs keep their old, unconfined behavior).
+ */
+function guardFor(worktree: WorktreeResult | undefined, opts: LLMRunOptions): WorktreeGuard | undefined {
+  if (!worktree) return undefined;
+  return buildWorktreeGuard({
+    worktreePath: worktree.worktreePath,
+    workDir: opts.workDir,
+    repoDir: opts.repoDir,
+    sourceDir: opts.sourceDir,
+    worktreeSourceDir: worktree.sourceDir
+  });
 }
 
 // ---------- tool implementations ----------
@@ -434,7 +459,8 @@ export async function toolRunShell(command: string, cwd?: string): Promise<strin
 
 // ---------- tool definitions for the API ----------
 
-const TOOLS: ToolDef[] = [
+/** Exported for tests (engine-tools.test.ts dispatch regression). */
+export const TOOLS: ToolDef[] = [
   {
     name: "read_file",
     description: "Read a source file from disk. Use absolute paths.",
@@ -675,15 +701,19 @@ export type DispatchOutcome =
   | { kind: "executionError"; content: string };
 
 /**
- * Hardened tool dispatch. Validates args, checks per-tool prerequisites, runs
- * the tool, and classifies the outcome so the agent loop can make sensible
- * decisions about the error budget. Pure dispatch concerns live here; nudges
- * and compaction live in the loop.
+ * Hardened tool dispatch. Validates args, checks per-tool prerequisites,
+ * applies the worktree write guard (when the run has one), runs the tool,
+ * and classifies the outcome so the agent loop can make sensible decisions
+ * about the error budget. Pure dispatch concerns live here; nudges and
+ * compaction live in the loop.
+ *
+ * Exported for tests — see engine-tools.test.ts worktree-guard regression.
  */
-async function dispatchToolHardened(
+export async function dispatchToolHardened(
   toolUse: { name: string; input: Record<string, string> },
   toolDefs: ToolDef[],
-  calledTools: Set<string>
+  calledTools: Set<string>,
+  guard?: WorktreeGuard
 ): Promise<DispatchOutcome> {
   const toolDef = toolDefs.find((t) => t.name === toolUse.name);
   if (!toolDef) {
@@ -701,9 +731,22 @@ async function dispatchToolHardened(
   if (prereqError) {
     return { kind: "softError", content: prereqError };
   }
+  // Worktree write guard: confine mutating tools (write_file, run_shell,
+  // run_script) to the worktree. Blocked calls are soft errors — the model
+  // retries with a worktree path without burning the consecutive-error budget.
+  let input = toolUse.input;
+  let guardNote: string | undefined;
+  if (guard) {
+    const guarded = guardToolCall(guard, toolUse.name, input);
+    if (!guarded.ok) {
+      return { kind: "softError", content: guarded.error };
+    }
+    input = guarded.input;
+    guardNote = guarded.note;
+  }
   let content: string;
   try {
-    content = await dispatchToolRaw(toolUse.name, toolUse.input);
+    content = await dispatchToolRaw(toolUse.name, input);
   } catch (err) {
     if (err instanceof ToolResolutionError) {
       return { kind: "softError", content: err.message };
@@ -717,9 +760,9 @@ async function dispatchToolHardened(
   // Treat that as an execution error for budget purposes — same behavior as if
   // the tool had thrown.
   if (content.startsWith("error:")) {
-    return { kind: "executionError", content };
+    return { kind: "executionError", content: guardNote ? `${guardNote}\n${content}` : content };
   }
-  return { kind: "ok", content };
+  return { kind: "ok", content: guardNote ? `${guardNote}\n${content}` : content };
 }
 
 // ---------- agentic loop ----------
@@ -732,7 +775,8 @@ async function agentLoop(
   maxLoops: number,
   provider: LLMProvider,
   model: string,
-  tools: ToolDef[] = TOOLS
+  tools: ToolDef[] = TOOLS,
+  guard?: WorktreeGuard
 ): Promise<Record<string, string>> {
   const messages: ConvMessage[] = [{ role: "user", content: userMessage }];
   let loops = 0;
@@ -854,7 +898,7 @@ async function agentLoop(
     for (const toolUse of turn.toolUses) {
       if (toolUse.name === terminalToolName) continue;
       if (verbose) console.error(`[engine] tool: ${toolUse.name}(${JSON.stringify(toolUse.input).slice(0, 100)})`);
-      const outcome = await dispatchToolHardened(toolUse, tools, calledTools);
+      const outcome = await dispatchToolHardened(toolUse, tools, calledTools, guard);
       if (verbose) console.error(`[engine] result(${outcome.kind}): ${outcome.content.slice(0, 150)}`);
       toolResults.push({ toolUseId: toolUse.id, content: outcome.content });
       if (outcome.kind === "ok") {
@@ -911,14 +955,22 @@ export async function runPlanner(
     `Issue: ${issueSpec.title}`,
     `Description: ${issueSpec.body}`
   ];
+  const effectiveSourceDir = opts.worktree?.sourceDir ?? opts.sourceDir;
   if (opts.snapshotDir) parts.push(`Snapshot directory: ${opts.snapshotDir}`);
-  if (opts.sourceDir) parts.push(`Source directory: ${opts.sourceDir}`);
+  if (effectiveSourceDir) parts.push(`Source directory: ${effectiveSourceDir}`);
   if (opts.workDir) parts.push(`Work directory for harness files: ${opts.workDir}`);
+  if (opts.worktree) {
+    parts.push(
+      `WORKTREE: Source files are in an isolated worktree at ${opts.worktree.worktreePath}. ` +
+      `Use paths under ${opts.worktree.sourceDir} for all source reads. ` +
+      `Do NOT touch ${opts.sourceDir} — the operator's live checkout is off-limits for this run.`
+    );
+  }
 
   const PLANNER_MAX_LOOPS = parseInt(process.env.ENGINE_PLANNER_MAX_LOOPS ?? "30", 10);
   const { provider } = opts;
   const { model } = opts;
-  const result = await agentLoop(PLANNER_SYSTEM, parts.join("\n"), "emit_plan", opts.verbose ?? false, PLANNER_MAX_LOOPS, provider, model);
+  const result = await agentLoop(PLANNER_SYSTEM, parts.join("\n"), "emit_plan", opts.verbose ?? false, PLANNER_MAX_LOOPS, provider, model, TOOLS, guardFor(opts.worktree, opts));
 
   const plan: AgentPlan = {
     apiVersion: "agents.speedscale.io/v1alpha1",
@@ -1144,10 +1196,11 @@ export async function runWorker(
   planResult: EmitPlanResult,
   opts: LLMRunOptions
 ): Promise<EmitPatchResult> {
-  let worktree: WorktreeResult | undefined;
+  let worktree: WorktreeResult | undefined = opts.worktree;
 
-  // Set up an isolated worktree before touching any source files.
-  if (opts.repoDir && opts.branchName && opts.sourceDir && opts.workDir) {
+  // Set up an isolated worktree before touching any source files (unless the
+  // caller already created one for the whole run — see LLMRunOptions.worktree).
+  if (!worktree && opts.repoDir && opts.branchName && opts.sourceDir && opts.workDir) {
     worktree = await setupWorktree(opts.repoDir, opts.workDir, opts.branchName, opts.sourceDir);
     console.log(`[engine] worktree: ${worktree.worktreePath} (branch: ${worktree.branchName})`);
   }
@@ -1182,7 +1235,7 @@ export async function runWorker(
   const WORKER_MAX_LOOPS = parseInt(process.env.ENGINE_WORKER_MAX_LOOPS ?? "25", 10);
   const { provider } = opts;
   const { model } = opts;
-  const result = await agentLoop(WORKER_SYSTEM, parts.join("\n"), "emit_patch", opts.verbose ?? false, WORKER_MAX_LOOPS, provider, model);
+  const result = await agentLoop(WORKER_SYSTEM, parts.join("\n"), "emit_patch", opts.verbose ?? false, WORKER_MAX_LOOPS, provider, model, TOOLS, guardFor(worktree, opts));
 
   return {
     filePath: result.targetFile,
@@ -1229,9 +1282,18 @@ export async function runPlannerSource(
     `Issue: ${issueSpec.title}`,
     `Description: ${issueSpec.body}`
   ];
-  if (opts.sourceDir) parts.push(`Source directory: ${opts.sourceDir}`);
+  const effectiveSourceDir = opts.worktree?.sourceDir ?? opts.sourceDir;
+  if (effectiveSourceDir) parts.push(`Source directory: ${effectiveSourceDir}`);
   if (opts.snapshotDir) parts.push(`Snapshot directory (may be empty/irrelevant in source mode): ${opts.snapshotDir}`);
   if (opts.workDir) parts.push(`Work directory: ${opts.workDir}`);
+  if (opts.worktree) {
+    parts.push(
+      `WORKTREE: Source files are in an isolated worktree at ${opts.worktree.worktreePath}. ` +
+      `For ALL read_file and write_file calls that touch source code — including the baseline ` +
+      `harness, which must be colocated with the source — use paths under ${opts.worktree.sourceDir}. ` +
+      `Do NOT read from or write to ${opts.sourceDir} — the operator's live checkout is off-limits for this run.`
+    );
+  }
 
   // Source planner gets write_file + run_shell so it can write a harness and
   // run it against the unpatched worktree — required by the reproduce gate.
@@ -1250,7 +1312,8 @@ export async function runPlannerSource(
     PLANNER_MAX_LOOPS,
     provider,
     model,
-    sourceTools
+    sourceTools,
+    guardFor(opts.worktree, opts)
   );
 
   const shape = (result.assertionShape ?? "unit-test") as EmitPlanSourceResult["assertionShape"];
@@ -1332,9 +1395,9 @@ export async function runWorkerSource(
   planResult: EmitPlanSourceResult,
   opts: LLMRunOptions
 ): Promise<EmitPatchResult> {
-  let worktree: WorktreeResult | undefined;
+  let worktree: WorktreeResult | undefined = opts.worktree;
 
-  if (opts.repoDir && opts.branchName && opts.sourceDir && opts.workDir) {
+  if (!worktree && opts.repoDir && opts.branchName && opts.sourceDir && opts.workDir) {
     worktree = await setupWorktree(opts.repoDir, opts.workDir, opts.branchName, opts.sourceDir);
     console.log(`[engine] worktree: ${worktree.worktreePath} (branch: ${worktree.branchName})`);
   }
@@ -1382,7 +1445,9 @@ export async function runWorkerSource(
     opts.verbose ?? false,
     WORKER_MAX_LOOPS,
     provider,
-    model
+    model,
+    TOOLS,
+    guardFor(worktree, opts)
   );
 
   return {
